@@ -9,23 +9,9 @@ import json
 import logging
 from twisted.internet import defer, reactor
 from autobahn.twisted.websocket import WebSocketServerProtocol, WebSocketServerFactory
+from api import APIClient
 
 LOGGER = logging.getLogger(__name__)
-
-class APIClient:
-    """A helper class to fetch data from static endpoints using Twisted's Agent."""
-
-    def __init__(self, hostname):
-        self.agent = Agent(reactor, contextFactory=NoVerifyContextFactory(hostname))
-
-    def fetch_data(self, url):
-        """Fetch data from the given URL."""
-        return self.agent.request(
-            b"GET",
-            url.encode("utf-8"),
-            Headers({"User-Agent": ["Twisted P2P spam checker"]}),
-            None,
-        ).addCallback(readBody)
 
 
 class SpammerCheckProtocol(WebSocketServerProtocol):

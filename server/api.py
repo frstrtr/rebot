@@ -6,6 +6,7 @@ This module handles API requests and responses.
 
 import json
 import logging
+
 from twisted.web import server, resource
 from twisted.web.client import Agent, readBody
 from twisted.web.http_headers import Headers
@@ -13,9 +14,11 @@ from twisted.internet import defer, reactor
 from twisted.web.iweb import IPolicyForHTTPS
 from twisted.internet.ssl import CertificateOptions
 from twisted.internet._sslverify import ClientTLSOptions
-from zope.interface import implementer
-from database import retrieve_spammer_data, store_spammer_data
 
+from zope.interface import implementer
+
+from database import retrieve_spammer_data, store_spammer_data
+from p2p import check_p2p_data
 
 LOGGER = logging.getLogger(__name__)
 
@@ -80,7 +83,7 @@ class SpammerCheckResource(resource.Resource):
                 return server.NOT_DONE_YET
 
             # Check P2P network secondly
-            p2p_data = self.check_p2p_data(user_id)
+            p2p_data = check_p2p_data(user_id)
             if p2p_data:
                 response = {
                     "ok": True,
@@ -117,7 +120,7 @@ class SpammerCheckResource(resource.Resource):
                     or cas_chat_data.get("result", {}).get("offenses", 0) > 0
                 )
 
-                p2p_data = self.check_p2p_data(user_id)
+                p2p_data = check_p2p_data(user_id)
 
                 response = {
                     "ok": True,
@@ -161,18 +164,11 @@ class SpammerCheckResource(resource.Resource):
             request.setResponseCode(400)
             return b"Missing user_id parameter"
 
-    def check_p2p_data(self, user_id):
-        """Placeholder function to check for P2P data."""
-        reply = {
-            "ok": True,
-            "user_id": user_id,
-        }
-        return reply
-
     def is_spammer(self, data):
         """Determine if the user is a spammer based on the data."""
         lols_bot_data = json.loads(data["lols_bot_data"])
         cas_chat_data = json.loads(data["cas_chat_data"])
+        # TODO add p2p data check
         return (
             lols_bot_data.get("banned", False)
             or cas_chat_data.get("result", {}).get("offenses", 0) > 0

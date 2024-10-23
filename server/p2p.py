@@ -168,3 +168,12 @@ def find_available_port(start_port):
             return port
         except error.CannotListenError:
             port += 1
+
+
+def check_p2p_data(user_id):
+    """Placeholder function to check for P2P data."""
+    reply = {
+        "ok": True,
+        "user_id": user_id,
+    }
+    return reply

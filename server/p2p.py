@@ -5,17 +5,16 @@ This module handles P2P connections and data synchronization.
 """
 
 import json
-import logging
 from twisted.internet import endpoints, defer, error, protocol, reactor
-from database import store_spammer_data, retrieve_spammer_data
-
-LOGGER = logging.getLogger(__name__)
+from database import store_spammer_data, retrieve_spammer_data, get_all_spammer_ids
+from server.config import LOGGER
 
 
 class P2PProtocol(protocol.Protocol):
     """P2P protocol to handle connections and exchange spammer information."""
 
     def connectionMade(self):
+        """Handle new P2P connections."""
         self.factory.peers.append(self)
         peer = self.transport.getPeer()
         LOGGER.info("P2P connection made with %s:%d", peer.host, peer.port)
@@ -23,6 +22,7 @@ class P2PProtocol(protocol.Protocol):
         self.send_peer_info()
 
     def dataReceived(self, data):
+        """Handle received P2P data."""
         message = data.decode("utf-8")
         LOGGER.info("P2P message received: %s", message)
         data = json.loads(message)
@@ -37,6 +37,7 @@ class P2PProtocol(protocol.Protocol):
             self.factory.update_peer_list(data["peers"])
 
     def connectionLost(self, reason):
+        """Handle lost P2P connections."""
         self.factory.peers.remove(self)
         LOGGER.info("P2P connection lost: %s", reason)
 
@@ -154,12 +155,7 @@ class P2PFactory(protocol.Factory):
 
     def get_all_spammer_ids(self):
         """Retrieve all spammer IDs from the database."""
-        conn = sqlite3.connect(DATABASE_FILE)
-        cursor = conn.cursor()
-        cursor.execute("SELECT user_id FROM spammers")
-        rows = cursor.fetchall()
-        conn.close()
-        return [row[0] for row in rows]
+        return get_all_spammer_ids()
 
 
 def find_available_port(start_port):

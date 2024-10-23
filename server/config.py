@@ -24,3 +24,6 @@ BOOTSTRAP_ADDRESSES = [
     "172.19.113.234:9002",
     "172.19.112.1:9001",
 ]
+
+# Database file for storing spammer data
+DATABASE_FILE = "spammers.db"

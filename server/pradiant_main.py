@@ -2,17 +2,18 @@ import sys
 import uuid
 from twisted.internet import reactor, endpoints
 from twisted.web import server, resource
+
 from p2p import P2PFactory, find_available_port
 from websocket import SpammerCheckFactory
 from api import SpammerCheckResource
-from config import (
+from database import initialize_database
+from server.config import (
     LOGGER,
     DEFAULT_P2P_PORT,
     WEBSOCKET_PORT,
     HTTP_PORT,
     BOOTSTRAP_ADDRESSES,
 )
-from database import initialize_database
 
 
 def main():

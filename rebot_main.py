@@ -14,7 +14,12 @@ from aiogram.filters import CommandStart
 
 from config.credentials import Credentials
 from config.config import Config
-from handlers import command_start_handler, handle_story, update_handler
+from handlers import (
+    command_start_handler,
+    handle_story,
+    member_status_update_handler,
+    unhandled_updates_handler,
+)
 
 
 class Rebot:
@@ -41,7 +46,8 @@ class Rebot:
 
         self.rebot_dp.message.register(command_start_handler, CommandStart())
         self.rebot_dp.message.register(handle_story)
-        self.rebot_dp.chat_member.register(update_handler)
+        self.rebot_dp.chat_member.register(member_status_update_handler)
+        self.rebot_dp.edited_message.register(unhandled_updates_handler)
 
 
 async def main():

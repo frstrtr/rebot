@@ -73,7 +73,7 @@ def main():
         )
         LOGGER.info("Connecting to peer %s:%d", peer_host, peer_port)
 
-    reactor.run()
+    reactor.run()  # pylint: disable=no-member
 
 
 if __name__ == "__main__":

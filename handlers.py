@@ -3,13 +3,15 @@
 import logging
 import json
 from aiogram import html
-from aiogram.types import Message, Update
+from aiogram.types import Message, ChatMemberUpdated, Update
+
 
 async def command_start_handler(message: Message) -> None:
     """
     This handler receives messages with `/start` command
     """
     await message.answer(f"Hello, {html.bold(message.from_user.full_name)}!")
+
 
 async def handle_story(message: Message) -> None:
     """
@@ -46,8 +48,29 @@ async def handle_story(message: Message) -> None:
         # But not all the types is supported to be copied so need to handle it
         await message.answer("Nice try!")
 
-async def update_handler(update: Update) -> None:
+
+async def member_status_update_handler(update: ChatMemberUpdated) -> None:
     """
     Handle all updates
     """
-    logging.info("Chat member status: %s", update.model_dump_json(exclude_none=True, indent=4))
+    # Log update object as idented JSON
+    # logging.info("Chat member status: %s", update.model_dump_json(exclude_none=True, indent=4))
+    update_by_user_id = update.from_user.id
+    update_member_id = update.old_chat_member.user.id
+    update_member_old_status = update.old_chat_member.status
+    update_member_new_status = update.new_chat_member.status
+    logging.info(
+        "%s changed from %s to %s by %s",
+        update_member_id,
+        update_member_old_status,
+        update_member_new_status,
+        update_by_user_id,
+    )
+
+
+async def unhandled_updates_handler(update: Update) -> None:
+    """
+    Log all unhandled updates
+    """
+    event = update.model_dump_json(indent=4, exclude_none=True)
+    logging.info("Update: %s", event)

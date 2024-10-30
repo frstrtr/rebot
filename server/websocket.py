@@ -68,16 +68,17 @@ class SpammerCheckProtocol(WebSocketServerProtocol):
         defer.gatherResults([d1, d2]).addCallback(handle_response)
 
     def start_exponential_backoff_polling(self, user_id, polling_duration):
+        """Start polling with exponential backoff to check if the user is a spammer."""
         api_client_lols = APIClient("api.lols.bot")
         api_client_cas = APIClient("api.cas.chat")
         lols_bot_url = f"https://api.lols.bot/account?id={user_id}"
         cas_chat_url = f"https://api.cas.chat/check?user_id={user_id}"
 
         interval = 60  # Start with a 1-minute interval
-        end_time = reactor.seconds() + polling_duration
+        end_time = reactor.seconds() + polling_duration # pylint: disable=no-member
 
         def poll():
-            if reactor.seconds() >= end_time:
+            if reactor.seconds() >= end_time: # pylint: disable=no-member
                 LOGGER.info("Polling duration ended.")
                 return
 
@@ -104,7 +105,7 @@ class SpammerCheckProtocol(WebSocketServerProtocol):
 
                 nonlocal interval
                 interval = min(interval * 2, 3600)  # Max interval of 1 hour
-                reactor.callLater(interval, poll)
+                reactor.callLater(interval, poll) # pylint: disable=no-member
 
             defer.gatherResults([d1, d2]).addCallback(handle_response)
 

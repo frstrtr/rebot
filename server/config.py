@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO)
 LOGGER = logging.getLogger(__name__)
 
 # Default port for P2P server
-DEFAULT_P2P_PORT = 9001
+DEFAULT_P2P_PORT = 9828
 
 # WebSocket server port
 WEBSOCKET_PORT = 9000

@@ -1,6 +1,5 @@
 import sys
 import uuid
-import logging
 from twisted.internet import reactor, endpoints
 from twisted.internet.error import CannotListenError
 from twisted.web import resource, server
@@ -36,7 +35,7 @@ def main():
     LOGGER.info("Starting P2P server on port %d", port)
 
     # Find an available port if the default port is not available
-    port = find_available_port(port)
+    # port = find_available_port(port)
     LOGGER.info("Using port %d for P2P server", port)
 
     ws_factory = SpammerCheckFactory()
@@ -52,18 +51,19 @@ def main():
     LOGGER.info("HTTP server listening on port %d", HTTP_PORT)
 
     p2p_factory = P2PFactory(node_uuid)
-    p2p_endpoint = endpoints.TCP4ServerEndpoint(reactor, port, interface="0.0.0.0")
+    # p2p_endpoint = endpoints.TCP4ServerEndpoint(reactor, port, interface="0.0.0.0")
+    p2p_endpoint = endpoints.TCP4ServerEndpoint(reactor, port)
 
-    try:
-        p2p_endpoint.listen(p2p_factory)
-        LOGGER.info("P2P server listening on port %d", port)
-    except CannotListenError as e:
-        LOGGER.error("Cannot listen on port %d: %s", port, e)
-        port = find_available_port(port + 1)
-        LOGGER.info("Retrying with port %d", port)
-        p2p_endpoint = endpoints.TCP4ServerEndpoint(reactor, port, interface="0.0.0.0")
-        p2p_endpoint.listen(p2p_factory)
-        LOGGER.info("P2P server listening on port %d", port)
+    while True:
+        try:
+            p2p_endpoint.listen(p2p_factory)
+            LOGGER.info("P2P server listening on port %d", port)
+            break
+        except CannotListenError as e:
+            LOGGER.error("Cannot listen on port %d: %s", port, e)
+            port = find_available_port(port + 1)
+            LOGGER.info("Retrying with port %d", port)
+            p2p_endpoint = endpoints.TCP4ServerEndpoint(reactor, port, interface="0.0.0.0")
 
     p2p_factory.connect_to_bootstrap_peers(BOOTSTRAP_ADDRESSES).addCallback(
         lambda _: LOGGER.info("Finished connecting to bootstrap peers")

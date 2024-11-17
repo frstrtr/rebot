@@ -84,6 +84,7 @@ class SpammerCheckResource(resource.Resource):
 
             # Check P2P network secondly
             p2p_data = check_p2p_data(user_id)
+            logging.debug("P2P data: %s", p2p_data)
             if p2p_data:
                 response = {
                     "ok": True,
@@ -100,6 +101,7 @@ class SpammerCheckResource(resource.Resource):
                 return server.NOT_DONE_YET
 
             # Check static APIs finally
+            logging.info("Checking static APIs for user_id: %s", user_id)
             api_client_lols = APIClient("api.lols.bot")
             api_client_cas = APIClient("api.cas.chat")
             lols_bot_url = f"https://api.lols.bot/account?id={user_id}"
@@ -107,6 +109,8 @@ class SpammerCheckResource(resource.Resource):
 
             d1 = api_client_lols.fetch_data(lols_bot_url)
             d2 = api_client_cas.fetch_data(cas_chat_url)
+            logging.debug("LOLS response: %s", d1)
+            logging.debug("CAS response: %s", d2)
 
             def handle_response(responses):
                 lols_bot_response, cas_chat_response = responses
@@ -166,6 +170,7 @@ class SpammerCheckResource(resource.Resource):
 
     def is_spammer(self, data):
         """Determine if the user is a spammer based on the data."""
+        logging.debug("Checking if user is a spammer: %s", data)
         lols_bot_data = json.loads(data["lols_bot_data"])
         cas_chat_data = json.loads(data["cas_chat_data"])
         # TODO add p2p data check

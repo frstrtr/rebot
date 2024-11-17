@@ -176,4 +176,4 @@ def check_p2p_data(user_id):
         "ok": True,
         "user_id": user_id,
     }
-    return reply
+    return None

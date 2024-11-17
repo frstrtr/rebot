@@ -7,7 +7,7 @@ This module handles P2P connections and data synchronization.
 import json
 from twisted.internet import endpoints, defer, error, protocol, reactor
 from database import store_spammer_data, retrieve_spammer_data, get_all_spammer_ids
-from server.config import LOGGER
+from config import LOGGER
 
 
 class P2PProtocol(protocol.Protocol):

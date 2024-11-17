@@ -1,7 +1,7 @@
 import sys
 import uuid
 from twisted.internet import reactor, endpoints
-from twisted.web import resource
+from twisted.web import resource, server
 
 from p2p import P2PFactory, find_available_port
 from websocket import SpammerCheckFactory

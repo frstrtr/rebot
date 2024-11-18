@@ -7,7 +7,11 @@ This module contains configuration settings for the P2P server.
 import logging
 
 # Logging configuration
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 LOGGER = logging.getLogger(__name__)
 
 # Default port for P2P server

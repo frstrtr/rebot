@@ -83,7 +83,7 @@ class SpammerCheckResource(resource.Resource):
                 return server.NOT_DONE_YET
 
             # Check P2P network secondly
-            p2p_data = check_p2p_data(user_id)
+            p2p_data = check_p2p_data(user_id) # XXX temp dummy None
             logging.debug("P2P data: %s", p2p_data)
             if p2p_data:
                 response = {
@@ -109,8 +109,8 @@ class SpammerCheckResource(resource.Resource):
 
             d1 = api_client_lols.fetch_data(lols_bot_url)
             d2 = api_client_cas.fetch_data(cas_chat_url)
-            logging.debug("LOLS response: %s", d1)
-            logging.debug("CAS response: %s", d2)
+            # logging.debug("LOLS response: %s", d1)
+            # logging.debug("CAS response: %s", d2)
 
             def handle_response(responses):
                 lols_bot_response, cas_chat_response = responses

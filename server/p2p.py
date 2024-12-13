@@ -25,18 +25,31 @@ class P2PProtocol(protocol.Protocol):
         """Handle received P2P data."""
         message = data.decode("utf-8")
         LOGGER.info("P2P message received: %s", message)
-        data = json.loads(message)
-        if "user_id" in data:
-            user_id = data["user_id"]
-            lols_bot_data = data.get("lols_bot_data", "")
-            cas_chat_data = data.get("cas_chat_data", "")
-            p2p_data = data.get("p2p_data", "")
-            store_spammer_data(user_id, lols_bot_data, cas_chat_data, p2p_data)
-            self.factory.broadcast_spammer_info(user_id)
-        elif "peers" in data:
-            self.factory.update_peer_list(data["peers"])
 
-    def connectionLost(self, reason):
+        try:
+            # Split the message by '}{' and add the braces back
+            json_strings = message.split("}{")
+            json_strings = (
+                [json_strings[0] + "}"]
+                + ["{" + s for s in json_strings[1:-1]]
+                + ["{" + json_strings[-1]]
+            )
+
+            for json_string in json_strings:
+                data = json.loads(json_string)
+                if "user_id" in data:
+                    user_id = data["user_id"]
+                    lols_bot_data = data.get("lols_bot_data", "")
+                    cas_chat_data = data.get("cas_chat_data", "")
+                    p2p_data = data.get("p2p_data", "")
+                    store_spammer_data(user_id, lols_bot_data, cas_chat_data, p2p_data)
+                    self.factory.broadcast_spammer_info(user_id)
+                elif "peers" in data:
+                    self.factory.update_peer_list(data["peers"])
+        except json.JSONDecodeError as e:
+            LOGGER.error("Failed to decode JSON: %s", e)
+
+    def connectionLost(self, reason=protocol.connectionDone):
         """Handle lost P2P connections."""
         self.factory.peers.remove(self)
         LOGGER.info("P2P connection lost: %s", reason)

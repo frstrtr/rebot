@@ -27,6 +27,7 @@ HTTP_PORT = 8081
 BOOTSTRAP_ADDRESSES = [
     "172.19.113.234:9002",
     "172.19.112.1:9001",
+    "192.168.86.109:9828",
 ]
 
 # Database file for storing spammer data

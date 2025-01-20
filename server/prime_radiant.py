@@ -8,7 +8,7 @@ from p2p import P2PFactory, find_available_port
 from websocket import SpammerCheckFactory
 from api import SpammerCheckResource
 from database import initialize_database
-from config import (
+from server_config import (
     LOGGER,
     DEFAULT_P2P_PORT,
     WEBSOCKET_PORT,

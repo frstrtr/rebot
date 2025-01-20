@@ -7,7 +7,7 @@ This module handles P2P connections and data synchronization.
 import json
 from twisted.internet import endpoints, defer, error, protocol, reactor
 from database import store_spammer_data, retrieve_spammer_data, get_all_spammer_ids
-from config import LOGGER
+from server_config import LOGGER
 
 
 class P2PProtocol(protocol.Protocol):
@@ -110,12 +110,12 @@ class P2PFactory(protocol.Factory):
             deferreds.append(deferred)
         return defer.gatherResults(deferreds)
 
-    def on_bootstrap_peer_connected(self, protocol):
+    def on_bootstrap_peer_connected(self, peer_protocol):
         """Handle successful connection to a bootstrap peer."""
-        peer = protocol.transport.getPeer()
+        peer = peer_protocol.transport.getPeer()
         LOGGER.info("Connected to bootstrap peer %s:%d", peer.host, peer.port)
-        self.bootstrap_peers.append(protocol)
-        self.synchronize_spammer_data(protocol)
+        self.bootstrap_peers.append(peer_protocol)
+        self.synchronize_spammer_data(peer_protocol)
 
     def on_bootstrap_peer_failed(self, failure, address):
         """Handle failed connection to a bootstrap peer."""
@@ -142,15 +142,17 @@ class P2PFactory(protocol.Factory):
             ):
                 endpoint = endpoints.TCP4ClientEndpoint(reactor, host, port)
                 endpoint.connect(self).addCallback(
-                    lambda _: LOGGER.info("Connected to new peer %s:%d", host, port)
+                    lambda _, h=host, p=port: LOGGER.info(
+                        "Connected to new peer %s:%d", h, p
+                    )
                 ).addErrback(
-                    lambda err: LOGGER.error(
-                        "Failed to connect to new peer %s:%d: %s", host, port, err
+                    lambda err, h=host, p=port: LOGGER.error(
+                        "Failed to connect to new peer %s:%d: %s", h, p, err
                     )
                 )
                 LOGGER.info("Connecting to new peer %s:%d", host, port)
 
-    def synchronize_spammer_data(self, protocol):
+    def synchronize_spammer_data(self, sync_protocol):
         """Synchronize spammer data with a newly connected peer."""
         for user_id in self.get_all_spammer_ids():
             spammer_data = retrieve_spammer_data(user_id)
@@ -163,7 +165,7 @@ class P2PFactory(protocol.Factory):
                         "p2p_data": spammer_data["p2p_data"],
                     }
                 )
-                protocol.transport.write(message.encode("utf-8"))
+                sync_protocol.transport.write(message.encode("utf-8"))
                 LOGGER.info("Synchronized spammer data for user_id: %s", user_id)
 
     def get_all_spammer_ids(self):
@@ -185,8 +187,9 @@ def find_available_port(start_port):
 
 def check_p2p_data(user_id):
     """Placeholder function to check for P2P data."""
-    reply = {
+    _reply_ = {
         "ok": True,
         "user_id": user_id,
     }
+    LOGGER.info("Check p2p data reply: %s", _reply_)
     return None

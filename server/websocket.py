@@ -6,12 +6,11 @@ This module handles WebSocket connections and spammer checks.
 
 
 import json
-import logging
 from twisted.internet import defer, reactor
 from autobahn.twisted.websocket import WebSocketServerProtocol, WebSocketServerFactory
 from api import APIClient
 
-LOGGER = logging.getLogger(__name__)
+from server_config import LOGGER
 
 
 class SpammerCheckProtocol(WebSocketServerProtocol):

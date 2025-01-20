@@ -5,7 +5,7 @@ This module handles database operations for storing and retrieving spammer data.
 """
 
 import sqlite3
-from config import DATABASE_FILE, LOGGER
+from server_config import DATABASE_FILE, LOGGER
 
 
 def initialize_database():

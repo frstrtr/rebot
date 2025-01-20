@@ -20,7 +20,7 @@ from zope.interface import implementer
 from database import retrieve_spammer_data, store_spammer_data
 from p2p import check_p2p_data
 
-LOGGER = logging.getLogger(__name__)
+from server_config import LOGGER
 
 
 @implementer(IPolicyForHTTPS)
@@ -83,7 +83,7 @@ class SpammerCheckResource(resource.Resource):
                 return server.NOT_DONE_YET
 
             # Check P2P network secondly
-            p2p_data = check_p2p_data(user_id) # XXX temp dummy None
+            p2p_data: dict = check_p2p_data(user_id) or {}
             logging.debug("P2P data: %s", p2p_data)
             if p2p_data:
                 response = {
@@ -124,7 +124,7 @@ class SpammerCheckResource(resource.Resource):
                     or cas_chat_data.get("result", {}).get("offenses", 0) > 0
                 )
 
-                p2p_data = check_p2p_data(user_id)
+                p2p_data: dict = check_p2p_data(user_id) or {}
 
                 response = {
                     "ok": True,

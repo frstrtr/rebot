@@ -1,4 +1,4 @@
-# config.py
+# server_config.py
 
 """
 This module contains configuration settings for the P2P server.

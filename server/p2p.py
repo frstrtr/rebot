@@ -23,19 +23,21 @@ class P2PProtocol(protocol.Protocol):
 
         try:
             # Split the message by '}{' and add the braces back
-            json_strings = message.split("}{")
-            json_strings = (
-                [json_strings[0] + "}"]
-                + ["{" + s for s in json_strings[1:-1]]
-                + ["{" + json_strings[-1]]
-            )
+            # Split the message by '}{' and add the braces back if needed
+            if "}{" in message:
+                json_strings = message.split("}{")
+                json_strings = [json_strings[0] + "}"] + [
+                    "{" + s for s in json_strings[1:]
+                ]
+            else:
+                json_strings = [message]
 
             for json_string in json_strings:
                 try:
                     data = json.loads(json_string)
                     data = self.decode_nested_json(data)
                     # Log the decoded message in a human-readable format
-                    LOGGER.info("Decoded message: %s", pprint.pformat(data))
+                    LOGGER.info("Decoded message:\n%s", pprint.pformat(data))
                     if "user_id" in data:
                         user_id = data["user_id"]
                         lols_bot_data = data.get("lols_bot_data", "")

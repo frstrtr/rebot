@@ -17,7 +17,7 @@ from twisted.internet._sslverify import ClientTLSOptions
 
 from zope.interface import implementer
 
-from database import retrieve_spammer_data, store_spammer_data
+from database import retrieve_spammer_data_from_db, store_spammer_data
 from p2p import check_p2p_data
 
 from server_config import LOGGER
@@ -66,7 +66,7 @@ class SpammerCheckResource(resource.Resource):
             LOGGER.info("Received HTTP request for user_id: %s", user_id)
 
             # Check database first
-            spammer_data = retrieve_spammer_data(user_id)
+            spammer_data = retrieve_spammer_data_from_db(user_id)
             if spammer_data:
                 response = {
                     "ok": True,
@@ -94,6 +94,13 @@ class SpammerCheckResource(resource.Resource):
                     "cas_chat": json.loads(p2p_data["cas_chat_data"]),
                     "p2p": json.loads(p2p_data["p2p_data"]),
                 }
+                # Store the data in the database
+                store_spammer_data(
+                    user_id,
+                    json.dumps(response["lols_bot"]),
+                    json.dumps(response["cas_chat"]),
+                    json.dumps(response["p2p"]),
+                )
                 request.setHeader(b"content-type", b"application/json")
                 request.write(json.dumps(response).encode("utf-8"))
                 request.finish()
@@ -118,6 +125,12 @@ class SpammerCheckResource(resource.Resource):
                 LOGGER.info("CAS chat response: %s", cas_chat_response.decode("utf-8"))
                 lols_bot_data = json.loads(lols_bot_response.decode("utf-8"))
                 cas_chat_data = json.loads(cas_chat_response.decode("utf-8"))
+                
+                # XXX check if static APIs have spammer records about given ID
+                have_records = (
+                    lols_bot_data.get("ok", False)
+                    or cas_chat_data.get("ok", False)
+                )
 
                 is_spammer = (
                     lols_bot_data.get("banned", False)

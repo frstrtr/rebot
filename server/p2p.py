@@ -1,7 +1,7 @@
 import json
 import pprint
 from twisted.internet import endpoints, defer, error, protocol, reactor
-from database import store_spammer_data, retrieve_spammer_data, get_all_spammer_ids
+from database import store_spammer_data, retrieve_spammer_data_from_db, get_all_spammer_ids
 from server_config import LOGGER
 
 
@@ -111,7 +111,7 @@ class P2PFactory(protocol.Factory):
 
     def broadcast_spammer_info(self, user_id):
         """Broadcast spammer information to all connected peers."""
-        spammer_data = retrieve_spammer_data(user_id)
+        spammer_data = retrieve_spammer_data_from_db(user_id)
         if spammer_data:
             message = json.dumps(
                 {
@@ -185,7 +185,7 @@ class P2PFactory(protocol.Factory):
     def synchronize_spammer_data(self, sync_protocol):
         """Synchronize spammer data with a newly connected peer."""
         for user_id in self.get_all_spammer_ids():
-            spammer_data = retrieve_spammer_data(user_id)
+            spammer_data = retrieve_spammer_data_from_db(user_id)
             if spammer_data:
                 message = json.dumps(
                     {
@@ -222,4 +222,5 @@ def check_p2p_data(user_id):
         "user_id": user_id,
     }
     LOGGER.info("Check p2p data reply: %s", _reply_)
+    # dumb response None fro tests
     return None

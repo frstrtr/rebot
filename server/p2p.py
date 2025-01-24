@@ -1,10 +1,5 @@
-# p2p.py
-
-"""
-This module handles P2P connections and data synchronization.
-"""
-
 import json
+import pprint
 from twisted.internet import endpoints, defer, error, protocol, reactor
 from database import store_spammer_data, retrieve_spammer_data, get_all_spammer_ids
 from server_config import LOGGER
@@ -36,18 +31,51 @@ class P2PProtocol(protocol.Protocol):
             )
 
             for json_string in json_strings:
-                data = json.loads(json_string)
-                if "user_id" in data:
-                    user_id = data["user_id"]
-                    lols_bot_data = data.get("lols_bot_data", "")
-                    cas_chat_data = data.get("cas_chat_data", "")
-                    p2p_data = data.get("p2p_data", "")
-                    store_spammer_data(user_id, lols_bot_data, cas_chat_data, p2p_data)
-                    self.factory.broadcast_spammer_info(user_id)
-                elif "peers" in data:
-                    self.factory.update_peer_list(data["peers"])
+                try:
+                    data = json.loads(json_string)
+                    data = self.decode_nested_json(data)
+                    # Log the decoded message in a human-readable format
+                    LOGGER.info("Decoded message: %s", pprint.pformat(data))
+                    if "user_id" in data:
+                        user_id = data["user_id"]
+                        lols_bot_data = data.get("lols_bot_data", "")
+                        cas_chat_data = data.get("cas_chat_data", "")
+                        p2p_data = data.get("p2p_data", "")
+                        if (
+                            p2p_data
+                            and isinstance(p2p_data, dict)
+                            and len(p2p_data) > 0
+                        ):
+                            store_spammer_data(
+                                user_id, lols_bot_data, cas_chat_data, p2p_data
+                            )
+                            self.factory.broadcast_spammer_info(user_id)
+                    elif "peers" in data:
+                        self.factory.update_peer_list(data["peers"])
+                except json.JSONDecodeError as e:
+                    LOGGER.error("Failed to decode JSON object: %s", e)
         except json.JSONDecodeError as e:
             LOGGER.error("Failed to decode JSON: %s", e)
+
+    def decode_nested_json(self, data):
+        """Decode nested JSON strings in the data."""
+        if isinstance(data, dict):
+            for key, value in data.items():
+                if isinstance(value, str):
+                    try:
+                        decoded_value = json.loads(value)
+                        data[key] = self.decode_nested_json(decoded_value)
+                    except json.JSONDecodeError:
+                        data[key] = (
+                            value.encode().decode("unicode_escape").replace("\\", "")
+                        )
+                elif isinstance(value, dict):
+                    data[key] = self.decode_nested_json(value)
+                elif isinstance(value, list):
+                    data[key] = [self.decode_nested_json(item) for item in value]
+        elif isinstance(data, list):
+            data = [self.decode_nested_json(item) for item in data]
+        return data
 
     def connectionLost(self, reason=protocol.connectionDone):
         """Handle lost P2P connections."""

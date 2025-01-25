@@ -60,7 +60,7 @@ class SpammerCheckResource(resource.Resource):
 
     def __init__(self, p2p_factory):
         super().__init__()
-        self.p2p_factory = p2p_factory
+        self.p2p_factory: P2PFactory = p2p_factory
 
     def render_GET(self, request):
         """Handle GET requests by fetching data from the database, P2P network, and static APIs."""

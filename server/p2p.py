@@ -121,7 +121,8 @@ class P2PFactory(protocol.Factory):
             })
             for peer in self.peers:
                 peer.transport.write(message.encode("utf-8"))
-            LOGGER.info("Broadcasted spammer info: %s", message)
+                LOGGER.debug("Broadcast to peer %s", peer)
+            LOGGER.info("Broadcasted spammer(%s) message: %s", user_id, message)
         else:
             LOGGER.warning("No spammer data found for user_id: %s", user_id)
 

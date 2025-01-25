@@ -43,14 +43,15 @@ def main():
     ws_endpoint.listen(ws_factory)
     LOGGER.info("WebSocket server listening on port %d", WEBSOCKET_PORT)
 
+    p2p_factory = P2PFactory(node_uuid)
+
     root = resource.Resource()
-    root.putChild(b"check", SpammerCheckResource())
+    root.putChild(b"check", SpammerCheckResource(p2p_factory))
     http_factory = server.Site(root)
     http_endpoint = endpoints.TCP4ServerEndpoint(reactor, HTTP_PORT)
     http_endpoint.listen(http_factory)
     LOGGER.info("HTTP server listening on port %d", HTTP_PORT)
 
-    p2p_factory = P2PFactory(node_uuid)
     # p2p_endpoint = endpoints.TCP4ServerEndpoint(reactor, port, interface="0.0.0.0")
     p2p_endpoint = endpoints.TCP4ServerEndpoint(reactor, port)
 

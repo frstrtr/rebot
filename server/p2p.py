@@ -113,14 +113,12 @@ class P2PFactory(protocol.Factory):
         """Broadcast spammer information to all connected peers."""
         spammer_data = retrieve_spammer_data_from_db(user_id)
         if spammer_data:
-            message = json.dumps(
-                {
-                    "user_id": user_id,
-                    "lols_bot_data": spammer_data["lols_bot_data"],
-                    "cas_chat_data": spammer_data["cas_chat_data"],
-                    "p2p_data": spammer_data["p2p_data"],
-                }
-            )
+            message = json.dumps({
+                "user_id": user_id,
+                "lols_bot_data": spammer_data["lols_bot_data"],
+                "cas_chat_data": spammer_data["cas_chat_data"],
+                "p2p_data": spammer_data["p2p_data"],
+            })
             for peer in self.peers:
                 peer.transport.write(message.encode("utf-8"))
             LOGGER.info("Broadcasted spammer info: %s", message)

@@ -18,7 +18,7 @@ from twisted.internet._sslverify import ClientTLSOptions
 from zope.interface import implementer
 
 from database import retrieve_spammer_data_from_db, store_spammer_data
-from p2p import check_p2p_data
+from p2p import P2PFactory, check_p2p_data
 
 from server_config import LOGGER
 
@@ -57,6 +57,10 @@ class SpammerCheckResource(resource.Resource):
     """HTTP resource to handle spammer check requests."""
 
     isLeaf = True
+
+    def __init__(self, p2p_factory):
+        super().__init__()
+        self.p2p_factory = p2p_factory
 
     def render_GET(self, request):
         """Handle GET requests by fetching data from the database, P2P network, and static APIs."""
@@ -105,6 +109,9 @@ class SpammerCheckResource(resource.Resource):
                 request.write(json.dumps(response).encode("utf-8"))
                 request.finish()
                 LOGGER.info("Response sent from P2P network: %s", response)
+
+                # Propagate P2P data over peer network if they don't have such records
+                self.p2p_factory.broadcast_spammer_info(user_id)
                 return server.NOT_DONE_YET
 
             # Check static APIs finally
@@ -116,8 +123,6 @@ class SpammerCheckResource(resource.Resource):
 
             d1 = api_client_lols.fetch_data(lols_bot_url)
             d2 = api_client_cas.fetch_data(cas_chat_url)
-            # logging.debug("LOLS response: %s", d1)
-            # logging.debug("CAS response: %s", d2)
 
             def handle_response(responses):
                 lols_bot_response, cas_chat_response = responses
@@ -125,12 +130,11 @@ class SpammerCheckResource(resource.Resource):
                 LOGGER.info("CAS chat response: %s", cas_chat_response.decode("utf-8"))
                 lols_bot_data = json.loads(lols_bot_response.decode("utf-8"))
                 cas_chat_data = json.loads(cas_chat_response.decode("utf-8"))
-                
+
                 # XXX check if static APIs have spammer records about given ID
-                have_records = (
-                    lols_bot_data.get("ok", False)
-                    or cas_chat_data.get("ok", False)
-                )
+                have_static_api_records = lols_bot_data.get(
+                    "banned", False
+                ) or cas_chat_data.get("ok", False)
 
                 is_spammer = (
                     lols_bot_data.get("banned", False)
@@ -155,6 +159,16 @@ class SpammerCheckResource(resource.Resource):
                     json.dumps(cas_chat_data),
                     json.dumps(p2p_data),
                 )
+
+                # Propagate P2P data over peer network if they don't have such records
+                if not p2p_data:
+                    self.p2p_factory.broadcast_spammer_info(user_id)
+
+                # propagate p2p data over peer network
+                if have_static_api_records:
+                    pass
+                else:
+                    pass
 
                 request.setHeader(b"content-type", b"application/json")
                 request.write(json.dumps(response).encode("utf-8"))

@@ -1,7 +1,11 @@
 import json
 import pprint
 from twisted.internet import endpoints, defer, error, protocol, reactor
-from database import store_spammer_data, retrieve_spammer_data_from_db, get_all_spammer_ids
+from database import (
+    store_spammer_data,
+    retrieve_spammer_data_from_db,
+    get_all_spammer_ids,
+)
 from server_config import LOGGER
 
 
@@ -22,10 +26,10 @@ class P2PProtocol(protocol.Protocol):
         LOGGER.info("P2P message received: %s", message)
 
         try:
-            # Split the message by '}{' and add the braces back
             # Split the message by '}{' and add the braces back if needed
             if "}{" in message:
                 json_strings = message.split("}{")
+                LOGGER.debug("json_strings list:\n%s", json_strings)
                 json_strings = [json_strings[0] + "}"] + [
                     "{" + s for s in json_strings[1:]
                 ]
@@ -56,8 +60,8 @@ class P2PProtocol(protocol.Protocol):
                         self.factory.update_peer_list(data["peers"])
                 except json.JSONDecodeError as e:
                     LOGGER.error("Failed to decode JSON object: %s", e)
-        except json.JSONDecodeError as e:
-            LOGGER.error("Failed to decode JSON: %s", e)
+        except Exception as e:
+            LOGGER.error("Error processing P2P message: %s", e)
 
     def decode_nested_json(self, data):
         """Decode nested JSON strings in the data."""
@@ -113,12 +117,14 @@ class P2PFactory(protocol.Factory):
         """Broadcast spammer information to all connected peers."""
         spammer_data = retrieve_spammer_data_from_db(user_id)
         if spammer_data:
-            message = json.dumps({
-                "user_id": user_id,
-                "lols_bot_data": spammer_data["lols_bot_data"],
-                "cas_chat_data": spammer_data["cas_chat_data"],
-                "p2p_data": spammer_data["p2p_data"],
-            })
+            message = json.dumps(
+                {
+                    "user_id": user_id,
+                    "lols_bot_data": spammer_data["lols_bot_data"],
+                    "cas_chat_data": spammer_data["cas_chat_data"],
+                    "p2p_data": spammer_data["p2p_data"],
+                }
+            )
             for peer in self.peers:
                 peer.transport.write(message.encode("utf-8"))
                 LOGGER.debug("Broadcast to peer %s", peer)

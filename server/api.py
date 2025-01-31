@@ -198,8 +198,10 @@ class SpammerCheckResource(resource.Resource):
     def is_spammer(self, data):
         """Determine if the user is a spammer based on the data."""
         logging.debug("Checking if user is a spammer: %s", data)
-        lols_bot_data = json.loads(data["lols_bot_data"])
-        cas_chat_data = json.loads(data["cas_chat_data"])
+        
+        lols_bot_data = json.loads(data["lols_bot_data"]) if data["lols_bot_data"] else {}
+        cas_chat_data = json.loads(data["cas_chat_data"]) if data["cas_chat_data"] else {}
+        
         # TODO add p2p data check
         return (
             lols_bot_data.get("banned", False)

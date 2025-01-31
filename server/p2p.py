@@ -41,9 +41,9 @@ class P2PProtocol(protocol.Protocol):
                     LOGGER.info("Decoded message: %s", pprint.pformat(data))
                     if "user_id" in data:
                         user_id = data["user_id"]
-                        lols_bot_data = data.get("lols_bot_data", "")
-                        cas_chat_data = data.get("cas_chat_data", "")
-                        p2p_data = data.get("p2p_data", "")
+                        lols_bot_data = json.loads(data.get("lols_bot_data", "{}"))
+                        cas_chat_data = json.loads(data.get("cas_chat_data", "{}"))
+                        p2p_data = json.loads(data.get("p2p_data", "{}"))
                         if p2p_data and isinstance(p2p_data, dict) and len(p2p_data) > 0:
                             store_spammer_data(user_id, lols_bot_data, cas_chat_data, p2p_data)
                             self.factory.broadcast_spammer_info(user_id)

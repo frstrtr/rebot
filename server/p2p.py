@@ -27,8 +27,8 @@ class P2PProtocol(protocol.Protocol):
 
         try:
             # Normalize the JSON message (\" --> ")
-            # message = self.normalize_json_message(message)
-            # LOGGER.info("NORMALIZED P2P message: %s", message)
+            message = self.normalize_json_message(message)
+            LOGGER.info("NORMALIZED P2P message: %s", message)
 
             # Split the message by '}{' and add the braces back
             json_strings = self.split_json_objects(message)
@@ -41,9 +41,15 @@ class P2PProtocol(protocol.Protocol):
                     LOGGER.info("Decoded message: %s", pprint.pformat(data))
                     if "user_id" in data:
                         user_id = data["user_id"]
-                        lols_bot_data = json.loads(data.get("lols_bot_data", "{}"))
-                        cas_chat_data = json.loads(data.get("cas_chat_data", "{}"))
-                        p2p_data = json.loads(data.get("p2p_data", "{}"))
+                        lols_bot_data = data.get("lols_bot_data", {})
+                        if isinstance(lols_bot_data, str):
+                            lols_bot_data = json.loads(lols_bot_data)
+                        cas_chat_data = data.get("cas_chat_data", {})
+                        if isinstance(cas_chat_data, str):
+                            cas_chat_data = json.loads(cas_chat_data)
+                        p2p_data = data.get("p2p_data", {})
+                        if isinstance(p2p_data, str):
+                            p2p_data = json.loads(p2p_data)
                         if p2p_data and isinstance(p2p_data, dict) and len(p2p_data) > 0:
                             store_spammer_data(user_id, lols_bot_data, cas_chat_data, p2p_data)
                             self.factory.broadcast_spammer_info(user_id)
@@ -57,9 +63,9 @@ class P2PProtocol(protocol.Protocol):
         except json.JSONDecodeError as e:
             LOGGER.error("Failed to decode JSON: %s", e)
 
-    # def normalize_json_message(self, message):
-    #     """Normalize JSON message by replacing escaped \" symbols with regular " symbols."""
-    #     return message.replace('\\"', '"')
+    def normalize_json_message(self, message):
+        """Normalize JSON message by replacing escaped \" symbols with regular " symbols."""
+        return message.replace('\\"', '"')
 
     def split_json_objects(self, message):
         """Split concatenated JSON objects in the message."""

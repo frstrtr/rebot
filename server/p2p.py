@@ -28,12 +28,13 @@ class P2PProtocol(protocol.Protocol):
         try:
             # Split the message by '}{' and add the braces back
             json_strings = message.split("}{")
+
             json_strings = (
                 [json_strings[0] + "}"]
                 + ["{" + s for s in json_strings[1:-1]]
                 + ["{" + json_strings[-1]]
             )
-
+            LOGGER.debug("json_strings list:\n%s", json_strings)
             for json_string in json_strings:
                 try:
                     data = json.loads(json_string)
@@ -138,14 +139,15 @@ class P2PFactory(protocol.Factory):
 
     def broadcast_spammer_info(self, user_id):
         """Broadcast spammer information to all connected peers."""
-        spammer_data = retrieve_spammer_data(user_id)
+        spammer_data = retrieve_spammer_data_from_db(user_id)
         if spammer_data:
+            # Ensure nested JSON data is properly encoded
             message = json.dumps(
                 {
                     "user_id": user_id,
-                    "lols_bot_data": spammer_data["lols_bot_data"],
-                    "cas_chat_data": spammer_data["cas_chat_data"],
-                    "p2p_data": spammer_data["p2p_data"],
+                    "lols_bot_data": json.dumps(spammer_data["lols_bot_data"]),
+                    "cas_chat_data": json.dumps(spammer_data["cas_chat_data"]),
+                    "p2p_data": json.dumps(spammer_data["p2p_data"]),
                 }
             )
             for peer in self.peers:

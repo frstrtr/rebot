@@ -26,10 +26,6 @@ class P2PProtocol(protocol.Protocol):
         LOGGER.info("P2P message received: %s", message)
 
         try:
-            # Normalize the JSON message (\" --> ")
-            message = self.normalize_json_message(message)
-            LOGGER.info("NORMALIZED P2P message: %s", message)
-
             # Split the message by '}{' and add the braces back
             json_strings = self.split_json_objects(message)
 
@@ -62,10 +58,6 @@ class P2PProtocol(protocol.Protocol):
                     LOGGER.error("Failed to decode JSON object: %s", e)
         except json.JSONDecodeError as e:
             LOGGER.error("Failed to decode JSON: %s", e)
-
-    def normalize_json_message(self, message):
-        """Normalize JSON message by replacing escaped \" symbols with regular " symbols."""
-        return message.replace('\\"', '"')
 
     def split_json_objects(self, message):
         """Split concatenated JSON objects in the message."""

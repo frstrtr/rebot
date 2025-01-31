@@ -43,7 +43,7 @@ def store_spammer_data(user_id, lols_bot_data, cas_chat_data, p2p_data):
     LOGGER.info("Stored spammer data for user_id: %s", user_id)
 
 
-def retrieve_spammer_data(user_id):
+def retrieve_spammer_data_from_db(user_id):
     """Retrieve spammer data from the database."""
     conn = sqlite3.connect(DATABASE_FILE)
     cursor = conn.cursor()

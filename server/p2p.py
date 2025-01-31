@@ -1,7 +1,11 @@
 import json
 import pprint
 from twisted.internet import endpoints, defer, error, protocol, reactor
-from database import store_spammer_data, retrieve_spammer_data, get_all_spammer_ids
+from database import (
+    store_spammer_data,
+    retrieve_spammer_data_from_db,
+    get_all_spammer_ids,
+)
 from server_config import LOGGER
 
 
@@ -22,19 +26,20 @@ class P2PProtocol(protocol.Protocol):
         LOGGER.info("P2P message received: %s", message)
 
         try:
-            # Normalize the JSON message (\" --> ")
-            message = self.normalize_json_message(message)
-            LOGGER.info("NORMALIZED P2P message: %s", message)
-
             # Split the message by '}{' and add the braces back
-            json_strings = self.split_json_objects(message)
+            json_strings = message.split("}{")
+            json_strings = (
+                [json_strings[0] + "}"]
+                + ["{" + s for s in json_strings[1:-1]]
+                + ["{" + json_strings[-1]]
+            )
 
             for json_string in json_strings:
                 try:
                     data = json.loads(json_string)
                     data = self.decode_nested_json(data)
                     # Log the decoded message in a human-readable format
-                    LOGGER.info("Decoded message: %s", pprint.pformat(data))
+                    LOGGER.info("Decoded message:\n%s", pprint.pformat(data))
                     if "user_id" in data:
                         user_id = data["user_id"]
                         lols_bot_data = json.loads(data.get("lols_bot_data", ""))
@@ -58,8 +63,8 @@ class P2PProtocol(protocol.Protocol):
                         self.factory.update_peer_list(data["peers"])
                 except json.JSONDecodeError as e:
                     LOGGER.error("Failed to decode JSON object: %s", e)
-        except json.JSONDecodeError as e:
-            LOGGER.error("Failed to decode JSON: %s", e)
+        except Exception as e:
+            LOGGER.error("Error processing P2P message: %s", e)
 
     def normalize_json_message(self, message):
         """Normalize JSON message by replacing escaped \" symbols with regular " symbols."""
@@ -131,25 +136,23 @@ class P2PFactory(protocol.Factory):
         self.uuid = uuid
         self.bootstrap_peers = ["172.19.113.234:9002", "172.19.112.1:9001"]
 
-
-def broadcast_spammer_info(self, user_id):
-    """Broadcast spammer information to all connected peers."""
-    spammer_data = retrieve_spammer_data(user_id)
-    if spammer_data:
-        # Ensure nested JSON data is properly encoded
-        message = json.dumps(
-            {
-                "user_id": user_id,
-                "lols_bot_data": json.dumps(spammer_data["lols_bot_data"]),
-                "cas_chat_data": json.dumps(spammer_data["cas_chat_data"]),
-                "p2p_data": json.dumps(spammer_data["p2p_data"]),
-            }
-        )
-        for peer in self.peers:
-            peer.transport.write(message.encode("utf-8"))
-        LOGGER.info("Broadcasted spammer info: %s", message)
-    else:
-        LOGGER.warning("No spammer data found for user_id: %s", user_id)
+    def broadcast_spammer_info(self, user_id):
+        """Broadcast spammer information to all connected peers."""
+        spammer_data = retrieve_spammer_data(user_id)
+        if spammer_data:
+            message = json.dumps(
+                {
+                    "user_id": user_id,
+                    "lols_bot_data": spammer_data["lols_bot_data"],
+                    "cas_chat_data": spammer_data["cas_chat_data"],
+                    "p2p_data": spammer_data["p2p_data"],
+                }
+            )
+            for peer in self.peers:
+                peer.transport.write(message.encode("utf-8"))
+            LOGGER.info("Broadcasted spammer info: %s", message)
+        else:
+            LOGGER.warning("No spammer data found for user_id: %s", user_id)
 
     def connect_to_bootstrap_peers(self, bootstrap_addresses):
         """Connect to bootstrap peers and gather available peers."""
@@ -209,7 +212,7 @@ def broadcast_spammer_info(self, user_id):
     def synchronize_spammer_data(self, sync_protocol):
         """Synchronize spammer data with a newly connected peer."""
         for user_id in self.get_all_spammer_ids():
-            spammer_data = retrieve_spammer_data(user_id)
+            spammer_data = retrieve_spammer_data_from_db(user_id)
             if spammer_data:
                 message = json.dumps(
                     {
@@ -246,4 +249,5 @@ def check_p2p_data(user_id):
         "user_id": user_id,
     }
     LOGGER.info("Check p2p data reply: %s", _reply_)
+    # dumb response None fro tests
     return None

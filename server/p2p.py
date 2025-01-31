@@ -22,13 +22,12 @@ class P2PProtocol(protocol.Protocol):
         LOGGER.info("P2P message received: %s", message)
 
         try:
+            # Normalize the JSON message (\" --> ")
+            message = self.normalize_json_message(message)
+            LOGGER.info("NORMALIZED P2P message: %s", message)
+
             # Split the message by '}{' and add the braces back
-            json_strings = message.split("}{")
-            json_strings = (
-                [json_strings[0] + "}"]
-                + ["{" + s for s in json_strings[1:-1]]
-                + ["{" + json_strings[-1]]
-            )
+            json_strings = self.split_json_objects(message)
 
             for json_string in json_strings:
                 try:
@@ -38,9 +37,9 @@ class P2PProtocol(protocol.Protocol):
                     LOGGER.info("Decoded message: %s", pprint.pformat(data))
                     if "user_id" in data:
                         user_id = data["user_id"]
-                        lols_bot_data = data.get("lols_bot_data", "")
-                        cas_chat_data = data.get("cas_chat_data", "")
-                        p2p_data = data.get("p2p_data", "")
+                        lols_bot_data = json.loads(data.get("lols_bot_data", ""))
+                        cas_chat_data = json.loads(data.get("cas_chat_data", ""))
+                        p2p_data = json.loads(data.get("p2p_data", ""))
                         if (
                             p2p_data
                             and isinstance(p2p_data, dict)
@@ -50,12 +49,37 @@ class P2PProtocol(protocol.Protocol):
                                 user_id, lols_bot_data, cas_chat_data, p2p_data
                             )
                             self.factory.broadcast_spammer_info(user_id)
+                        else:
+                            # Store the spammer data even if p2p_data is empty
+                            store_spammer_data(
+                                user_id, lols_bot_data, cas_chat_data, p2p_data
+                            )
                     elif "peers" in data:
                         self.factory.update_peer_list(data["peers"])
                 except json.JSONDecodeError as e:
                     LOGGER.error("Failed to decode JSON object: %s", e)
         except json.JSONDecodeError as e:
             LOGGER.error("Failed to decode JSON: %s", e)
+
+    def normalize_json_message(self, message):
+        """Normalize JSON message by replacing escaped \" symbols with regular " symbols."""
+        return message.replace('\\"', '"')
+
+    def split_json_objects(self, message):
+        """Split concatenated JSON objects in the message."""
+        json_strings = []
+        depth = 0
+        start = 0
+        for i, char in enumerate(message):
+            if char == "{":
+                if depth == 0:
+                    start = i
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    json_strings.append(message[start : i + 1])
+        return json_strings
 
     def decode_nested_json(self, data):
         """Decode nested JSON strings in the data."""
@@ -107,23 +131,25 @@ class P2PFactory(protocol.Factory):
         self.uuid = uuid
         self.bootstrap_peers = ["172.19.113.234:9002", "172.19.112.1:9001"]
 
-    def broadcast_spammer_info(self, user_id):
-        """Broadcast spammer information to all connected peers."""
-        spammer_data = retrieve_spammer_data(user_id)
-        if spammer_data:
-            message = json.dumps(
-                {
-                    "user_id": user_id,
-                    "lols_bot_data": spammer_data["lols_bot_data"],
-                    "cas_chat_data": spammer_data["cas_chat_data"],
-                    "p2p_data": spammer_data["p2p_data"],
-                }
-            )
-            for peer in self.peers:
-                peer.transport.write(message.encode("utf-8"))
-            LOGGER.info("Broadcasted spammer info: %s", message)
-        else:
-            LOGGER.warning("No spammer data found for user_id: %s", user_id)
+
+def broadcast_spammer_info(self, user_id):
+    """Broadcast spammer information to all connected peers."""
+    spammer_data = retrieve_spammer_data(user_id)
+    if spammer_data:
+        # Ensure nested JSON data is properly encoded
+        message = json.dumps(
+            {
+                "user_id": user_id,
+                "lols_bot_data": json.dumps(spammer_data["lols_bot_data"]),
+                "cas_chat_data": json.dumps(spammer_data["cas_chat_data"]),
+                "p2p_data": json.dumps(spammer_data["p2p_data"]),
+            }
+        )
+        for peer in self.peers:
+            peer.transport.write(message.encode("utf-8"))
+        LOGGER.info("Broadcasted spammer info: %s", message)
+    else:
+        LOGGER.warning("No spammer data found for user_id: %s", user_id)
 
     def connect_to_bootstrap_peers(self, bootstrap_addresses):
         """Connect to bootstrap peers and gather available peers."""

@@ -23,7 +23,8 @@ class P2PProtocol(protocol.Protocol):
     def dataReceived(self, data):
         """Handle received P2P data."""
         message = data.decode("utf-8")
-        LOGGER.debug("P2P message received: %s", message)
+        peer = self.transport.getPeer()
+        LOGGER.debug("P2P message received from %s:%d: %s", peer.host, peer.port, message)
 
         try:
             # Split the message by '}{' and add the braces back
@@ -137,7 +138,7 @@ class P2PFactory(protocol.Factory):
     def __init__(self, uuid):
         self.peers = []
         self.uuid = uuid
-        self.bootstrap_peers = ["172.19.113.234:9002", "172.19.112.1:9001"]
+        self.bootstrap_peers = []
 
     def broadcast_spammer_info(self, user_id):
         """Broadcast spammer information to all connected peers."""
@@ -164,6 +165,7 @@ class P2PFactory(protocol.Factory):
         for address in bootstrap_addresses:
             host, port = address.split(":")
             port = int(port)
+            LOGGER.debug("Attempting to connect to bootstrap peer %s:%d", host, port)
             endpoint = endpoints.TCP4ClientEndpoint(reactor, host, port)
             deferred = endpoint.connect(self)
             deferred.addCallback(self.on_bootstrap_peer_connected)
@@ -174,7 +176,14 @@ class P2PFactory(protocol.Factory):
     def on_bootstrap_peer_connected(self, peer_protocol):
         """Handle successful connection to a bootstrap peer."""
         peer = peer_protocol.transport.getPeer()
-        LOGGER.info("Connected to bootstrap peer %s:%d", peer.host, peer.port)
+        peer_uuid = peer_protocol.factory.uuid
+        LOGGER.info("Connected to bootstrap peer %s:%d UUID: %s", peer.host, peer.port, peer_uuid)
+
+        if peer_uuid == self.uuid:
+            LOGGER.info("Disconnecting bootstrap peer with same UUID %s:%d (UUID: %s)", peer.host, peer.port, peer_uuid)
+            peer_protocol.transport.loseConnection()
+            return
+
         self.bootstrap_peers.append(peer_protocol)
         self.synchronize_spammer_data(peer_protocol)
 

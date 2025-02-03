@@ -4,6 +4,7 @@
 This module handles database operations for storing and retrieving spammer data.
 """
 
+import json
 import sqlite3
 from server_config import DATABASE_FILE, LOGGER
 
@@ -29,6 +30,14 @@ def initialize_database():
 
 def store_spammer_data(user_id, lols_bot_data, cas_chat_data, p2p_data):
     """Store spammer data in the database."""
+    # Convert dictionaries to JSON strings if necessary
+    if isinstance(lols_bot_data, dict):
+        lols_bot_data = json.dumps(lols_bot_data)
+    if isinstance(cas_chat_data, dict):
+        cas_chat_data = json.dumps(cas_chat_data)
+    if isinstance(p2p_data, dict):
+        p2p_data = json.dumps(p2p_data)
+
     conn = sqlite3.connect(DATABASE_FILE)
     cursor = conn.cursor()
     cursor.execute(

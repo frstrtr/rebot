@@ -1,11 +1,33 @@
-{\"peers": [
-        {\"host": \"192.168.86.109", \"port": 35094, \"uuid": \"3f4162d3-9f8a-4b44-8cd6-5b2296bd081b"
-        },
-        {\"host": \"192.168.86.109", \"port": 9828, \"uuid": \"3f4162d3-9f8a-4b44-8cd6-5b2296bd081b"
-        },
-        {\"host": \"192.168.86.30", \"port": 54106, \"uuid": \"3f4162d3-9f8a-4b44-8cd6-5b2296bd081b"
-        },
-        {\"host": \"192.168.86.30", \"port": 9828, \"uuid": \"3f4162d3-9f8a-4b44-8cd6-5b2296bd081b"
+{
+    "peers": [
+        {
+            "host": "192.168.86.109",
+            "port": 9828,
+            "uuid": "4081b6fe-49a6-44b8-bd1e-a2e8bacf469f"
         }
     ]
+}
+{
+    "user_id": "3323351",
+    "lols_bot_data": "{\"ok\": true, \"user_id\": 3323351, \"banned\": false}",
+    "cas_chat_data": "{\"ok\": false, \"description\": \"Record not found.\"}",
+    "p2p_data": "{}"
+}
+{
+    "user_id": "3323351551",
+    "lols_bot_data": "{\"ok\": true, \"user_id\": 3323351551, \"banned\": false}",
+    "cas_chat_data": "{\"ok\": false, \"description\": \"Record not found.\"}",
+    "p2p_data": "{}"
+}
+{
+    "user_id": "7398339246",
+    "lols_bot_data": "{\"ok\": true, \"user_id\": 7398339246, \"banned\": false}",
+    "cas_chat_data": "{\"ok\": false, \"description\": \"Record not found.\"}",
+    "p2p_data": "{}"
+}
+{
+    "user_id": "7505946566",
+    "lols_bot_data": "{\"ok\": true, \"user_id\": 7505946566, \"banned\": true, \"when\": \"2025-01-31 17:43:05 UTC\", \"offenses\": 21, \"spam_factor\": 30.88}",
+    "cas_chat_data": "{\"ok\": true, \"result\": {\"is_mass_join\": false, \"offenses\": 1, \"messages\": [\"\\u0412\\u044b\\u0438\\u0433\\u0440\\u0430\\u043b 230\\u043a \\u0432 \\u0431\\u043e\\u043d\\u0430\\u043d\\u0437\\u0435 \\u0441 \\u0431\\u043e\\u043d\\u0443\\u0441\\u0430:  @tgbot_obot\"], \"time_added\": \"2025-01-31T17:42:00.000Z\"}}",
+    "p2p_data": "{}"
 }

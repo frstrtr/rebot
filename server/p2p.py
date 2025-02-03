@@ -34,7 +34,7 @@ class P2PProtocol(protocol.Protocol):
                     data = json.loads(json_string)
                     data = self.decode_nested_json(data)
                     # Log the decoded message in a human-readable format
-                    LOGGER.info("Decoded message: %s", pprint.pformat(data))
+                    LOGGER.info("Decoded message: %s", data)
                     if "user_id" in data:
                         user_id = data["user_id"]
                         lols_bot_data = data.get("lols_bot_data", {})
@@ -90,7 +90,13 @@ class P2PProtocol(protocol.Protocol):
                 elif isinstance(value, list):
                     data[key] = [self.decode_nested_json(item) for item in value]
         elif isinstance(data, list):
-            data = [self.decode_nested_json(item) for item in data]
+            return [self.decode_nested_json(item) for item in data]
+        elif isinstance(data, str):
+            try:
+                decoded_value = json.loads(data)
+                return self.decode_nested_json(decoded_value)
+            except json.JSONDecodeError:
+                return data.encode().decode('unicode_escape').replace("\\", "")
         return data
 
     def connectionLost(self, reason=protocol.connectionDone):

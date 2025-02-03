@@ -22,8 +22,6 @@ from p2p import P2PFactory, check_p2p_data
 
 from server_config import LOGGER
 
-# Update the script name for the logger
-LOGGER.extra['script_name'] = __name__
 
 @implementer(IPolicyForHTTPS)
 class NoVerifyContextFactory:
@@ -78,9 +76,21 @@ class SpammerCheckResource(resource.Resource):
                     "ok": True,
                     "user_id": user_id,
                     "is_spammer": self.is_spammer(spammer_data),
-                    "lols_bot": json.loads(spammer_data["lols_bot_data"]) if spammer_data["lols_bot_data"] else {},
-                    "cas_chat": json.loads(spammer_data["cas_chat_data"]) if spammer_data["cas_chat_data"] else {},
-                    "p2p": json.loads(spammer_data["p2p_data"]) if spammer_data["p2p_data"] else {},
+                    "lols_bot": (
+                        json.loads(spammer_data["lols_bot_data"])
+                        if spammer_data["lols_bot_data"]
+                        else {}
+                    ),
+                    "cas_chat": (
+                        json.loads(spammer_data["cas_chat_data"])
+                        if spammer_data["cas_chat_data"]
+                        else {}
+                    ),
+                    "p2p": (
+                        json.loads(spammer_data["p2p_data"])
+                        if spammer_data["p2p_data"]
+                        else {}
+                    ),
                 }
                 request.setHeader(b"content-type", b"application/json")
                 request.write(json.dumps(response).encode("utf-8"))
@@ -96,9 +106,19 @@ class SpammerCheckResource(resource.Resource):
                     "ok": True,
                     "user_id": user_id,
                     "is_spammer": self.is_spammer(p2p_data),
-                    "lols_bot": json.loads(p2p_data["lols_bot_data"]) if p2p_data["lols_bot_data"] else {},
-                    "cas_chat": json.loads(p2p_data["cas_chat_data"]) if p2p_data["cas_chat_data"] else {},
-                    "p2p": json.loads(p2p_data["p2p_data"]) if p2p_data["p2p_data"] else {},
+                    "lols_bot": (
+                        json.loads(p2p_data["lols_bot_data"])
+                        if p2p_data["lols_bot_data"]
+                        else {}
+                    ),
+                    "cas_chat": (
+                        json.loads(p2p_data["cas_chat_data"])
+                        if p2p_data["cas_chat_data"]
+                        else {}
+                    ),
+                    "p2p": (
+                        json.loads(p2p_data["p2p_data"]) if p2p_data["p2p_data"] else {}
+                    ),
                 }
                 # Store the data in the database
                 store_spammer_data(
@@ -200,11 +220,15 @@ class SpammerCheckResource(resource.Resource):
     def is_spammer(self, data):
         """Determine if the user is a spammer based on the data."""
         logging.debug("Checking if user is a spammer: %s", data)
-        
-        lols_bot_data = json.loads(data["lols_bot_data"]) if data["lols_bot_data"] else {}
-        cas_chat_data = json.loads(data["cas_chat_data"]) if data["cas_chat_data"] else {}
+
+        lols_bot_data = (
+            json.loads(data["lols_bot_data"]) if data["lols_bot_data"] else {}
+        )
+        cas_chat_data = (
+            json.loads(data["cas_chat_data"]) if data["cas_chat_data"] else {}
+        )
         p2p_data = json.loads(data["p2p_data"]) if data["p2p_data"] else {}
-        
+
         # TODO add p2p data check
         return (
             lols_bot_data.get("banned", False)

@@ -16,8 +16,6 @@ from server_config import (
     BOOTSTRAP_ADDRESSES,
 )
 
-# Update the script name for the logger
-LOGGER.extra['script_name'] = __name__
 
 def main():
     """Main function to start the server."""
@@ -66,7 +64,9 @@ def main():
             LOGGER.error("Cannot listen on port %d: %s", port, e)
             port = find_available_port(port + 1)
             LOGGER.info("Retrying with port %d", port)
-            p2p_endpoint = endpoints.TCP4ServerEndpoint(reactor, port, interface="0.0.0.0")
+            p2p_endpoint = endpoints.TCP4ServerEndpoint(
+                reactor, port, interface="0.0.0.0"
+            )
 
     p2p_factory.connect_to_bootstrap_peers(BOOTSTRAP_ADDRESSES).addCallback(
         lambda _: LOGGER.info("Finished connecting to bootstrap peers")

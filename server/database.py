@@ -8,9 +8,6 @@ import json
 import sqlite3
 from server_config import DATABASE_FILE, LOGGER
 
-# Update the script name for the logger
-LOGGER.extra["script_name"] = __name__
-
 
 def initialize_database():
     """Initialize the database and create tables if they don't exist."""

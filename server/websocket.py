@@ -12,8 +12,6 @@ from api import APIClient
 
 from server_config import LOGGER
 
-# Update the script name for the logger
-LOGGER.extra['script_name'] = __name__
 
 class SpammerCheckProtocol(WebSocketServerProtocol):
     """WebSocket protocol to handle spammer check requests."""
@@ -76,10 +74,10 @@ class SpammerCheckProtocol(WebSocketServerProtocol):
         cas_chat_url = f"https://api.cas.chat/check?user_id={user_id}"
 
         interval = 60  # Start with a 1-minute interval
-        end_time = reactor.seconds() + polling_duration # pylint: disable=no-member
+        end_time = reactor.seconds() + polling_duration  # pylint: disable=no-member
 
         def poll():
-            if reactor.seconds() >= end_time: # pylint: disable=no-member
+            if reactor.seconds() >= end_time:  # pylint: disable=no-member
                 LOGGER.info("Polling duration ended.")
                 return
 
@@ -106,7 +104,7 @@ class SpammerCheckProtocol(WebSocketServerProtocol):
 
                 nonlocal interval
                 interval = min(interval * 2, 3600)  # Max interval of 1 hour
-                reactor.callLater(interval, poll) # pylint: disable=no-member
+                reactor.callLater(interval, poll)  # pylint: disable=no-member
 
             defer.gatherResults([d1, d2]).addCallback(handle_response)
 

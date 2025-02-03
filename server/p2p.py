@@ -8,8 +8,6 @@ from database import (
 )
 from server_config import LOGGER
 
-# Update the script name for the logger
-LOGGER.extra['script_name'] = __name__
 
 class P2PProtocol(protocol.Protocol):
     """P2P protocol to handle connections and exchange spammer information."""
@@ -21,7 +19,7 @@ class P2PProtocol(protocol.Protocol):
         LOGGER.info("P2P connection made with %s:%d", peer.host, peer.port)
         LOGGER.info("P2P connection details: %s", peer)
         self.send_peer_info()
-        
+
     def dataReceived(self, data):
         """Handle received P2P data."""
         message = data.decode("utf-8")
@@ -48,12 +46,20 @@ class P2PProtocol(protocol.Protocol):
                         p2p_data = data.get("p2p_data", {})
                         if isinstance(p2p_data, str):
                             p2p_data = json.loads(p2p_data)
-                        if p2p_data and isinstance(p2p_data, dict) and len(p2p_data) > 0:
-                            store_spammer_data(user_id, lols_bot_data, cas_chat_data, p2p_data)
+                        if (
+                            p2p_data
+                            and isinstance(p2p_data, dict)
+                            and len(p2p_data) > 0
+                        ):
+                            store_spammer_data(
+                                user_id, lols_bot_data, cas_chat_data, p2p_data
+                            )
                             self.factory.broadcast_spammer_info(user_id)
                         else:
                             # Store the spammer data even if p2p_data is empty
-                            store_spammer_data(user_id, lols_bot_data, cas_chat_data, p2p_data)
+                            store_spammer_data(
+                                user_id, lols_bot_data, cas_chat_data, p2p_data
+                            )
                     elif "peers" in data:
                         self.factory.update_peer_list(data["peers"])
                 except json.JSONDecodeError as e:
@@ -67,14 +73,14 @@ class P2PProtocol(protocol.Protocol):
         depth = 0
         start = 0
         for i, char in enumerate(message):
-            if char == '{':
+            if char == "{":
                 if depth == 0:
                     start = i
                 depth += 1
-            elif char == '}':
+            elif char == "}":
                 depth -= 1
                 if depth == 0:
-                    json_strings.append(message[start:i+1])
+                    json_strings.append(message[start : i + 1])
         return json_strings
 
     def decode_nested_json(self, data):
@@ -86,7 +92,9 @@ class P2PProtocol(protocol.Protocol):
                         decoded_value = json.loads(value)
                         data[key] = self.decode_nested_json(decoded_value)
                     except json.JSONDecodeError:
-                        data[key] = value.encode().decode('unicode_escape').replace("\\", "")
+                        data[key] = (
+                            value.encode().decode("unicode_escape").replace("\\", "")
+                        )
                 elif isinstance(value, dict):
                     data[key] = self.decode_nested_json(value)
                 elif isinstance(value, list):
@@ -98,7 +106,7 @@ class P2PProtocol(protocol.Protocol):
                 decoded_value = json.loads(data)
                 return self.decode_nested_json(decoded_value)
             except json.JSONDecodeError:
-                return data.encode().decode('unicode_escape').replace("\\", "")
+                return data.encode().decode("unicode_escape").replace("\\", "")
         return data
 
     def connectionLost(self, reason=protocol.connectionDone):
@@ -130,7 +138,7 @@ class P2PFactory(protocol.Factory):
         self.peers = []
         self.uuid = uuid
         self.bootstrap_peers = ["172.19.113.234:9002", "172.19.112.1:9001"]
-    
+
     def broadcast_spammer_info(self, user_id):
         """Broadcast spammer information to all connected peers."""
         spammer_data = retrieve_spammer_data_from_db(user_id)

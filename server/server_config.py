@@ -6,17 +6,13 @@ This module contains configuration settings for the P2P server.
 
 import logging
 
-class ScriptNameAdapter(logging.LoggerAdapter):
-    def process(self, msg, kwargs):
-        return f"{self.extra['script_name']} - {msg}", kwargs
-
 # Logging configuration
 logging.basicConfig(
     level=logging.DEBUG,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    format="%(asctime)s - %(filename)s - %(levelname)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
-LOGGER = ScriptNameAdapter(logging.getLogger(__name__), {'script_name': __name__})
+LOGGER = logging.getLogger(__name__)
 
 # Default port for P2P server
 DEFAULT_P2P_PORT = 9828

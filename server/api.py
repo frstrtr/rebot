@@ -67,7 +67,7 @@ class SpammerCheckResource(resource.Resource):
         user_id = request.args.get(b"user_id", [None])[0]
         if user_id:
             user_id = user_id.decode("utf-8")
-            LOGGER.info("---------------------------------\nReceived HTTP request for user_id: %s", user_id)
+            LOGGER.info("\033[7m---------------------------------\nReceived HTTP request for user_id: %s\033[0m", user_id)
 
             # Check database first
             spammer_data = retrieve_spammer_data_from_db(user_id)

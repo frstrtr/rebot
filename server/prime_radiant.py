@@ -16,6 +16,8 @@ from server_config import (
     BOOTSTRAP_ADDRESSES,
 )
 
+# Update the script name for the logger
+LOGGER.extra['script_name'] = __name__
 
 def main():
     """Main function to start the server."""

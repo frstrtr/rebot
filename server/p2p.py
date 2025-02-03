@@ -8,6 +8,8 @@ from database import (
 )
 from server_config import LOGGER
 
+# Update the script name for the logger
+LOGGER.extra['script_name'] = __name__
 
 class P2PProtocol(protocol.Protocol):
     """P2P protocol to handle connections and exchange spammer information."""
@@ -23,7 +25,7 @@ class P2PProtocol(protocol.Protocol):
     def dataReceived(self, data):
         """Handle received P2P data."""
         message = data.decode("utf-8")
-        LOGGER.info("P2P message received: %s", message)
+        LOGGER.debug("P2P message received: %s", message)
 
         try:
             # Split the message by '}{' and add the braces back
@@ -34,7 +36,7 @@ class P2PProtocol(protocol.Protocol):
                     data = json.loads(json_string)
                     data = self.decode_nested_json(data)
                     # Log the decoded message in a human-readable format
-                    LOGGER.info("Decoded message: %s", data)
+                    LOGGER.debug("Decoded message: %s", data)
                     if "user_id" in data:
                         user_id = data["user_id"]
                         lols_bot_data = data.get("lols_bot_data", {})

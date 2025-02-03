@@ -12,6 +12,8 @@ from api import APIClient
 
 from server_config import LOGGER
 
+# Update the script name for the logger
+LOGGER.extra['script_name'] = __name__
 
 class SpammerCheckProtocol(WebSocketServerProtocol):
     """WebSocket protocol to handle spammer check requests."""

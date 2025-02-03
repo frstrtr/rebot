@@ -22,6 +22,8 @@ from p2p import P2PFactory, check_p2p_data
 
 from server_config import LOGGER
 
+# Update the script name for the logger
+LOGGER.extra['script_name'] = __name__
 
 @implementer(IPolicyForHTTPS)
 class NoVerifyContextFactory:

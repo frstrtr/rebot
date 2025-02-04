@@ -72,16 +72,21 @@ class P2PProtocol(protocol.Protocol):
             "P2P message received from %s:%d: %s", peer.host, peer.port, message
         )
 
-        try:
-            data = json.loads(message)
-            if data["type"] == HANDSHAKE_INIT:
-                self.handle_handshake_init(data)
-            elif data["type"] == HANDSHAKE_RESPONSE:
-                self.handle_handshake_response(data)
-            else:
-                self.handle_p2p_data(data)
-        except json.JSONDecodeError as e:
-            LOGGER.error("Failed to decode JSON: %s", e)
+
+        # Split the message by '}{' and add the braces back
+        json_strings = self.split_json_objects(message)
+
+        for json_string in json_strings:
+            try:
+                data = json.loads(json_string)
+                if data["type"] == HANDSHAKE_INIT:
+                    self.handle_handshake_init(data)
+                elif data["type"] == HANDSHAKE_RESPONSE:
+                    self.handle_handshake_response(data)
+                else:
+                    self.handle_p2p_data(data)
+            except json.JSONDecodeError as e:
+                LOGGER.error("Failed to decode JSON: %s", e)
 
     def handle_handshake_init(self, data):
         """Handle handshake initiation message."""
@@ -231,6 +236,25 @@ class P2PFactory(protocol.Factory):
         self.peers = []
         self.node_uuid = node_uuid or str(uuid.uuid4())
         self.bootstrap_peers = []
+    
+    def broadcast_spammer_info(self, user_id):
+        """Broadcast spammer information to all connected peers."""
+        spammer_data = retrieve_spammer_data_from_db(user_id)
+        if spammer_data:
+            # Ensure nested JSON data is properly encoded
+            message = json.dumps(
+                {
+                    "user_id": user_id,
+                    "lols_bot_data": spammer_data["lols_bot_data"],
+                    "cas_chat_data": spammer_data["cas_chat_data"],
+                    "p2p_data": spammer_data["p2p_data"],
+                }
+            )
+            for peer in self.peers:
+                peer.transport.write(message.encode("utf-8"))
+            LOGGER.info("Broadcasted spammer info: %s", message)
+        else:
+            LOGGER.warning("No spammer data found for user_id: %s", user_id)
 
     def connect_to_bootstrap_peers(self, bootstrap_addresses):
         """Connect to bootstrap peers and gather available peers."""

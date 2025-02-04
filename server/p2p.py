@@ -24,7 +24,9 @@ class P2PProtocol(protocol.Protocol):
         """Handle received P2P data."""
         message = data.decode("utf-8")
         peer = self.transport.getPeer()
-        LOGGER.debug("P2P message received from %s:%d: %s", peer.host, peer.port, message)
+        LOGGER.debug(
+            "P2P message received from %s:%d: %s", peer.host, peer.port, message
+        )
 
         try:
             # Split the message by '}{' and add the braces back
@@ -125,7 +127,7 @@ class P2PProtocol(protocol.Protocol):
             }
             for peer in self.factory.peers
         ]
-        message = json.dumps({"peers": peer_info})
+        message = json.dumps({"peers": peer_info, "uuid": self.factory.uuid})
         self.transport.write(message.encode("utf-8"))
         LOGGER.info("Sent peer info: %s", message)
 
@@ -177,13 +179,27 @@ class P2PFactory(protocol.Factory):
         """Handle successful connection to a bootstrap peer."""
         peer = peer_protocol.transport.getPeer()
         peer_uuid = peer_protocol.factory.uuid
-        LOGGER.info("Connected to bootstrap peer %s:%d UUID: %s", peer.host, peer.port, peer_uuid)
+
+        # Retrieve the peer's UUID from the received data
+        peer_data = json.loads(peer_protocol.transport.read().decode("utf-8"))
+        peer_uuid = peer_data.get("uuid")
 
         if peer_uuid == self.uuid:
-            LOGGER.info("Disconnecting bootstrap peer with same UUID %s:%d (UUID: %s)", peer.host, peer.port, peer_uuid)
+            LOGGER.info(
+                "Disconnecting peer with same UUID %s:%d (UUID: %s)",
+                peer.host,
+                peer.port,
+                peer_uuid,
+            )
             peer_protocol.transport.loseConnection()
             return
 
+        LOGGER.info(
+            "Connected to bootstrap peer %s:%d UUID: %s",
+            peer.host,
+            peer.port,
+            peer_uuid,
+        )
         self.bootstrap_peers.append(peer_protocol)
         self.synchronize_spammer_data(peer_protocol)
 

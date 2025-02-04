@@ -13,6 +13,7 @@ Functions:
 """
 
 import json
+import uuid
 
 from twisted.internet import endpoints, defer, error, protocol, reactor
 from twisted.internet.address import IPv4Address
@@ -27,9 +28,11 @@ from server_config import LOGGER
 class PeerAddress(IPv4Address):
     """Custom class that extends IPv4Address and includes a UUID property"""
 
-    def __init__(self, type, host, port, uuid):
-        super().__init__(type, host, port)
-        self.uuid = uuid
+    def __init__(self, addr_type, host, port, node_uuid=None):
+        if node_uuid is None:
+            node_uuid = str(uuid.uuid4())
+        super().__init__(addr_type, host, port)
+        self.node_uuid = node_uuid
 
 
 class P2PProtocol(protocol.Protocol):
@@ -37,17 +40,21 @@ class P2PProtocol(protocol.Protocol):
 
     def connectionMade(self):
         """Handle new P2P connections."""
-        peer = self.transport.getPeer()
-        peer_address = PeerAddress(peer.type, peer.host, peer.port, self.factory.uuid)
-        self.factory.peers.append(peer_address)
+        peer = self.getPeer()
+        self.factory.peers.append(peer)
         LOGGER.info("P2P connection made with %s:%d", peer.host, peer.port)
         LOGGER.info("P2P connection details: %s", peer)
         self.send_peer_info()
 
+    def getPeer(self):
+        """Override getPeer to return PeerAddress with UUID."""
+        peer = self.transport.getPeer()
+        return PeerAddress(peer.type, peer.host, peer.port, self.factory.uuid)
+
     def dataReceived(self, data):
         """Handle received P2P data."""
         message = data.decode("utf-8")
-        peer = self.transport.getPeer()
+        peer = self.getPeer()
         LOGGER.debug(
             "P2P message received from %s:%d: %s", peer.host, peer.port, message
         )
@@ -140,7 +147,7 @@ class P2PProtocol(protocol.Protocol):
 
     def connectionLost(self, reason=protocol.connectionDone):
         """Handle lost P2P connections."""
-        peer = self.transport.getPeer()
+        peer = self.getPeer()
         self.factory.peers = [
             p for p in self.factory.peers if p.host != peer.host or p.port != peer.port
         ]
@@ -152,7 +159,7 @@ class P2PProtocol(protocol.Protocol):
             {
                 "host": peer.host,
                 "port": peer.port,
-                "uuid": peer.uuid,
+                "uuid": peer.node_uuid,
             }
             for peer in self.factory.peers
         ]

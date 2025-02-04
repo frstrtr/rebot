@@ -32,11 +32,11 @@ def main():
 
     node_uuid = str(uuid.uuid4())
 
-    LOGGER.info("Starting P2P server on port %d", port)
+    LOGGER.info("\033[95mStarting P2P server on port: %d, node UUID: %s\033[0m", port, node_uuid)
 
     # Find an available port if the default port is not available
     # port = find_available_port(port)
-    LOGGER.info("Using port %d for P2P server", port)
+    # LOGGER.debug("Using port %d for P2P server", port)
 
     ws_factory = SpammerCheckFactory()
     ws_endpoint = endpoints.TCP4ServerEndpoint(reactor, WEBSOCKET_PORT)

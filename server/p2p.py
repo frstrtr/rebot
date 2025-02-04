@@ -71,17 +71,21 @@ class P2PProtocol(protocol.Protocol):
         LOGGER.debug(
             "P2P message received from %s:%d: %s", peer.host, peer.port, message
         )
+        
+        # Split the message by '}{' and add the braces back
+        json_strings = self.split_json_objects(message)
 
-        try:
-            data = json.loads(message)
-            if data["type"] == HANDSHAKE_INIT:
-                self.handle_handshake_init(data)
-            elif data["type"] == HANDSHAKE_RESPONSE:
-                self.handle_handshake_response(data)
-            else:
-                self.handle_p2p_data(data)
-        except json.JSONDecodeError as e:
-            LOGGER.error("Failed to decode JSON: %s", e)
+        for json_string in json_strings:
+            try:
+                data = json.loads(json_string)
+                if data["type"] == HANDSHAKE_INIT:
+                    self.handle_handshake_init(data)
+                elif data["type"] == HANDSHAKE_RESPONSE:
+                    self.handle_handshake_response(data)
+                else:
+                    self.handle_p2p_data(data)
+            except json.JSONDecodeError as e:
+                LOGGER.error("Failed to decode JSON: %s", e)
 
     def handle_handshake_init(self, data):
         """Handle handshake initiation message."""

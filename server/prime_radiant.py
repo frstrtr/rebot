@@ -32,7 +32,9 @@ def main():
 
     node_uuid = str(uuid.uuid4())
 
-    LOGGER.info("\033[95mStarting P2P server on port: %d, node UUID: %s\033[0m", port, node_uuid)
+    LOGGER.info(
+        "\033[95mStarting P2P server on port: %d, node UUID: %s\033[0m", port, node_uuid
+    )
 
     # Find an available port if the default port is not available
     # port = find_available_port(port)
@@ -69,7 +71,7 @@ def main():
             )
 
     p2p_factory.connect_to_bootstrap_peers(BOOTSTRAP_ADDRESSES).addCallback(
-        lambda _: LOGGER.info("Finished connecting to bootstrap peers")
+        lambda _: LOGGER.info("\033[95mFinished connecting to bootstrap peers\033[0m")
     )
 
     for peer in peers:

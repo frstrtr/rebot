@@ -1,17 +1,3 @@
-"""
-This module implements a peer-to-peer (P2P) protocol for handling connections and exchanging spammer information.
-It uses the Twisted framework for networking and includes functionalities for managing peers, broadcasting spammer data,
-and synchronizing data with newly connected peers.
-
-Classes:
-    P2PProtocol: Handles P2P connections, data reception, and peer information exchange.
-    P2PFactory: Manages P2P connections, broadcasts spammer information, and synchronizes data with peers.
-
-Functions:
-    find_available_port(start_port): Finds an available port starting from the given port.
-    check_p2p_data(user_id): Placeholder function to check for P2P data.
-"""
-
 import json
 import uuid
 
@@ -24,15 +10,21 @@ from database import (
 )
 from server_config import LOGGER
 
+# Define ANSI escape codes for terminal colors
+RED_COLOR = "\033[91m"
+YELLOW_COLOR = "\033[93m"
+GREEN_COLOR = "\033[92m"
+PURPLE_COLOR = "\033[95m"
+INVERSE_COLOR = "\033[7m"
+RESET_COLOR = "\033[0m"
+
 
 class PeerAddress(IPv4Address):
     """Custom class that extends IPv4Address and includes a UUID property"""
 
     def __init__(self, addr_type, host, port, node_uuid=None):
-        if node_uuid is None:
-            node_uuid = str(uuid.uuid4())
         super().__init__(addr_type, host, port)
-        self.node_uuid = node_uuid
+        self.node_uuid = node_uuid or str(uuid.uuid4())
 
 
 class P2PProtocol(protocol.Protocol):
@@ -45,11 +37,15 @@ class P2PProtocol(protocol.Protocol):
         LOGGER.info("P2P connection made with %s:%d", peer.host, peer.port)
         LOGGER.info("P2P connection details: %s", peer)
         self.send_peer_info()
+        # Send local UUID to the remote node
+        self.transport.write(
+            json.dumps({"uuid": self.factory.node_uuid}).encode("utf-8")
+        )
 
     def getPeer(self):
         """Override getPeer to return PeerAddress with UUID."""
         peer = self.transport.getPeer()
-        return PeerAddress(peer.type, peer.host, peer.port, self.factory.uuid)
+        return PeerAddress(peer.type, peer.host, peer.port, self.factory.node_uuid)
 
     def dataReceived(self, data):
         """Handle received P2P data."""
@@ -69,6 +65,15 @@ class P2PProtocol(protocol.Protocol):
                     data = self.decode_nested_json(data)
                     # Log the decoded message in a human-readable format
                     LOGGER.debug("Decoded message: %s", data)
+                    if "uuid" in data:
+                        # Update the peer's UUID with the received UUID
+                        peer.node_uuid = data["uuid"]
+                        LOGGER.info(
+                            "Received UUID %s from peer %s:%d",
+                            peer.node_uuid,
+                            peer.host,
+                            peer.port,
+                        )
                     if "user_id" in data:
                         user_id = data["user_id"]
                         lols_bot_data = data.get("lols_bot_data", {})
@@ -96,8 +101,6 @@ class P2PProtocol(protocol.Protocol):
                             )
                     elif "peers" in data:
                         self.factory.update_peer_list(data["peers"])
-                    elif "uuid" in data:
-                        self.factory.handle_peer_uuid(self, data["uuid"])
                 except json.JSONDecodeError as e:
                     LOGGER.error("Failed to decode JSON object: %s", e)
         except json.JSONDecodeError as e:
@@ -163,7 +166,7 @@ class P2PProtocol(protocol.Protocol):
             }
             for peer in self.factory.peers
         ]
-        message = json.dumps({"peers": peer_info, "uuid": self.factory.uuid})
+        message = json.dumps({"peers": peer_info, "uuid": self.factory.node_uuid})
         self.transport.write(message.encode("utf-8"))
         LOGGER.info("Sent peer info: %s", message)
 
@@ -173,9 +176,9 @@ class P2PFactory(protocol.Factory):
 
     protocol = P2PProtocol
 
-    def __init__(self, uuid=None):
+    def __init__(self, node_uuid=None):
         self.peers = []
-        self.uuid = uuid or str(uuid.uuid4())
+        self.node_uuid = node_uuid or str(uuid.uuid4())
         self.bootstrap_peers = []
 
     def broadcast_spammer_info(self, user_id):
@@ -214,18 +217,25 @@ class P2PFactory(protocol.Factory):
     def on_bootstrap_peer_connected(self, peer_protocol):
         """Handle successful connection to a bootstrap peer."""
         peer = peer_protocol.transport.getPeer()
-        peer_address = PeerAddress(peer.type, peer.host, peer.port, self.uuid)
-        LOGGER.info("Connected to bootstrap peer %s:%d", peer.host, peer.port)
+        peer_address = PeerAddress(peer.type, peer.host, peer.port, peer.node_uuid)
+        LOGGER.info(
+            "\033[92mConnected to bootstrap peer %s:%d (UUID: %s)\033[0m",
+            peer.host,
+            peer.port,
+            peer.node_uuid,
+        )
         self.bootstrap_peers.append(peer_address)
         # Wait for the UUID to be received in dataReceived
-        peer_protocol.transport.write(json.dumps({"uuid": self.uuid}).encode("utf-8"))
+        peer_protocol.transport.write(
+            json.dumps({"uuid": self.node_uuid}).encode("utf-8")
+        )
 
     def handle_peer_uuid(self, peer_protocol, peer_uuid):
         """Handle the received UUID from a peer."""
         peer = peer_protocol.transport.getPeer()
-        if peer_uuid == self.uuid:
+        if peer_uuid == self.node_uuid:
             LOGGER.info(
-                "Disconnecting peer with same UUID %s:%d (UUID: %s)",
+                "\033[93mDisconnecting peer with same UUID %s:%d (UUID: %s)\033[0m",
                 peer.host,
                 peer.port,
                 peer_uuid,
@@ -237,7 +247,13 @@ class P2PFactory(protocol.Factory):
 
     def on_bootstrap_peer_failed(self, failure, address):
         """Handle failed connection to a bootstrap peer."""
-        LOGGER.error("Failed to connect to bootstrap peer %s: %s", address, failure)
+        LOGGER.error(
+            "%sFailed to connect to bootstrap peer %s: %s%s",
+            RED_COLOR,
+            address,
+            failure,
+            RESET_COLOR,
+        )
 
     def update_peer_list(self, peers):
         """Update the list of known peers."""
@@ -245,12 +261,14 @@ class P2PFactory(protocol.Factory):
             host = peer["host"]
             port = peer["port"]
             peer_uuid = peer.get("uuid")
-            if peer_uuid == self.uuid:
+            if peer_uuid == self.node_uuid:
                 LOGGER.info(
-                    "Skipping self connection to %s:%d (UUID: %s)",
+                    "%sSkipping self connection to %s:%d (UUID: %s)%s",
+                    YELLOW_COLOR,
                     host,
                     port,
                     peer_uuid,
+                    RESET_COLOR,
                 )
                 continue
             if not any(p.host == host and p.port == port for p in self.peers):
@@ -261,7 +279,12 @@ class P2PFactory(protocol.Factory):
                     )
                 ).addErrback(
                     lambda err, h=host, p=port: LOGGER.error(
-                        "Failed to connect to new peer %s:%d: %s", h, p, err
+                        "%sFailed to connect to new peer %s:%d: %s%s",
+                        RED_COLOR,
+                        h,
+                        p,
+                        err,
+                        RESET_COLOR,
                     )
                 )
                 LOGGER.info("Connecting to new peer %s:%d", host, port)

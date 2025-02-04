@@ -24,9 +24,7 @@ class P2PProtocol(protocol.Protocol):
         """Handle received P2P data."""
         message = data.decode("utf-8")
         peer = self.transport.getPeer()
-        LOGGER.debug(
-            "P2P message received from %s:%d: %s", peer.host, peer.port, message
-        )
+        LOGGER.debug("P2P message received from %s:%d: %s", peer.host, peer.port, message)
 
         try:
             # Split the message by '}{' and add the braces back
@@ -49,22 +47,16 @@ class P2PProtocol(protocol.Protocol):
                         p2p_data = data.get("p2p_data", {})
                         if isinstance(p2p_data, str):
                             p2p_data = json.loads(p2p_data)
-                        if (
-                            p2p_data
-                            and isinstance(p2p_data, dict)
-                            and len(p2p_data) > 0
-                        ):
-                            store_spammer_data(
-                                user_id, lols_bot_data, cas_chat_data, p2p_data
-                            )
+                        if p2p_data and isinstance(p2p_data, dict) and len(p2p_data) > 0:
+                            store_spammer_data(user_id, lols_bot_data, cas_chat_data, p2p_data)
                             self.factory.broadcast_spammer_info(user_id)
                         else:
                             # Store the spammer data even if p2p_data is empty
-                            store_spammer_data(
-                                user_id, lols_bot_data, cas_chat_data, p2p_data
-                            )
+                            store_spammer_data(user_id, lols_bot_data, cas_chat_data, p2p_data)
                     elif "peers" in data:
                         self.factory.update_peer_list(data["peers"])
+                    elif "uuid" in data:
+                        self.factory.handle_peer_uuid(self, data["uuid"])
                 except json.JSONDecodeError as e:
                     LOGGER.error("Failed to decode JSON object: %s", e)
         except json.JSONDecodeError as e:
@@ -95,9 +87,7 @@ class P2PProtocol(protocol.Protocol):
                         decoded_value = json.loads(value)
                         data[key] = self.decode_nested_json(decoded_value)
                     except json.JSONDecodeError:
-                        data[key] = (
-                            value.encode().decode("unicode_escape").replace("\\", "")
-                        )
+                        data[key] = value.encode().decode("unicode_escape").replace("\\", "")
                 elif isinstance(value, dict):
                     data[key] = self.decode_nested_json(value)
                 elif isinstance(value, list):
@@ -137,9 +127,9 @@ class P2PFactory(protocol.Factory):
 
     protocol = P2PProtocol
 
-    def __init__(self, uuid):
+    def __init__(self, uuid=None):
         self.peers = []
-        self.uuid = uuid
+        self.uuid = uuid or str(uuid.uuid4())
         self.bootstrap_peers = []
 
     def broadcast_spammer_info(self, user_id):
@@ -178,29 +168,19 @@ class P2PFactory(protocol.Factory):
     def on_bootstrap_peer_connected(self, peer_protocol):
         """Handle successful connection to a bootstrap peer."""
         peer = peer_protocol.transport.getPeer()
-        peer_uuid = peer_protocol.factory.uuid
+        LOGGER.info("Connected to bootstrap peer %s:%d", peer.host, peer.port)
+        self.bootstrap_peers.append(peer_protocol)
+        # Wait for the UUID to be received in dataReceived
+        peer_protocol.transport.write(json.dumps({"uuid": self.uuid}).encode("utf-8"))
 
-        # Retrieve the peer's UUID from the received data
-        peer_data = json.loads(peer_protocol.transport.read().decode("utf-8"))
-        peer_uuid = peer_data.get("uuid")
-
+    def handle_peer_uuid(self, peer_protocol, peer_uuid):
+        """Handle the received UUID from a peer."""
+        peer = peer_protocol.transport.getPeer()
         if peer_uuid == self.uuid:
-            LOGGER.info(
-                "Disconnecting peer with same UUID %s:%d (UUID: %s)",
-                peer.host,
-                peer.port,
-                peer_uuid,
-            )
+            LOGGER.info("Disconnecting peer with same UUID %s:%d (UUID: %s)", peer.host, peer.port, peer_uuid)
             peer_protocol.transport.loseConnection()
             return
-
-        LOGGER.info(
-            "Connected to bootstrap peer %s:%d UUID: %s",
-            peer.host,
-            peer.port,
-            peer_uuid,
-        )
-        self.bootstrap_peers.append(peer_protocol)
+        LOGGER.info("Received UUID %s from peer %s:%d", peer_uuid, peer.host, peer.port)
         self.synchronize_spammer_data(peer_protocol)
 
     def on_bootstrap_peer_failed(self, failure, address):
@@ -214,27 +194,14 @@ class P2PFactory(protocol.Factory):
             port = peer["port"]
             peer_uuid = peer.get("uuid")
             if peer_uuid == self.uuid:
-                LOGGER.info(
-                    "Skipping self connection to %s:%d (UUID: %s)",
-                    host,
-                    port,
-                    peer_uuid,
-                )
+                LOGGER.info("Skipping self connection to %s:%d (UUID: %s)", host, port, peer_uuid)
                 continue
-            if not any(
-                p.transport.getPeer().host == host
-                and p.transport.getPeer().port == port
-                for p in self.peers
-            ):
+            if not any(p.transport.getPeer().host == host and p.transport.getPeer().port == port for p in self.peers):
                 endpoint = endpoints.TCP4ClientEndpoint(reactor, host, port)
                 endpoint.connect(self).addCallback(
-                    lambda _, h=host, p=port: LOGGER.info(
-                        "Connected to new peer %s:%d", h, p
-                    )
+                    lambda _, h=host, p=port: LOGGER.info("Connected to new peer %s:%d", h, p)
                 ).addErrback(
-                    lambda err, h=host, p=port: LOGGER.error(
-                        "Failed to connect to new peer %s:%d: %s", h, p, err
-                    )
+                    lambda err, h=host, p=port: LOGGER.error("Failed to connect to new peer %s:%d: %s", h, p, err)
                 )
                 LOGGER.info("Connecting to new peer %s:%d", host, port)
 

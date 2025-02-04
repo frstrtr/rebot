@@ -21,6 +21,7 @@ RESET_COLOR = "\033[0m"
 HANDSHAKE_INIT = "handshake_init"
 HANDSHAKE_RESPONSE = "handshake_response"
 
+
 class PeerAddress(IPv4Address):
     """Custom class that extends IPv4Address and includes a UUID property"""
 
@@ -253,7 +254,7 @@ class P2PFactory(protocol.Factory):
 
     def on_bootstrap_peer_connected(self, peer_protocol):
         """Handle successful connection to a bootstrap peer."""
-        peer = peer_protocol.transport.getPeer()
+        peer = peer_protocol.get_peer()
         peer_address = PeerAddress(peer.type, peer.host, peer.port, peer.node_uuid)
         LOGGER.info(
             "%sConnected to bootstrap peer %s:%d%s",
@@ -268,7 +269,7 @@ class P2PFactory(protocol.Factory):
 
     def handle_peer_uuid(self, peer_protocol, peer_uuid):
         """Handle the received UUID from a peer."""
-        peer = peer_protocol.transport.getPeer()
+        peer = peer_protocol.get_peer()
         if peer_uuid == self.node_uuid:
             LOGGER.info(
                 "\033[93mDisconnecting peer with same UUID %s:%d (UUID: %s)\033[0m",

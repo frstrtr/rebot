@@ -43,7 +43,7 @@ def main():
     ws_factory = SpammerCheckFactory()
     ws_endpoint = endpoints.TCP4ServerEndpoint(reactor, WEBSOCKET_PORT)
     ws_endpoint.listen(ws_factory)
-    LOGGER.info("WebSocket server listening on port %d", WEBSOCKET_PORT)
+    LOGGER.info("\033[92mWebSocket server listening on port %d\033[0m", WEBSOCKET_PORT)
 
     p2p_factory = P2PFactory(node_uuid)
 
@@ -52,7 +52,7 @@ def main():
     http_factory = server.Site(root)
     http_endpoint = endpoints.TCP4ServerEndpoint(reactor, HTTP_PORT)
     http_endpoint.listen(http_factory)
-    LOGGER.info("HTTP server listening on port %d", HTTP_PORT)
+    LOGGER.info("\033[92mHTTP server listening on port %d\033[0m", HTTP_PORT)
 
     # p2p_endpoint = endpoints.TCP4ServerEndpoint(reactor, port, interface="0.0.0.0")
     p2p_endpoint = endpoints.TCP4ServerEndpoint(reactor, port)
@@ -60,7 +60,7 @@ def main():
     while True:
         try:
             p2p_endpoint.listen(p2p_factory)
-            LOGGER.info("P2P server listening on port %d", port)
+            LOGGER.info("\033[92mP2P server listening on port %d\033[0m", port)
             break
         except CannotListenError as e:
             LOGGER.error("Cannot listen on port %d: %s", port, e)

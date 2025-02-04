@@ -34,8 +34,14 @@ class P2PProtocol(protocol.Protocol):
         """Handle new P2P connections."""
         peer = self.getPeer()
         self.factory.peers.append(peer)
-        LOGGER.info("P2P connection made with %s:%d", peer.host, peer.port)
-        LOGGER.info("P2P connection details: %s", peer)
+        LOGGER.info(
+            "%sP2P connection made with %s:%d%s",
+            YELLOW_COLOR,
+            peer.host,
+            peer.port,
+            RESET_COLOR,
+        )
+        LOGGER.info("%sP2P connection details: %s%s", YELLOW_COLOR, peer, RESET_COLOR)
         self.send_peer_info()
         # Send local UUID to the remote node
         self.transport.write(
@@ -69,10 +75,12 @@ class P2PProtocol(protocol.Protocol):
                         # Update the peer's UUID with the received UUID
                         peer.node_uuid = data["uuid"]
                         LOGGER.info(
-                            "Received UUID %s from peer %s:%d",
+                            "%sReceived UUID %s from peer %s:%d%s",
+                            GREEN_COLOR,
                             peer.node_uuid,
                             peer.host,
                             peer.port,
+                            RESET_COLOR,
                         )
                     if "user_id" in data:
                         user_id = data["user_id"]
@@ -206,7 +214,13 @@ class P2PFactory(protocol.Factory):
         for address in bootstrap_addresses:
             host, port = address.split(":")
             port = int(port)
-            LOGGER.debug("Attempting to connect to bootstrap peer %s:%d", host, port)
+            LOGGER.debug(
+                "%sAttempting to connect to bootstrap peer %s:%d%s",
+                PURPLE_COLOR,
+                host,
+                port,
+                RESET_COLOR,
+            )
             endpoint = endpoints.TCP4ClientEndpoint(reactor, host, port)
             deferred = endpoint.connect(self)
             deferred.addCallback(self.on_bootstrap_peer_connected)
@@ -219,10 +233,12 @@ class P2PFactory(protocol.Factory):
         peer = peer_protocol.transport.getPeer()
         peer_address = PeerAddress(peer.type, peer.host, peer.port, peer.node_uuid)
         LOGGER.info(
-            "\033[92mConnected to bootstrap peer %s:%d (UUID: %s)\033[0m",
+            "%sConnected to bootstrap peer %s:%d (UUID: %s)%s",
+            GREEN_COLOR,
             peer.host,
             peer.port,
             peer.node_uuid,
+            RESET_COLOR,
         )
         self.bootstrap_peers.append(peer_address)
         # Wait for the UUID to be received in dataReceived
@@ -287,7 +303,13 @@ class P2PFactory(protocol.Factory):
                         RESET_COLOR,
                     )
                 )
-                LOGGER.info("Connecting to new peer %s:%d", host, port)
+                LOGGER.info(
+                    "%sConnecting to new peer %s:%d%s",
+                    YELLOW_COLOR,
+                    host,
+                    port,
+                    RESET_COLOR,
+                )
 
     def synchronize_spammer_data(self, sync_protocol):
         """Synchronize spammer data with a newly connected peer."""

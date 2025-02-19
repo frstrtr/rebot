@@ -162,9 +162,9 @@ class P2PProtocol(protocol.Protocol):
                 "p2p_data": spammer_data["p2p_data"],
             }
             self.transport.write(json.dumps(response).encode("utf-8"))
-            LOGGER.info("Sent check_p2p_data response for user_id: %s", user_id)
+            LOGGER.info("%s sent check_p2p_data response: %s", user_id, response)
         else:
-            LOGGER.info("No spammer data found for user_id: %s", user_id)
+            LOGGER.info("%s No spammer data found", user_id)
 
     def handle_check_p2p_data_response(self, data):
         """Handle check_p2p_data_response and resolve the deferred."""

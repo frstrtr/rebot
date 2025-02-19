@@ -90,6 +90,8 @@ class P2PProtocol(protocol.Protocol):
                     self.handle_handshake_response(data)
                 elif data["type"] == "check_p2p_data":
                     self.handle_check_p2p_data(data)
+                elif data["type"] == "check_p2p_data_response":
+                    self.handle_check_p2p_data_response(data)
                 else:
                     self.handle_p2p_data(data)
 
@@ -163,6 +165,16 @@ class P2PProtocol(protocol.Protocol):
             LOGGER.info("Sent check_p2p_data response for user_id: %s", user_id)
         else:
             LOGGER.info("No spammer data found for user_id: %s", user_id)
+
+    def handle_check_p2p_data_response(self, data):
+        """Handle check_p2p_data_response and resolve the deferred."""
+        user_id = data["user_id"]
+        LOGGER.info("Received check_p2p_data_response for user_id: %s", user_id)
+        for proto in self.factory.protocol_instances:
+            if proto.transport.getPeer() == self.transport.getPeer():
+                if hasattr(proto, "deferred"):
+                    proto.deferred.callback(json.dumps(data))
+                    del proto.deferred
 
     def handle_p2p_data(self, data):
         """Handle received P2P data."""
@@ -422,12 +434,13 @@ class P2PFactory(protocol.Factory):
                     "utf-8"
                 )
             )
+            proto.deferred = deferred
             deferreds.append(deferred)
 
         def handle_peer_responses(responses):
-            for response in responses:
-                if response:
-                    return response
+            for success, response in responses:
+                if success and response:
+                    return json.loads(response)
             return None
 
         return defer.gatherResults(deferreds).addCallback(handle_peer_responses)

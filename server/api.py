@@ -18,7 +18,7 @@ from twisted.internet._sslverify import ClientTLSOptions
 from zope.interface import implementer
 
 from database import retrieve_spammer_data_from_db, store_spammer_data
-from p2p import P2PFactory, check_p2p_data
+from p2p import P2PFactory
 
 from server_config import LOGGER
 
@@ -100,7 +100,7 @@ class SpammerCheckResource(resource.Resource):
                 response_data["is_spammer"] = self.is_spammer(response_data)
 
             # Check P2P network secondly
-            p2p_data = check_p2p_data(user_id) or {}
+            p2p_data = self.p2p_factory.check_p2p_data(user_id) or {}
             if p2p_data:
                 response_data["p2p"] = p2p_data
                 response_data["is_spammer"] = self.is_spammer(response_data)
@@ -125,6 +125,14 @@ class SpammerCheckResource(resource.Resource):
                 response_data["lols_bot"] = lols_bot_data
                 response_data["cas_chat"] = cas_chat_data
                 response_data["is_spammer"] = self.is_spammer(response_data)
+
+                # Construct P2P data based on responses from static APIs
+                p2p_data = {
+                    "ok": True,
+                    "user_id": user_id,
+                    "is_spammer": response_data["is_spammer"],
+                }
+                response_data["p2p"] = p2p_data
 
                 # Store the data in the database
                 store_spammer_data(

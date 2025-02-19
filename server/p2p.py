@@ -1,3 +1,5 @@
+"""p2p Module"""
+
 import json
 import uuid
 
@@ -86,6 +88,8 @@ class P2PProtocol(protocol.Protocol):
                     self.handle_handshake_init(data)
                 elif data["type"] == HANDSHAKE_RESPONSE:
                     self.handle_handshake_response(data)
+                elif data["type"] == "check_p2p_data":
+                    self.handle_check_p2p_data(data)
                 else:
                     self.handle_p2p_data(data)
 
@@ -141,6 +145,24 @@ class P2PProtocol(protocol.Protocol):
                 RESET_COLOR,
             )
             self.transport.loseConnection()
+
+    def handle_check_p2p_data(self, data):
+        """Handle check_p2p_data request and respond with data if available."""
+        user_id = data["user_id"]
+        LOGGER.info("Received check_p2p_data request for user_id: %s", user_id)
+        spammer_data = retrieve_spammer_data_from_db(user_id)
+        if spammer_data:
+            response = {
+                "type": "check_p2p_data_response",
+                "user_id": user_id,
+                "lols_bot_data": spammer_data["lols_bot_data"],
+                "cas_chat_data": spammer_data["cas_chat_data"],
+                "p2p_data": spammer_data["p2p_data"],
+            }
+            self.transport.write(json.dumps(response).encode("utf-8"))
+            LOGGER.info("Sent check_p2p_data response for user_id: %s", user_id)
+        else:
+            LOGGER.info("No spammer data found for user_id: %s", user_id)
 
     def handle_p2p_data(self, data):
         """Handle received P2P data."""
@@ -389,6 +411,27 @@ class P2PFactory(protocol.Factory):
         """Retrieve all spammer IDs from the database."""
         return get_all_spammer_ids()
 
+    def check_p2p_data(self, user_id):
+        """Check for P2P data across all connected peers."""
+        LOGGER.info("Checking peers for user_id: %s", user_id)
+        deferreds = []
+        for proto in self.protocol_instances:
+            deferred = defer.Deferred()
+            proto.transport.write(
+                json.dumps({"type": "check_p2p_data", "user_id": user_id}).encode(
+                    "utf-8"
+                )
+            )
+            deferreds.append(deferred)
+
+        def handle_peer_responses(responses):
+            for response in responses:
+                if response:
+                    return response
+            return None
+
+        return defer.gatherResults(deferreds).addCallback(handle_peer_responses)
+
 
 def find_available_port(start_port):
     """Find an available port starting from the given port."""
@@ -400,15 +443,3 @@ def find_available_port(start_port):
             return port
         except error.CannotListenError:
             port += 1
-
-
-def check_p2p_data(user_id):
-    """Placeholder function to check for P2P data."""
-    _reply_ = {
-        "ok": True,
-        "user_id": user_id,
-        # "banned": False,
-    }
-    LOGGER.info("Check p2p data reply: %s", _reply_)
-    # dumb response None for tests
-    return None

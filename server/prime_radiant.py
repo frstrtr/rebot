@@ -1,3 +1,6 @@
+"""Prime Radiant - p2p antispam server."""
+# TODO each node signature with spam markup criteria - to choose the best node for spam checking condition
+
 import sys
 import uuid
 from twisted.internet import reactor, endpoints
@@ -12,7 +15,7 @@ from server_config import (
     LOGGER,
     DEFAULT_P2P_PORT,
     WEBSOCKET_PORT,
-    HTTP_PORT,
+    HTTP_API_PORT,
     BOOTSTRAP_ADDRESSES,
 )
 
@@ -50,9 +53,9 @@ def main():
     root = resource.Resource()
     root.putChild(b"check", SpammerCheckResource(p2p_factory))
     http_factory = server.Site(root)
-    http_endpoint = endpoints.TCP4ServerEndpoint(reactor, HTTP_PORT)
+    http_endpoint = endpoints.TCP4ServerEndpoint(reactor, HTTP_API_PORT)
     http_endpoint.listen(http_factory)
-    LOGGER.info("\033[92mHTTP server listening on port %d\033[0m", HTTP_PORT)
+    LOGGER.info("\033[92mHTTP server listening on port %d\033[0m", HTTP_API_PORT)
 
     # p2p_endpoint = endpoints.TCP4ServerEndpoint(reactor, port, interface="0.0.0.0")
     p2p_endpoint = endpoints.TCP4ServerEndpoint(reactor, port)

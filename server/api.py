@@ -69,72 +69,41 @@ class SpammerCheckResource(resource.Resource):
             user_id = user_id.decode("utf-8")
             LOGGER.info("\033[7mReceived HTTP request for user_id: %s\033[0m", user_id)
 
+            # Initialize response data
+            response_data = {
+                "ok": True,
+                "user_id": user_id,
+                "is_spammer": False,
+                "lols_bot": {},
+                "cas_chat": {},
+                "p2p": {},
+            }
+
             # Check database first
             spammer_data = retrieve_spammer_data_from_db(user_id)
             if spammer_data:
-                response = {
-                    "ok": True,
-                    "user_id": user_id,
-                    "is_spammer": self.is_spammer(spammer_data),
-                    "lols_bot": (
-                        json.loads(spammer_data["lols_bot_data"])
-                        if spammer_data["lols_bot_data"]
-                        else {}
-                    ),
-                    "cas_chat": (
-                        json.loads(spammer_data["cas_chat_data"])
-                        if spammer_data["cas_chat_data"]
-                        else {}
-                    ),
-                    "p2p": (
-                        json.loads(spammer_data["p2p_data"])
-                        if spammer_data["p2p_data"]
-                        else {}
-                    ),
-                }
-                request.setHeader(b"content-type", b"application/json")
-                request.write(json.dumps(response).encode("utf-8"))
-                request.finish()
-                LOGGER.info("Response sent from database: %s", response)
-                return server.NOT_DONE_YET
+                response_data["lols_bot"] = (
+                    json.loads(spammer_data["lols_bot_data"])
+                    if spammer_data["lols_bot_data"]
+                    else {}
+                )
+                response_data["cas_chat"] = (
+                    json.loads(spammer_data["cas_chat_data"])
+                    if spammer_data["cas_chat_data"]
+                    else {}
+                )
+                response_data["p2p"] = (
+                    json.loads(spammer_data["p2p_data"])
+                    if spammer_data["p2p_data"]
+                    else {}
+                )
+                response_data["is_spammer"] = self.is_spammer(response_data)
 
             # Check P2P network secondly
-            p2p_data: dict = check_p2p_data(user_id) or {}
-            logging.debug("P2P data: %s", p2p_data)
+            p2p_data = check_p2p_data(user_id) or {}
             if p2p_data:
-                response = {
-                    "ok": True,
-                    "user_id": user_id,
-                    "is_spammer": self.is_spammer(p2p_data),
-                    "lols_bot": (
-                        json.loads(p2p_data["lols_bot_data"])
-                        if p2p_data["lols_bot_data"]
-                        else {}
-                    ),
-                    "cas_chat": (
-                        json.loads(p2p_data["cas_chat_data"])
-                        if p2p_data["cas_chat_data"]
-                        else {}
-                    ),
-                    "p2p": (
-                        json.loads(p2p_data["p2p_data"]) if p2p_data["p2p_data"] else {}
-                    ),
-                }
-                # Store the data in the database
-                store_spammer_data(
-                    user_id,
-                    json.dumps(response["lols_bot"]),
-                    json.dumps(response["cas_chat"]),
-                    json.dumps(response["p2p"]),
-                )
-                request.setHeader(b"content-type", b"application/json")
-                request.write(json.dumps(response).encode("utf-8"))
-                request.finish()
-                LOGGER.info("Response sent from P2P network: %s", response)
-
-                # Propagate P2P data over peer network if they don't have such records
-                self.p2p_factory.broadcast_spammer_info(user_id)
-                return server.NOT_DONE_YET
+                response_data["p2p"] = p2p_data
+                response_data["is_spammer"] = self.is_spammer(response_data)
 
             # Check static APIs finally
             logging.info("Checking static APIs for user_id: %s", user_id)
@@ -153,49 +122,25 @@ class SpammerCheckResource(resource.Resource):
                 lols_bot_data = json.loads(lols_bot_response.decode("utf-8"))
                 cas_chat_data = json.loads(cas_chat_response.decode("utf-8"))
 
-                # XXX check if static APIs have spammer records about given ID
-                have_static_api_records = lols_bot_data.get(
-                    "banned", False
-                ) or cas_chat_data.get("ok", False)
-
-                is_spammer = (
-                    lols_bot_data.get("banned", False)
-                    or cas_chat_data.get("result", {}).get("offenses", 0) > 0
-                )
-
-                p2p_data: dict = check_p2p_data(user_id) or {}
-
-                response = {
-                    "ok": True,
-                    "user_id": user_id,
-                    "is_spammer": is_spammer,
-                    "lols_bot": lols_bot_data,
-                    "cas_chat": cas_chat_data,
-                    "p2p": p2p_data,
-                }
+                response_data["lols_bot"] = lols_bot_data
+                response_data["cas_chat"] = cas_chat_data
+                response_data["is_spammer"] = self.is_spammer(response_data)
 
                 # Store the data in the database
                 store_spammer_data(
                     user_id,
-                    json.dumps(lols_bot_data),
-                    json.dumps(cas_chat_data),
-                    json.dumps(p2p_data),
+                    json.dumps(response_data["lols_bot"]),
+                    json.dumps(response_data["cas_chat"]),
+                    json.dumps(response_data["p2p"]),
                 )
 
                 # Propagate P2P data over peer network if they don't have such records
-                if not p2p_data:
-                    self.p2p_factory.broadcast_spammer_info(user_id)
-
-                # propagate p2p data over peer network
-                if have_static_api_records:
-                    pass
-                else:
-                    pass
+                self.p2p_factory.broadcast_spammer_info(user_id)
 
                 request.setHeader(b"content-type", b"application/json")
-                request.write(json.dumps(response).encode("utf-8"))
+                request.write(json.dumps(response_data).encode("utf-8"))
                 request.finish()
-                LOGGER.info("Response sent from static APIs: %s", response)
+                LOGGER.info("Response sent from static APIs: %s", response_data)
 
             def handle_error(failure):
                 LOGGER.error("Error querying APIs: %s", failure)
@@ -221,15 +166,10 @@ class SpammerCheckResource(resource.Resource):
         """Determine if the user is a spammer based on the data."""
         logging.debug("Checking if user is a spammer: %s", data)
 
-        lols_bot_data = (
-            json.loads(data["lols_bot_data"]) if data["lols_bot_data"] else {}
-        )
-        cas_chat_data = (
-            json.loads(data["cas_chat_data"]) if data["cas_chat_data"] else {}
-        )
-        p2p_data = json.loads(data["p2p_data"]) if data["p2p_data"] else {}
+        lols_bot_data = data.get("lols_bot", {})
+        cas_chat_data = data.get("cas_chat", {})
+        p2p_data = data.get("p2p", {})
 
-        # TODO add p2p data check
         return (
             lols_bot_data.get("banned", False)
             or cas_chat_data.get("result", {}).get("offenses", 0) > 0

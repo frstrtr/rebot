@@ -266,7 +266,8 @@ class P2PFactory(protocol.Factory):
                 proto.transport.write(message.encode("utf-8"))
             LOGGER.info("Broadcasted spammer info: %s", message)
         else:
-            LOGGER.warning("No spammer data found for user_id: %s", user_id)
+            LOGGER.warning("No spammer data found for user_id in local DB: %s", user_id)
+            # TODO check other spam nodes and endpoints
 
     def connect_to_bootstrap_peers(self, bootstrap_addresses):
         """Connect to bootstrap peers and gather available peers."""
@@ -406,7 +407,8 @@ def check_p2p_data(user_id):
     _reply_ = {
         "ok": True,
         "user_id": user_id,
+        # "banned": False,
     }
     LOGGER.info("Check p2p data reply: %s", _reply_)
-    # dumb response None fro tests
+    # dumb response None for tests
     return None

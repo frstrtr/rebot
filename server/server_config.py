@@ -21,7 +21,7 @@ DEFAULT_P2P_PORT = 9828
 WEBSOCKET_PORT = 9000
 
 # HTTP server port
-HTTP_PORT = 8081
+HTTP_API_PORT = 8081
 
 # Bootstrap addresses for P2P network
 BOOTSTRAP_ADDRESSES = [

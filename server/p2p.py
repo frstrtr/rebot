@@ -35,6 +35,9 @@ class PeerAddress(IPv4Address):
 class P2PProtocol(protocol.Protocol):
     """P2P protocol to handle connections and exchange spammer information."""
 
+    def __init__(self):
+        self.processed_data = set()
+
     def connectionMade(self):
         """Handle new P2P connections."""
         peer = self.get_peer()
@@ -199,6 +202,11 @@ class P2PProtocol(protocol.Protocol):
         LOGGER.debug("Handling P2P data from %s:%d", peer.host, peer.port)
         if "user_id" in data:
             user_id = data["user_id"]
+            data_hash = self.get_data_hash(data)
+            if data_hash in self.processed_data:
+                LOGGER.debug("Data already processed for user_id: %s", user_id)
+                return
+            self.processed_data.add(data_hash)
             lols_bot_data = data.get("lols_bot_data", {})
             if isinstance(lols_bot_data, str):
                 lols_bot_data = json.loads(lols_bot_data)
@@ -216,6 +224,10 @@ class P2PProtocol(protocol.Protocol):
                 store_spammer_data(user_id, lols_bot_data, cas_chat_data, p2p_data)
         elif "peers" in data:
             self.factory.update_peer_list(data["peers"])
+
+    def get_data_hash(self, data):
+        """Generate a hash for the data to avoid rebroadcasting the same data."""
+        return hash(json.dumps(data, sort_keys=True))
 
     def split_json_objects(self, message):
         """Split concatenated JSON objects in the message."""
@@ -297,6 +309,7 @@ class P2PFactory(protocol.Factory):
         """Build and return a protocol instance."""
         proto = self.protocol()
         proto.factory = self
+        proto.processed_data = set()
         self.protocol_instances.append(proto)
         return proto
 
@@ -467,7 +480,16 @@ class P2PFactory(protocol.Factory):
                 return json.loads(valid_responses[0])
             return None
 
-        return defer.gatherResults(deferreds).addCallback(handle_peer_responses)
+        return (
+            defer.gatherResults(deferreds)
+            .addCallback(handle_peer_responses)
+            .addErrback(self.handle_error)
+        )
+
+    def handle_error(self, failure):
+        """Handle errors during the P2P data check."""
+        LOGGER.error("Error checking P2P data: %s", failure)
+        return None
 
 
 def find_available_port(start_port):

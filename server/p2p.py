@@ -228,13 +228,32 @@ class P2PProtocol(protocol.Protocol):
             p2p_data = data.get("p2p_data", {})
             if isinstance(p2p_data, str):
                 p2p_data = json.loads(p2p_data)
-            if p2p_data and isinstance(p2p_data, dict) and len(p2p_data) > 0:
-                store_spammer_data(user_id, lols_bot_data, cas_chat_data, p2p_data)
-                self.factory.broadcast_spammer_info(user_id)
-            else:
-                # Store the spammer data even if p2p_data is empty
-                store_spammer_data(user_id, lols_bot_data, cas_chat_data, p2p_data)
+
+            # Retrieve existing data from the database
+            existing_data = retrieve_spammer_data_from_db(user_id)
+            if existing_data:
+                existing_lols_bot_data = existing_data.get("lols_bot_data", {})
+                existing_cas_chat_data = existing_data.get("cas_chat_data", {})
+                existing_p2p_data = existing_data.get("p2p_data", {})
+
+                # Compare new data with existing data
+                if (
+                    lols_bot_data == existing_lols_bot_data
+                    and cas_chat_data == existing_cas_chat_data
+                    and p2p_data == existing_p2p_data
+                ):
+                    LOGGER.debug(
+                        "%s Data is the same as existing data, skipping storage",
+                        user_id,
+                    )
+                    return
+
+            # Store the new data
+            LOGGER.debug("%s Storing new data", user_id)
+            store_spammer_data(user_id, lols_bot_data, cas_chat_data, p2p_data)
+            self.factory.broadcast_spammer_info(user_id)
         elif "peers" in data:
+            LOGGER.debug("Updating peer list: %s", data["peers"])
             self.factory.update_peer_list(data["peers"])
 
     def get_data_hash(self, data):

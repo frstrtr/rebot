@@ -154,7 +154,13 @@ class P2PProtocol(protocol.Protocol):
     def handle_check_p2p_data(self, data):
         """Handle check_p2p_data request and respond with data if available."""
         user_id = data["user_id"]
-        LOGGER.info("%s Received check_p2p_data request", user_id)
+        peer = self.get_peer()
+        LOGGER.info(
+            "%s Received check_p2p_data request from %s:%d",
+            user_id,
+            peer.host,
+            peer.port,
+        )
         spammer_data = retrieve_spammer_data_from_db(user_id)
         if spammer_data:
             # If p2p_data is not available, construct it from other data
@@ -186,7 +192,13 @@ class P2PProtocol(protocol.Protocol):
     def handle_check_p2p_data_response(self, data):
         """Handle check_p2p_data_response and resolve the deferred."""
         user_id = data["user_id"]
-        LOGGER.info("%s Received check_p2p_data_response", user_id)
+        peer = self.get_peer()
+        LOGGER.info(
+            "%s Received check_p2p_data_response from %s:%d",
+            user_id,
+            peer.host,
+            peer.port,
+        )
         for proto in self.factory.protocol_instances:
             if proto.transport.getPeer() == self.transport.getPeer():
                 if hasattr(proto, "deferred"):

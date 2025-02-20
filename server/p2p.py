@@ -233,8 +233,14 @@ class P2PProtocol(protocol.Protocol):
             existing_data = retrieve_spammer_data_from_db(user_id)
             if existing_data:
                 existing_lols_bot_data = existing_data.get("lols_bot_data", {})
+                if isinstance(existing_lols_bot_data, str):
+                    existing_lols_bot_data = json.loads(existing_lols_bot_data)
                 existing_cas_chat_data = existing_data.get("cas_chat_data", {})
+                if isinstance(existing_cas_chat_data, str):
+                    existing_cas_chat_data = json.loads(existing_cas_chat_data)
                 existing_p2p_data = existing_data.get("p2p_data", {})
+                if isinstance(existing_p2p_data, str):
+                    existing_p2p_data = json.loads(existing_p2p_data)
 
                 # Compare new data with existing data
                 if (

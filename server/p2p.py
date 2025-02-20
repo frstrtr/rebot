@@ -434,6 +434,10 @@ class P2PFactory(protocol.Factory):
                     "utf-8"
                 )
             )
+            peer = proto.get_peer()
+            LOGGER.debug(
+                "Sent check_p2p_data request to peer %s:%d", peer.host, peer.port
+            )
             proto.deferred = deferred
             deferreds.append(deferred)
 

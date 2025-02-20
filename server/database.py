@@ -49,7 +49,7 @@ def store_spammer_data(user_id, lols_bot_data, cas_chat_data, p2p_data):
     )
     conn.commit()
     conn.close()
-    LOGGER.info("\033[7mStored spammer data for user_id: %s\033[0m", user_id)
+    LOGGER.info("\033[7m%s Stored spammer data\033[0m", user_id)
 
 
 def retrieve_spammer_data_from_db(user_id):

@@ -204,7 +204,7 @@ class P2PProtocol(protocol.Protocol):
             user_id = data["user_id"]
             data_hash = self.get_data_hash(data)
             if data_hash in self.processed_data:
-                LOGGER.debug("Data already processed for user_id: %s", user_id)
+                LOGGER.debug("%s Data already processed", user_id)
                 return
             self.processed_data.add(data_hash)
             lols_bot_data = data.get("lols_bot_data", {})

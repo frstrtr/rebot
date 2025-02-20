@@ -154,6 +154,12 @@ class P2PProtocol(protocol.Protocol):
         LOGGER.info("Received check_p2p_data request for user_id: %s", user_id)
         spammer_data = retrieve_spammer_data_from_db(user_id)
         if spammer_data:
+            # If p2p_data is not available, construct it from other data
+            if not spammer_data.get("p2p_data"):
+                spammer_data["p2p_data"] = {
+                    "lols_bot_data": spammer_data["lols_bot_data"],
+                    "cas_chat_data": spammer_data["cas_chat_data"],
+                }
             response = {
                 "type": "check_p2p_data_response",
                 "user_id": user_id,
@@ -164,7 +170,15 @@ class P2PProtocol(protocol.Protocol):
             self.transport.write(json.dumps(response).encode("utf-8"))
             LOGGER.info("%s sent check_p2p_data response: %s", user_id, response)
         else:
-            LOGGER.info("%s No spammer data found", user_id)
+            response = {
+                "type": "check_p2p_data_response",
+                "user_id": user_id,
+                "error": "No spammer data found",
+            }
+            self.transport.write(json.dumps(response).encode("utf-8"))
+            LOGGER.info(
+                "%s No spammer data found, sent response: %s", user_id, response
+            )
 
     def handle_check_p2p_data_response(self, data):
         """Handle check_p2p_data_response and resolve the deferred."""
@@ -173,7 +187,10 @@ class P2PProtocol(protocol.Protocol):
         for proto in self.factory.protocol_instances:
             if proto.transport.getPeer() == self.transport.getPeer():
                 if hasattr(proto, "deferred"):
-                    proto.deferred.callback(json.dumps(data))
+                    if "error" in data:
+                        proto.deferred.callback(None)
+                    else:
+                        proto.deferred.callback(json.dumps(data))
                     del proto.deferred
 
     def handle_p2p_data(self, data):

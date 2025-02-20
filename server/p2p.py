@@ -447,9 +447,7 @@ class P2PFactory(protocol.Factory):
         for proto in self.protocol_instances:
             deferred = defer.Deferred()
             proto.transport.write(
-                json.dumps({"type": "check_p2p_data", "user_id": user_id}).encode(
-                    "utf-8"
-                )
+                json.dumps({"type": "check_p2p_data", "user_id": user_id}).encode("utf-8")
             )
             peer = proto.get_peer()
             LOGGER.debug(
@@ -462,13 +460,12 @@ class P2PFactory(protocol.Factory):
             deferreds.append(deferred)
 
         def handle_peer_responses(responses):
-            for success, response in responses:
-                if success and response:
-                    return json.loads(response)
+            valid_responses = [response for success, response in responses if success and response]
+            if valid_responses:
+                return json.loads(valid_responses[0])
             return None
 
         return defer.gatherResults(deferreds).addCallback(handle_peer_responses)
-
 
 def find_available_port(start_port):
     """Find an available port starting from the given port."""

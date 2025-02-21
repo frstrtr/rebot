@@ -37,6 +37,7 @@ class P2PProtocol(protocol.Protocol):
 
     def __init__(self):
         self.processed_data = set()
+        self.received_from_peer = None  # Add this attribute
 
     def connectionMade(self):
         """Handle new P2P connections."""
@@ -73,6 +74,9 @@ class P2PProtocol(protocol.Protocol):
         """Handle received P2P data."""
         message = data.decode("utf-8")
         peer = self.get_peer()
+        self.received_from_peer = (
+            peer  # Store the peer from which the data was received
+        )
         LOGGER.debug(
             "P2P message received from %s:%d: %s", peer.host, peer.port, message
         )
@@ -364,6 +368,12 @@ class P2PFactory(protocol.Factory):
                 }
             )
             for proto in self.protocol_instances:
+                if (
+                    proto.received_from_peer
+                    and proto.received_from_peer.host == proto.get_peer().host
+                    and proto.received_from_peer.port == proto.get_peer().port
+                ):
+                    continue  # Skip sending to the peer from which the data was received
                 proto.transport.write(message.encode("utf-8"))
             LOGGER.info("Broadcasted spammer info: %s", message)
         else:

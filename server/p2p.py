@@ -361,6 +361,9 @@ class P2PFactory(protocol.Factory):
         spammer_data = retrieve_spammer_data_from_db(user_id)
         if spammer_data:
             # Ensure nested JSON data is properly encoded
+            LOGGER.debug(
+                "%s%s Broadcasting spammer info%s", INVERSE_COLOR, user_id, RESET_COLOR
+            )
             message = json.dumps(
                 {
                     "type": "spammer_info_broadcast",
@@ -381,7 +384,19 @@ class P2PFactory(protocol.Factory):
                 ):
                     continue  # Skip sending to the peer from which the data was received
                 proto.transport.write(message.encode("utf-8"))
-            LOGGER.info("Broadcasted spammer info: %s", message)
+                LOGGER.debug(
+                    "%s Sent spammer info to peer %s:%d",
+                    user_id,
+                    proto.get_peer().host,
+                    proto.get_peer().port,
+                )
+            LOGGER.info(
+                "%s%s Broadcasted spammer info: %s%s",
+                INVERSE_COLOR,
+                user_id,
+                RESET_COLOR,
+                message,
+            )
         else:
             LOGGER.warning("No spammer data found for user_id in local DB: %s", user_id)
             # TODO check other spam nodes and endpoints

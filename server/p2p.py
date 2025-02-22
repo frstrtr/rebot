@@ -377,15 +377,36 @@ class P2PFactory(protocol.Factory):
                 }
             )
             for proto in self.protocol_instances:
+                # Check if the data has been received from the same peer
                 if (
                     proto.received_from_peer
                     and proto.received_from_peer.host == proto.get_peer().host
                     and proto.received_from_peer.port == proto.get_peer().port
                 ):
-                    continue  # Skip sending to the peer from which the data was received
+                    # Check if the data has changed
+                    existing_data = retrieve_spammer_data_from_db(user_id)
+                    if existing_data:
+                        existing_lols_bot_data = existing_data.get("lols_bot_data", {})
+                        if isinstance(existing_lols_bot_data, str):
+                            existing_lols_bot_data = json.loads(existing_lols_bot_data)
+                        existing_cas_chat_data = existing_data.get("cas_chat_data", {})
+                        if isinstance(existing_cas_chat_data, str):
+                            existing_cas_chat_data = json.loads(existing_cas_chat_data)
+                        existing_p2p_data = existing_data.get("p2p_data", {})
+                        if isinstance(existing_p2p_data, str):
+                            existing_p2p_data = json.loads(existing_p2p_data)
+
+                        if (
+                            spammer_data["lols_bot_data"] == existing_lols_bot_data
+                            and spammer_data["cas_chat_data"] == existing_cas_chat_data
+                            and spammer_data["p2p_data"] == existing_p2p_data
+                        ):
+                            continue  # Skip sending if data has not changed
+
+                # Broadcast updated data
                 proto.transport.write(message.encode("utf-8"))
                 LOGGER.debug(
-                    "%s Sent spammer info to peer %s:%d",
+                    "%s Sent updated spammer info to peer %s:%d",
                     user_id,
                     proto.get_peer().host,
                     proto.get_peer().port,

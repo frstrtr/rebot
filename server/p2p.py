@@ -99,6 +99,8 @@ class P2PProtocol(protocol.Protocol):
                     self.handle_check_p2p_data(data)
                 elif data["type"] == "check_p2p_data_response":
                     self.handle_check_p2p_data_response(data)
+                elif data["type"] == "spammer_info_broadcast":
+                    self.handle_p2p_data(data)
                 else:
                     self.handle_p2p_data(data)
 
@@ -361,6 +363,7 @@ class P2PFactory(protocol.Factory):
             # Ensure nested JSON data is properly encoded
             message = json.dumps(
                 {
+                    "type": "spammer_info_broadcast",
                     "user_id": user_id,
                     "lols_bot_data": spammer_data["lols_bot_data"],
                     "cas_chat_data": spammer_data["cas_chat_data"],

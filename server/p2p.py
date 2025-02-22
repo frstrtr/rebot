@@ -365,12 +365,12 @@ class P2PFactory(protocol.Factory):
                 {
                     "type": "spammer_info_broadcast",
                     "user_id": user_id,
-                    "lols_bot_data": spammer_data["lols_bot_data"],
-                    "cas_chat_data": spammer_data["cas_chat_data"],
-                    "p2p_data": spammer_data["p2p_data"],
                     "is_spammer": spammer_data.get(
                         "is_spammer", False
                     ),  # Add is_spammer field
+                    "lols_bot_data": spammer_data["lols_bot_data"],
+                    "cas_chat_data": spammer_data["cas_chat_data"],
+                    "p2p_data": spammer_data["p2p_data"],
                 }
             )
             for proto in self.protocol_instances:

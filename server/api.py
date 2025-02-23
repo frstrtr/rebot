@@ -11,6 +11,7 @@ from twisted.web import server, resource
 from twisted.web.client import Agent, readBody
 from twisted.web.http_headers import Headers
 from twisted.internet import defer, reactor
+from twisted.internet.task import deferLater
 from twisted.web.iweb import IPolicyForHTTPS
 from twisted.internet.ssl import CertificateOptions
 from twisted.internet._sslverify import ClientTLSOptions
@@ -80,44 +81,97 @@ class SpammerCheckResource(resource.Resource):
             }
 
             # Check database first
-            spammer_data = retrieve_spammer_data_from_db(user_id)
-            if spammer_data:
-                response_data["lols_bot"] = (
-                    json.loads(spammer_data["lols_bot_data"])
-                    if spammer_data["lols_bot_data"]
-                    else {}
-                )
-                response_data["cas_chat"] = (
-                    json.loads(spammer_data["cas_chat_data"])
-                    if spammer_data["cas_chat_data"]
-                    else {}
-                )
-                response_data["p2p"] = (
-                    json.loads(spammer_data["p2p_data"])
-                    if spammer_data["p2p_data"]
-                    else {}
-                )
-                response_data["is_spammer"] = self.is_spammer(response_data)
+            self.check_database(user_id, response_data)
 
-            # Check P2P network secondly
-            p2p_deferred = self.p2p_factory.check_p2p_data(user_id)
-            p2p_deferred.addCallback(self.handle_p2p_response, response_data, request)
-            p2p_deferred.addErrback(self.handle_error, request)
+            # Check P2P network
+            p2p_deferred = self.check_p2p_data(user_id)
+
+            # Check static APIs
+            api_deferred = self.check_static_apis(user_id)
+
+            # Combine results with a timeout
+            combined_deferred = defer.DeferredList(
+                [p2p_deferred, api_deferred],
+                fireOnOneCallback=True,
+                fireOnOneErrback=True,
+            )
+
+            def handle_combined_results(results):
+                for success, result in results:
+                    if success and result:
+                        response_data.update(result)
+                        if result.get("is_spammer", False):
+                            response_data["is_spammer"] = True
+
+                # Store the data in the database
+                store_spammer_data(
+                    user_id,
+                    json.dumps(response_data["lols_bot"]),
+                    json.dumps(response_data["cas_chat"]),
+                    json.dumps(response_data["p2p"]),
+                )
+
+                # Propagate P2P data over peer network if they don't have such records
+                self.p2p_factory.broadcast_spammer_info(user_id)
+
+                request.setHeader(b"content-type", b"application/json")
+                request.write(json.dumps(response_data).encode("utf-8"))
+                request.finish()
+                LOGGER.info("Response sent: %s", response_data)
+
+            def handle_combined_error(failure):
+                LOGGER.error("Error combining results: %s", failure)
+                response = {
+                    "ok": False,
+                    "user_id": user_id,
+                    "error": str(failure),
+                }
+                request.setHeader(b"content-type", b"application/json")
+                request.write(json.dumps(response).encode("utf-8"))
+                request.finish()
+                LOGGER.info("Error response sent: %s", response)
+
+            combined_deferred.addCallback(handle_combined_results)
+            combined_deferred.addErrback(handle_combined_error)
 
             return server.NOT_DONE_YET
         else:
             request.setResponseCode(400)
             return b"Missing user_id parameter"
 
-    def handle_p2p_response(self, p2p_data, response_data, request):
-        """Handle the P2P data response."""
-        if p2p_data:
-            response_data["p2p"] = p2p_data
+    def check_database(self, user_id, response_data):
+        """Check the database for spammer data."""
+        LOGGER.debug("%s Checking database", user_id)
+        spammer_data = retrieve_spammer_data_from_db(user_id)
+        if spammer_data:
+            response_data["lols_bot"] = (
+                json.loads(spammer_data["lols_bot_data"])
+                if spammer_data["lols_bot_data"]
+                else {}
+            )
+            response_data["cas_chat"] = (
+                json.loads(spammer_data["cas_chat_data"])
+                if spammer_data["cas_chat_data"]
+                else {}
+            )
+            response_data["p2p"] = (
+                json.loads(spammer_data["p2p_data"]) if spammer_data["p2p_data"] else {}
+            )
             response_data["is_spammer"] = self.is_spammer(response_data)
+            LOGGER.info("%s Data found in database: %s", user_id, response_data)
 
-        # Check static APIs finally
-        user_id = response_data["user_id"]
-        logging.info("Checking static APIs for user_id: %s", user_id)
+    def check_p2p_data(self, user_id):
+        """Check P2P network for spammer data."""
+        p2p_deferred = self.p2p_factory.check_p2p_data(user_id)
+        timeout_deferred = deferLater(reactor, 1, lambda: None)
+        return defer.DeferredList(
+            [p2p_deferred, timeout_deferred],
+            fireOnOneCallback=True,
+            fireOnOneErrback=True,
+        )
+
+    def check_static_apis(self, user_id):
+        """Check static APIs for spammer data."""
         api_client_lols = APIClient("api.lols.bot")
         api_client_cas = APIClient("api.cas.chat")
         lols_bot_url = f"https://api.lols.bot/account?id={user_id}"
@@ -133,63 +187,34 @@ class SpammerCheckResource(resource.Resource):
             lols_bot_data = json.loads(lols_bot_response.decode("utf-8"))
             cas_chat_data = json.loads(cas_chat_response.decode("utf-8"))
 
-            response_data["lols_bot"] = lols_bot_data
-            response_data["cas_chat"] = cas_chat_data
-            response_data["is_spammer"] = self.is_spammer(response_data)
-
-            # Construct P2P data based on responses from static APIs
-            p2p_data = {
-                "ok": True,
-                "user_id": user_id,
-                "is_spammer": response_data["is_spammer"],
+            return {
+                "lols_bot": lols_bot_data,
+                "cas_chat": cas_chat_data,
+                "is_spammer": self.is_spammer(
+                    {
+                        "lols_bot": lols_bot_data,
+                        "cas_chat": cas_chat_data,
+                        "p2p": {},
+                    }
+                ),
             }
-            response_data["p2p"] = p2p_data
 
-            # Store the data in the database
-            store_spammer_data(
-                user_id,
-                json.dumps(response_data["lols_bot"]),
-                json.dumps(response_data["cas_chat"]),
-                json.dumps(response_data["p2p"]),
-            )
-
-            # Propagate P2P data over peer network if they don't have such records
-            self.p2p_factory.broadcast_spammer_info(user_id)
-
-            request.setHeader(b"content-type", b"application/json")
-            request.write(json.dumps(response_data).encode("utf-8"))
-            request.finish()
-            LOGGER.info("Response sent from static APIs: %s", response_data)
-
-        def handle_error(failure):
+        def handle_API_error(failure):
             LOGGER.error("Error querying APIs: %s", failure)
-            response = {
-                "ok": False,
-                "user_id": user_id,
-                "error": str(failure),
-            }
-            request.setHeader(b"content-type", b"application/json")
-            request.write(json.dumps(response).encode("utf-8"))
-            request.finish()
-            LOGGER.info("Error response sent: %s", response)
+            return None
 
-        d = defer.gatherResults([d1, d2])
-        d.addCallback(handle_response)
-        d.addErrback(handle_error)
+        api_deferred = defer.gatherResults([d1, d2])
+        api_deferred.addCallback(handle_response)
+        api_deferred.addErrback(handle_API_error)
 
-    def handle_error(self, failure, request):
-        """Handle errors during the P2P data check."""
-        LOGGER.error("Error checking P2P data: %s", failure)
-        response = {
-            "ok": False,
-            "error": str(failure),
-        }
-        request.setHeader(b"content-type", b"application/json")
-        request.write(json.dumps(response).encode("utf-8"))
-        request.finish()
-        LOGGER.info("Error response sent: %s", response)
+        timeout_deferred = deferLater(reactor, 1, lambda: None)
+        return defer.DeferredList(
+            [api_deferred, timeout_deferred],
+            fireOnOneCallback=True,
+            fireOnOneErrback=True,
+        )
 
-    def is_spammer(self, data):
+    def is_spammer(self, data) -> bool:
         """Determine if the user is a spammer based on the data."""
         logging.debug("Checking if user is a spammer: %s", data)
 

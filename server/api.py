@@ -5,13 +5,11 @@ This module handles API requests and responses.
 """
 
 import json
-import logging
 
 from twisted.web import server, resource
 from twisted.web.client import Agent, readBody
 from twisted.web.http_headers import Headers
 from twisted.internet import defer, reactor
-from twisted.internet.task import deferLater
 from twisted.web.iweb import IPolicyForHTTPS
 from twisted.internet.ssl import CertificateOptions
 from twisted.internet._sslverify import ClientTLSOptions

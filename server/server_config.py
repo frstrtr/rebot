@@ -3,16 +3,29 @@
 """
 This module contains configuration settings for the P2P server.
 """
-
 import logging
 
 # Logging configuration
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s - %(filename)s - %(levelname)s - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
+class RedFormatter(logging.Formatter):
+    RED = "\033[91m"
+    RESET = "\033[0m"
+
+    def format(self, record):
+        if record.levelno == logging.ERROR:
+            record.msg = f"{self.RED}{record.msg}{self.RESET}"
+        return super().format(record)
+
+formatter = RedFormatter(
+    fmt="%(asctime)s - %(filename)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
 )
+
+handler = logging.StreamHandler()
+handler.setFormatter(formatter)
+
 LOGGER = logging.getLogger(__name__)
+LOGGER.setLevel(logging.DEBUG)
+LOGGER.addHandler(handler)
 
 # Default port for P2P server
 DEFAULT_P2P_PORT = 9828

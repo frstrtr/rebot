@@ -117,6 +117,7 @@ class SpammerCheckResource(resource.Resource):
                         response_data["is_spammer"] = True
 
                 # Store the data in the database
+                LOGGER.debug("%s Storing data in database", user_id)
                 store_spammer_data(
                     user_id,
                     json.dumps(response_data["lols_bot"]),
@@ -125,6 +126,7 @@ class SpammerCheckResource(resource.Resource):
                 )
 
                 # Propagate P2P data over peer network if they don't have such records
+                LOGGER.debug("%s Broadcasting data over P2P network", user_id)
                 self.p2p_factory.broadcast_spammer_info(user_id)
 
                 LOGGER.info("\033[7m%s sending HTTP request response\033[0m", user_id)

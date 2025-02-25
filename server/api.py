@@ -92,16 +92,28 @@ class SpammerCheckResource(resource.Resource):
             # Combine results with a timeout
             combined_deferred = defer.DeferredList(
                 [p2p_deferred, api_deferred],
-                fireOnOneCallback=True,
+                fireOnOneCallback=False,
                 fireOnOneErrback=True,
             )
 
             def handle_combined_results(results):
-                result, _index = results
-                success, data = result
-                if success and data:
-                    response_data.update(data)
-                    if data.get("is_spammer", False):
+                p2p_result, api_result = results
+                p2p_success, p2p_data = p2p_result
+                api_success, api_data = api_result
+
+                if p2p_success:
+                    # rename keys in p2p_data dict and convert str value to dict
+                    p2p_data = {
+                        "lols_bot": json.loads(p2p_data.get("lols_bot_data", "{}")),
+                        "cas_chat": json.loads(p2p_data.get("cas_chat_data", "{}")),
+                        "p2p": json.loads(p2p_data.get("p2p_data", "{}")),
+                        "user_id": int(p2p_data.get("user_id", user_id)),
+                        "is_spammer": p2p_data.get("is_spammer", False),
+                    }
+                    response_data.update(p2p_data)
+                if api_success:
+                    response_data.update(api_data)
+                    if api_data.get("is_spammer", False):
                         response_data["is_spammer"] = True
 
                 # Store the data in the database
@@ -164,13 +176,7 @@ class SpammerCheckResource(resource.Resource):
 
     def check_p2p_data(self, user_id):
         """Check P2P network for spammer data."""
-        p2p_deferred = self.p2p_factory.check_p2p_data(user_id)
-        timeout_deferred = deferLater(reactor, 1, lambda: None)
-        return defer.DeferredList(
-            [p2p_deferred, timeout_deferred],
-            fireOnOneCallback=True,
-            fireOnOneErrback=True,
-        )
+        return self.p2p_factory.check_p2p_data(user_id)
 
     def check_static_apis(self, user_id):
         """Check static APIs for spammer data."""
@@ -209,12 +215,7 @@ class SpammerCheckResource(resource.Resource):
         api_deferred.addCallback(handle_response)
         api_deferred.addErrback(handle_API_error)
 
-        timeout_deferred = deferLater(reactor, 1, lambda: None)
-        return defer.DeferredList(
-            [api_deferred, timeout_deferred],
-            fireOnOneCallback=True,
-            fireOnOneErrback=True,
-        )
+        return api_deferred
 
     def is_spammer(self, data) -> bool:
         """Determine if the user is a spammer based on the data."""

@@ -104,7 +104,8 @@ class SpammerCheckResource(resource.Resource):
                 p2p_success, p2p_data = p2p_result
                 api_success, api_data = api_result
 
-                if p2p_success:
+                if p2p_success and p2p_data:
+                    LOGGER.debug("%s P2P data found: %s", user_id, p2p_data)
                     # rename keys in p2p_data dict and convert str value to dict
                     p2p_data = {
                         "lols_bot": json.loads(p2p_data.get("lols_bot_data", "{}")),
@@ -114,7 +115,8 @@ class SpammerCheckResource(resource.Resource):
                         "is_spammer": p2p_data.get("is_spammer", False),
                     }
                     response_data.update(p2p_data)
-                if api_success:
+                if api_success and api_data:
+                    LOGGER.debug("%s API data found: %s", user_id, api_data)
                     response_data.update(api_data)
                     if api_data.get("is_spammer", False):
                         response_data["is_spammer"] = True

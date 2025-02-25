@@ -475,11 +475,9 @@ class P2PFactory(protocol.Factory):
     def on_bootstrap_peer_failed(self, failure, address):
         """Handle failed connection to a bootstrap peer."""
         LOGGER.error(
-            "%sFailed to connect to bootstrap peer %s: %s%s",
-            RED_COLOR,
+            "Failed to connect to bootstrap peer %s: %s",
             address,
             failure,
-            RESET_COLOR,
         )
 
     def update_peer_list(self, peers):
@@ -506,12 +504,10 @@ class P2PFactory(protocol.Factory):
                     )
                 ).addErrback(
                     lambda err, h=host, p=port: LOGGER.error(
-                        "%sFailed to connect to new peer %s:%d: %s%s",
-                        RED_COLOR,
+                        "Failed to connect to new peer %s:%d: %s",
                         h,
                         p,
                         err,
-                        RESET_COLOR,
                     )
                 )
                 LOGGER.info(

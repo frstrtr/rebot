@@ -216,11 +216,11 @@ class SpammerCheckResource(resource.Resource):
             LOGGER.error("Error querying APIs: %s", failure)
             return None
 
-        api_deferred = defer.gatherResults([d1, d2])
-        api_deferred.addCallback(handle_response)
-        api_deferred.addErrback(handle_API_error)
-
-        return api_deferred
+        return (
+            defer.gatherResults([d1, d2])
+            .addCallback(handle_response)
+            .addErrback(handle_API_error)
+        )
 
     def is_spammer(self, data) -> bool:
         """Determine if the user is a spammer based on the data."""

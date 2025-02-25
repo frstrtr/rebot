@@ -555,7 +555,7 @@ class P2PFactory(protocol.Factory):
             )
             peer = proto.get_peer()
             LOGGER.debug(
-                "%s Sent check_p2p_data request to peer %s:%d",
+                "%s Sending check_p2p_data request to peer %s:%d",
                 user_id,
                 peer.host,
                 peer.port,
@@ -569,16 +569,15 @@ class P2PFactory(protocol.Factory):
                 return json.loads(valid_responses[0])
             return None
 
+        def handle_peer_resp_error(failure):
+            """Handle errors during the P2P data check."""
+            LOGGER.error("Error checking P2P data: %s", failure)
+
         return (
             defer.gatherResults(deferreds)
             .addCallback(handle_peer_responses)
-            .addErrback(self.handle_error)
+            .addErrback(handle_peer_resp_error)
         )
-
-    def handle_error(self, failure):
-        """Handle errors during the P2P data check."""
-        LOGGER.error("Error checking P2P data: %s", failure)
-        return None
 
 
 def find_available_port(start_port):

@@ -81,12 +81,15 @@ class SpammerCheckResource(resource.Resource):
             }
 
             # Check database first
+            LOGGER.debug("%s Checking database", user_id)
             self.check_database(user_id, response_data)
 
             # Check P2P network
+            LOGGER.debug("%s Checking P2P network", user_id)
             p2p_deferred = self.check_p2p_data(user_id)
 
             # Check static APIs
+            LOGGER.debug("%s Checking static APIs", user_id)
             api_deferred = self.check_static_apis(user_id)
 
             # Combine results with a timeout

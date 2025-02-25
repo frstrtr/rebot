@@ -68,7 +68,7 @@ class SpammerCheckResource(resource.Resource):
         user_id = request.args.get(b"user_id", [None])[0]
         if user_id:
             user_id = user_id.decode("utf-8")
-            LOGGER.info("\033[7mReceived HTTP request for user_id: %s\033[0m", user_id)
+            LOGGER.info("\033[7m%s received HTTP request\033[0m", user_id)
 
             # Initialize response data
             response_data = {
@@ -97,11 +97,12 @@ class SpammerCheckResource(resource.Resource):
             )
 
             def handle_combined_results(results):
-                for success, result in results:
-                    if success and result:
-                        response_data.update(result)
-                        if result.get("is_spammer", False):
-                            response_data["is_spammer"] = True
+                result, _index = results
+                success, data = result
+                if success and data:
+                    response_data.update(data)
+                    if data.get("is_spammer", False):
+                        response_data["is_spammer"] = True
 
                 # Store the data in the database
                 store_spammer_data(
@@ -114,10 +115,11 @@ class SpammerCheckResource(resource.Resource):
                 # Propagate P2P data over peer network if they don't have such records
                 self.p2p_factory.broadcast_spammer_info(user_id)
 
+                LOGGER.info("\033[7m%s sending HTTP request response\033[0m", user_id)
                 request.setHeader(b"content-type", b"application/json")
                 request.write(json.dumps(response_data).encode("utf-8"))
                 request.finish()
-                LOGGER.info("Response sent: %s", response_data)
+                LOGGER.debug("HTTP GET response sent: %s", response_data)
 
             def handle_combined_error(failure):
                 LOGGER.error("Error combining results: %s", failure)

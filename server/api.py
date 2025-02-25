@@ -224,7 +224,8 @@ class SpammerCheckResource(resource.Resource):
 
     def is_spammer(self, data) -> bool:
         """Determine if the user is a spammer based on the data."""
-        LOGGER.debug("Checking if user is a spammer: %s", data)
+        user_id = data.get("user_id", None)
+        LOGGER.debug("%s checking if user is a spammer: %s", user_id, data)
 
         lols_bot_data = data.get("lols_bot", {})
         cas_chat_data = data.get("cas_chat", {})

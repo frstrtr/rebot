@@ -34,7 +34,7 @@ class NoVerifyContextFactory:
 
     def creatorForNetloc(self, hostname, port):
         """Function description here"""
-        LOGGER.info("Creating context for %s: %s", hostname, port)
+        LOGGER.debug("Creating context for %s: %s", hostname, port)
         return ClientTLSOptions(hostname, self.options.getContext())
 
 
@@ -224,7 +224,7 @@ class SpammerCheckResource(resource.Resource):
 
     def is_spammer(self, data) -> bool:
         """Determine if the user is a spammer based on the data."""
-        logging.debug("Checking if user is a spammer: %s", data)
+        LOGGER.debug("Checking if user is a spammer: %s", data)
 
         lols_bot_data = data.get("lols_bot", {})
         cas_chat_data = data.get("cas_chat", {})

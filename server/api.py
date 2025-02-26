@@ -1,9 +1,3 @@
-# api.py
-
-"""
-This module handles API requests and responses.
-"""
-
 import json
 
 from twisted.web import server, resource
@@ -13,7 +7,7 @@ from twisted.internet import defer, reactor
 from twisted.web.iweb import IPolicyForHTTPS
 from twisted.internet.ssl import CertificateOptions
 from twisted.internet._sslverify import ClientTLSOptions
-from twisted.internet.defer import TimeoutError
+from twisted.internet.error import TimeoutError as DefferedTimeoutError
 
 from zope.interface import implementer
 
@@ -91,13 +85,15 @@ class SpammerCheckResource(resource.Resource):
             LOGGER.debug("%s Checking static APIs", user_id)
             api_deferred = self.check_static_apis(user_id)
 
-            # Combine results with a timeout
+            # Combine results
             combined_deferred = defer.DeferredList(
                 [p2p_deferred, api_deferred],
                 fireOnOneCallback=False,
                 fireOnOneErrback=True,
-                timeout=5,  # Add a timeout of 5 seconds
             )
+
+            # Add a timeout
+            timeout_deferred = combined_deferred.addTimeout(5, reactor)
 
             def handle_combined_results(results):
                 LOGGER.debug("Handling combined results: %s", results)
@@ -154,7 +150,7 @@ class SpammerCheckResource(resource.Resource):
                 LOGGER.error("Error combining results: %s", failure)
 
                 # Check if the failure is a TimeoutError
-                if failure.check(TimeoutError):
+                if failure.check(DefferedTimeoutError):
                     LOGGER.warning("Timeout occurred while combining results.")
 
                 response = {
@@ -167,8 +163,8 @@ class SpammerCheckResource(resource.Resource):
                 request.finish()
                 LOGGER.info("Error response sent: %s", response)
 
-            combined_deferred.addCallback(handle_combined_results)
-            combined_deferred.addErrback(handle_combined_error)
+            timeout_deferred.addCallback(handle_combined_results)
+            timeout_deferred.addErrback(handle_combined_error)
 
             return server.NOT_DONE_YET
         else:

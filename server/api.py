@@ -7,7 +7,6 @@ from twisted.internet import defer, reactor
 from twisted.web.iweb import IPolicyForHTTPS
 from twisted.internet.ssl import CertificateOptions
 from twisted.internet._sslverify import ClientTLSOptions
-from twisted.internet.error import TimeoutError as DefferedTimeoutError
 
 from zope.interface import implementer
 
@@ -95,6 +94,22 @@ class SpammerCheckResource(resource.Resource):
             # Add a timeout
             timeout_deferred = combined_deferred.addTimeout(5, reactor)
 
+            # Create a deferred that fires when the connection is lost
+            client_disconnected = defer.Deferred()
+            request.notifyFinish().addErrback(
+                lambda err: client_disconnected.callback(None)
+            )
+
+            def send_response(response_data):
+                """Helper function to send the HTTP response."""
+                if not request.connectionLost:
+                    request.setHeader(b"content-type", b"application/json")
+                    request.write(json.dumps(response_data).encode("utf-8"))
+                    request.finish()
+                    LOGGER.debug("HTTP GET response sent: %s", response_data)
+                else:
+                    LOGGER.warning("Connection lost, not sending response.")
+
             def handle_combined_results(results):
                 LOGGER.debug("Handling combined results: %s", results)
                 p2p_result, api_result = results
@@ -141,26 +156,17 @@ class SpammerCheckResource(resource.Resource):
                 self.p2p_factory.broadcast_spammer_info(user_id)
 
                 LOGGER.info("\033[7m%s sending HTTP request response\033[0m", user_id)
-                request.setHeader(b"content-type", b"application/json")
-                request.write(json.dumps(response_data).encode("utf-8"))
-                request.finish()
-                LOGGER.debug("HTTP GET response sent: %s", response_data)
+                send_response(response_data)
 
             def handle_combined_error(failure):
                 LOGGER.error("Error combining results: %s", failure)
-
-                # Check if the failure is a TimeoutError
-                if failure.check(DefferedTimeoutError):
-                    LOGGER.warning("Timeout occurred while combining results.")
 
                 response = {
                     "ok": False,
                     "user_id": user_id,
                     "error": str(failure),
                 }
-                request.setHeader(b"content-type", b"application/json")
-                request.write(json.dumps(response).encode("utf-8"))
-                request.finish()
+                send_response(response)
                 LOGGER.info("Error response sent: %s", response)
 
             timeout_deferred.addCallback(handle_combined_results)

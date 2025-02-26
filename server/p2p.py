@@ -205,14 +205,14 @@ class P2PProtocol(protocol.Protocol):
             peer.host,
             peer.port,
         )
-        for proto in self.factory.protocol_instances:
-            if proto.transport.getPeer() == self.transport.getPeer():
-                if hasattr(proto, "deferred"):
-                    if "error" in data:
-                        proto.deferred.callback(None)
-                    else:
-                        proto.deferred.callback(json.dumps(data))
-                    del proto.deferred
+        if hasattr(self, "deferred"):
+            if "error" in data:
+                self.deferred.callback(None)
+            else:
+                self.deferred.callback(json.dumps(data))
+            if hasattr(self, "timeout_call") and self.timeout_call.active():
+                self.timeout_call.cancel()
+            del self.deferred
 
     def handle_p2p_data(self, data):
         """Handle received P2P data."""
@@ -321,6 +321,9 @@ class P2PProtocol(protocol.Protocol):
             p for p in self.factory.peers if p.host != peer.host or p.port != peer.port
         ]
         LOGGER.info("P2P connection lost: %s", reason)
+        if hasattr(self, "deferred"):
+            self.deferred.errback(reason)
+            del self.deferred
 
     def send_peer_info(self):
         """Send the list of known peers to the connected peer."""
@@ -544,6 +547,7 @@ class P2PFactory(protocol.Factory):
         deferreds = []
         for proto in self.protocol_instances:
             deferred = defer.Deferred()
+            proto.deferred = deferred
             proto.transport.write(
                 json.dumps({"type": "check_p2p_data", "user_id": user_id}).encode(
                     "utf-8"
@@ -556,7 +560,36 @@ class P2PFactory(protocol.Factory):
                 peer.host,
                 peer.port,
             )
-            proto.deferred = deferred
+
+            def handle_timeout():
+                """Handle timeout for P2P data check."""
+                if hasattr(proto, "deferred"):
+                    LOGGER.warning(
+                        "%s Timeout occurred while checking P2P data from peer %s:%d",
+                        user_id,
+                        peer.host,
+                        peer.port,
+                    )
+                    proto.deferred.callback(None)
+                    del proto.deferred
+
+            # Add a timeout to the deferred
+            timeout_call = reactor.callLater(5, handle_timeout)
+            proto.timeout_call = timeout_call
+
+            deferred.addCallback(
+                lambda result: (
+                    timeout_call.cancel() if timeout_call.active() else None,
+                    result,
+                )[1]
+            )
+            deferred.addErrback(
+                lambda failure: (
+                    timeout_call.cancel() if timeout_call.active() else None,
+                    failure,
+                )[1]
+            )
+
             deferreds.append(deferred)
 
         def handle_peer_responses(responses):

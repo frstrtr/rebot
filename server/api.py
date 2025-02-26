@@ -98,6 +98,7 @@ class SpammerCheckResource(resource.Resource):
             )
 
             def handle_combined_results(results):
+                LOGGER.debug("Handling combined results: %s", results)
                 p2p_result, api_result = results
                 p2p_success, p2p_data = p2p_result
                 api_success, api_data = api_result

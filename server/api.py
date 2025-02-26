@@ -13,6 +13,7 @@ from twisted.internet import defer, reactor
 from twisted.web.iweb import IPolicyForHTTPS
 from twisted.internet.ssl import CertificateOptions
 from twisted.internet._sslverify import ClientTLSOptions
+from twisted.internet.defer import TimeoutError
 
 from zope.interface import implementer
 
@@ -95,13 +96,23 @@ class SpammerCheckResource(resource.Resource):
                 [p2p_deferred, api_deferred],
                 fireOnOneCallback=False,
                 fireOnOneErrback=True,
+                timeout=5,  # Add a timeout of 5 seconds
             )
 
             def handle_combined_results(results):
                 LOGGER.debug("Handling combined results: %s", results)
                 p2p_result, api_result = results
-                p2p_success, p2p_data = p2p_result
-                api_success, api_data = api_result
+
+                # Check if results are tuples before unpacking
+                if isinstance(p2p_result, tuple):
+                    p2p_success, p2p_data = p2p_result
+                else:
+                    p2p_success, p2p_data = False, {}
+
+                if isinstance(api_result, tuple):
+                    api_success, api_data = api_result
+                else:
+                    api_success, api_data = False, {}
 
                 if p2p_success and p2p_data:
                     LOGGER.debug("%s P2P data found: %s", user_id, p2p_data)
@@ -141,6 +152,11 @@ class SpammerCheckResource(resource.Resource):
 
             def handle_combined_error(failure):
                 LOGGER.error("Error combining results: %s", failure)
+
+                # Check if the failure is a TimeoutError
+                if failure.check(TimeoutError):
+                    LOGGER.warning("Timeout occurred while combining results.")
+
                 response = {
                     "ok": False,
                     "user_id": user_id,

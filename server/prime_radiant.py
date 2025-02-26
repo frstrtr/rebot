@@ -1,4 +1,5 @@
 """Prime Radiant - p2p antispam server."""
+
 # TODO each node signature with spam markup criteria - to choose the best node for spam checking condition
 
 import sys

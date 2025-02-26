@@ -102,13 +102,16 @@ class SpammerCheckResource(resource.Resource):
 
             def send_response(response_data):
                 """Helper function to send the HTTP response."""
-                if not request.connectionLost:
-                    request.setHeader(b"content-type", b"application/json")
-                    request.write(json.dumps(response_data).encode("utf-8"))
-                    request.finish()
-                    LOGGER.debug("HTTP GET response sent: %s", response_data)
-                else:
-                    LOGGER.warning("Connection lost, not sending response.")
+                # try:
+                # if not request.connectionLost:
+                request.setHeader(b"content-type", b"application/json")
+                request.write(json.dumps(response_data).encode("utf-8"))
+                request.finish()
+                LOGGER.debug("HTTP GET response sent: %s", response_data)
+                # else:
+                #     LOGGER.warning("Connection lost, not sending response.")
+                # except Exception as e:
+                #     LOGGER.error("Error sending response: %s", e)
 
             def handle_combined_results(results):
                 LOGGER.debug("Handling combined results: %s", results)

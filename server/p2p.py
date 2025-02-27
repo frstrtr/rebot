@@ -3,8 +3,10 @@
 import json
 import uuid
 
-from twisted.internet import endpoints, defer, error, protocol, reactor
+from twisted.internet import endpoints, defer, error, protocol
+from twisted.internet import reactor, task
 from twisted.internet.address import IPv4Address
+from twisted.internet.defer import CancelledError
 from database import (
     store_spammer_data,
     retrieve_spammer_data_from_db,
@@ -205,14 +207,14 @@ class P2PProtocol(protocol.Protocol):
             peer.host,
             peer.port,
         )
-        for proto in self.factory.protocol_instances:
-            if proto.transport.getPeer() == self.transport.getPeer():
-                if hasattr(proto, "deferred"):
-                    if "error" in data:
-                        proto.deferred.callback(None)
-                    else:
-                        proto.deferred.callback(json.dumps(data))
-                    del proto.deferred
+        if hasattr(self, "deferred"):
+            if "error" in data:
+                self.deferred.callback(None)
+            else:
+                self.deferred.callback(json.dumps(data))
+            if hasattr(self, "timeout_call") and self.timeout_call.active():
+                self.timeout_call.cancel()
+            del self.deferred
 
     def handle_p2p_data(self, data):
         """Handle received P2P data."""
@@ -321,6 +323,7 @@ class P2PProtocol(protocol.Protocol):
             p for p in self.factory.peers if p.host != peer.host or p.port != peer.port
         ]
         LOGGER.info("P2P connection lost: %s", reason)
+        self.factory.remove_peer(self)
 
     def send_peer_info(self):
         """Send the list of known peers to the connected peer."""
@@ -355,6 +358,16 @@ class P2PFactory(protocol.Factory):
         proto.processed_data = set()
         self.protocol_instances.append(proto)
         return proto
+
+    def remove_peer(self, proto):
+        """Remove a peer from the list of connected peers."""
+        if proto in self.protocol_instances:
+            self.protocol_instances.remove(proto)
+            LOGGER.info(
+                "Removed peer %s:%d from active peer list",
+                proto.transport.getPeer().host,
+                proto.transport.getPeer().port,
+            )
 
     def broadcast_spammer_info(self, user_id):
         """Broadcast spammer information to all connected peers."""
@@ -499,11 +512,11 @@ class P2PFactory(protocol.Factory):
             if not any(p.host == host and p.port == port for p in self.peers):
                 endpoint = endpoints.TCP4ClientEndpoint(reactor, host, port)
                 endpoint.connect(self).addCallback(
-                    lambda _, h=host, p=port: LOGGER.info(
+                    lambda _, h=host, p=port, peer=peer: LOGGER.info(
                         "Connected to new peer %s:%d", h, p
                     )
                 ).addErrback(
-                    lambda err, h=host, p=port: LOGGER.error(
+                    lambda err, h=host, p=port, peer=peer: LOGGER.error(
                         "Failed to connect to new peer %s:%d: %s",
                         h,
                         p,
@@ -542,21 +555,60 @@ class P2PFactory(protocol.Factory):
         """Check for P2P data across all connected peers."""
         LOGGER.info("Checking peers for user_id: %s", user_id)
         deferreds = []
-        for proto in self.protocol_instances:
+        active_protocols = list(self.protocol_instances)  # Iterate over a copy
+        for proto in active_protocols:
             deferred = defer.Deferred()
-            proto.transport.write(
-                json.dumps({"type": "check_p2p_data", "user_id": user_id}).encode(
-                    "utf-8"
-                )
-            )
-            peer = proto.get_peer()
-            LOGGER.debug(
-                "%s Sending check_p2p_data request to peer %s:%d",
-                user_id,
-                peer.host,
-                peer.port,
-            )
             proto.deferred = deferred
+            peer = proto.get_peer()
+            try:
+                proto.transport.write(
+                    json.dumps({"type": "check_p2p_data", "user_id": user_id}).encode(
+                        "utf-8"
+                    )
+                )
+
+                LOGGER.debug(
+                    "%s Sending check_p2p_data request to peer %s:%d",
+                    user_id,
+                    peer.host,
+                    peer.port,
+                )
+            except CancelledError as e:
+                LOGGER.error(
+                    "Error sending check_p2p_data request to peer %s:%d: %s",
+                    peer.host,
+                    peer.port,
+                    e,
+                )
+                self.remove_peer(proto)
+                continue
+
+            def handle_timeout(proto=proto):
+                """Handle timeout for P2P data check."""
+                if hasattr(proto, "deferred"):
+                    LOGGER.warning(
+                        "%s Timeout occurred while checking P2P data from peer %s:%d",
+                        user_id,
+                        peer.host,
+                        peer.port,
+                    )
+                    proto.deferred.callback(None)
+                    if hasattr(proto, "timeout_call") and proto.timeout_call.active():
+                        proto.timeout_call.cancel()
+                    del proto.deferred
+                    self.remove_peer(proto)
+
+            # Add a timeout to the deferred
+            timeout_call = task.deferLater(reactor, 5, handle_timeout)
+            proto.timeout_call = timeout_call
+
+            def cancel_timeout(result):
+                if hasattr(proto, "timeout_call") and proto.timeout_call.active():
+                    proto.timeout_call.cancel()
+                return result
+
+            deferred.addCallback(cancel_timeout)
+            deferred.addErrback(cancel_timeout)
             deferreds.append(deferred)
 
         def handle_peer_responses(responses):

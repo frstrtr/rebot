@@ -40,6 +40,7 @@ class P2PProtocol(protocol.Protocol):
     def __init__(self):
         self.processed_data = set()
         self.received_from_peer = None  # Add this attribute
+        self.timeout_call = None  # Initialize timeout_call
 
     def connectionMade(self):
         """Handle new P2P connections."""
@@ -212,10 +213,14 @@ class P2PProtocol(protocol.Protocol):
                 self.deferred.callback(None)
             else:
                 self.deferred.callback(json.dumps(data))
-            if hasattr(self, "timeout_call") and isinstance(
-                self.timeout_call, task.defer.Deferred
-            ):
-                self.timeout_call.cancel()
+            if self.timeout_call:
+                if (
+                    isinstance(self.timeout_call, task.DelayedCall)
+                    and self.timeout_call.active()
+                ):
+                    self.timeout_call.cancel()
+                elif isinstance(self.timeout_call, defer.Deferred):
+                    pass  # It's already handled by connectionLost
             del self.deferred
 
     def handle_p2p_data(self, data):
@@ -591,8 +596,7 @@ class P2PFactory(protocol.Factory):
                     self.remove_peer(proto)
 
             # Add a timeout to the deferred
-            timeout_call = task.deferLater(reactor, 5, handle_timeout)
-            proto.timeout_call = timeout_call
+            proto.timeout_call = task.deferLater(reactor, 5, handle_timeout)
 
             try:
                 proto.transport.write(
@@ -610,14 +614,18 @@ class P2PFactory(protocol.Factory):
 
                 def handle_response(result):
                     """Handle the response from the peer."""
-                    if hasattr(proto, "timeout_call"):
+                    if hasattr(proto, "timeout_call") and isinstance(proto.timeout_call, task.DelayedCall) and proto.timeout_call.active():
                         proto.timeout_call.cancel()
                     return result
 
                 def handle_error(failure):
                     """Handle an error from the peer."""
                     if hasattr(proto, "timeout_call"):
-                        proto.timeout_call.cancel()
+                        if (
+                            isinstance(proto.timeout_call, task.DelayedCall)
+                            and proto.timeout_call.active()
+                        ):
+                            proto.timeout_call.cancel()
                     # Log the error, but don't remove the peer here
                     LOGGER.error(
                         "Error checking P2P data from peer %s:%d: %s",
@@ -638,7 +646,7 @@ class P2PFactory(protocol.Factory):
                     port,
                     e,
                 )
-                if hasattr(proto, "timeout_call"):
+                if proto.timeout_call and proto.timeout_call.active():
                     proto.timeout_call.cancel()
                 self.remove_peer(proto)
                 continue

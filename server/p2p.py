@@ -212,8 +212,8 @@ class P2PProtocol(protocol.Protocol):
                 self.deferred.callback(None)
             else:
                 self.deferred.callback(json.dumps(data))
-            # if hasattr(self, "timeout_call") and self.timeout_call.active():
-            #     self.timeout_call.cancel()
+            if hasattr(self, "timeout_call") and self.timeout_call.active():
+                self.timeout_call.cancel()
             del self.deferred
 
     def handle_p2p_data(self, data):
@@ -556,7 +556,7 @@ class P2PFactory(protocol.Factory):
             host = peer.host
             port = peer.port
 
-            def handle_timeout(proto=proto, user_id=user_id):
+            def handle_timeout(proto=proto, user_id=user_id, host=host, port=port):
                 """Handle timeout for P2P data check."""
                 if hasattr(proto, "deferred"):
                     if hasattr(proto, "transport"):  # Check if transport exists
@@ -567,15 +567,19 @@ class P2PFactory(protocol.Factory):
                                 proto.transport.getPeer().host,  # Access host from peer
                                 proto.transport.getPeer().port,  # Access port from peer
                             )
-                        except AttributeError as e:
-                            LOGGER.error("Error accessing peer info in timeout: %s", e)
+                        except Exception as e:
+                            LOGGER.error(
+                                "Error accessing peer info in timeout: %s", e
+                            )
                     else:
                         LOGGER.warning(
                             "%s Timeout occurred, but connection was already lost for peer",
                             user_id,
                         )
-                    proto.deferred.callback(None)
-                    del proto.deferred
+                    # Only callback if the deferred hasn't already been called
+                    if hasattr(proto, "deferred"):
+                        proto.deferred.callback(None)
+                        del proto.deferred
                     self.remove_peer(proto)
 
             # Add a timeout to the deferred
@@ -595,33 +599,41 @@ class P2PFactory(protocol.Factory):
                     host,
                     port,
                 )
-            except (AttributeError, TypeError, ValueError) as e:
+
+                def handle_response(result):
+                    """Handle the response from the peer."""
+                    if hasattr(proto, "timeout_call") and proto.timeout_call.active():
+                        proto.timeout_call.cancel()
+                    return result
+
+                def handle_error(failure):
+                    """Handle an error from the peer."""
+                    if hasattr(proto, "timeout_call") and proto.timeout_call.active():
+                        proto.timeout_call.cancel()
+                    # Log the error, but don't remove the peer here
+                    LOGGER.error(
+                        "Error checking P2P data from peer %s:%d: %s",
+                        host,
+                        port,
+                        failure,
+                    )
+                    return failure
+
+                deferred.addCallback(handle_response)
+                deferred.addErrback(handle_error)
+                deferreds.append(deferred)
+
+            except Exception as e:
                 LOGGER.error(
                     "Error sending check_p2p_data request to peer %s:%d: %s",
                     host,
                     port,
                     e,
                 )
-                if hasattr(proto, "timeout_call"):
+                if hasattr(proto, "timeout_call") and proto.timeout_call.active():
                     proto.timeout_call.cancel()
                 self.remove_peer(proto)
                 continue
-
-            def handle_response(result, proto):
-                """Handle the response from the peer."""
-                if hasattr(proto, "timeout_call"):
-                    proto.timeout_call.cancel()
-                return result
-
-            def handle_error(failure, proto):
-                """Handle an error from the peer."""
-                if hasattr(proto, "timeout_call"):
-                    proto.timeout_call.cancel()
-                return failure
-
-            deferred.addCallback(partial(handle_response, proto=proto))
-            deferred.addErrback(partial(handle_error, proto=proto))
-            deferreds.append(deferred)
 
         def handle_peer_responses(responses):
             valid_responses = [response for response in responses if response]

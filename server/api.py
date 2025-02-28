@@ -128,17 +128,40 @@ class SpammerCheckResource(resource.Resource):
                 else:
                     api_success, api_data = False, {}
 
-                if p2p_success and p2p_data:
+                if p2p_success and p2p_data and p2p_data.get("p2p_data") != "{}":
                     LOGGER.debug("%s P2P data found: %s", user_id, p2p_data)
                     # rename keys in p2p_data dict and convert str value to dict
+                    lols_bot_data = json.loads(p2p_data.get("lols_bot_data", "{}"))
+                    cas_chat_data = json.loads(p2p_data.get("cas_chat_data", "{}"))
+                    p2p_section = json.loads(p2p_data.get("p2p_data", "{}"))
                     p2p_data = {
-                        "lols_bot": json.loads(p2p_data.get("lols_bot_data", "{}")),
-                        "cas_chat": json.loads(p2p_data.get("cas_chat_data", "{}")),
-                        "p2p": json.loads(p2p_data.get("p2p_data", "{}")),
+                        "lols_bot": lols_bot_data,
+                        "cas_chat": cas_chat_data,
+                        "p2p": p2p_section,
                         "user_id": int(p2p_data.get("user_id", user_id)),
                         "is_spammer": p2p_data.get("is_spammer", False),
                     }
                     response_data.update(p2p_data)
+                else:
+                    LOGGER.debug("%s No P2P data found", user_id)
+                    # Reconstruct p2p data if it's not available
+                    lols_bot_data = response_data.get("lols_bot", {})
+                    cas_chat_data = response_data.get("cas_chat", {})
+                    is_spammer = (
+                        lols_bot_data.get("banned", False)
+                        or cas_chat_data.get("result", {}).get("offenses", 0) > 0
+                    )
+                    response_data["lols_bot"] = lols_bot_data
+                    response_data["cas_chat"] = cas_chat_data
+                    response_data["p2p"] = {
+                        "ok": True,
+                        "user_id": user_id,
+                        "is_spammer": is_spammer,
+                    }
+                    response_data["is_spammer"] = (
+                        is_spammer  # Update overall is_spammer status
+                    )
+
                 if api_success and api_data:
                     LOGGER.debug("%s API data found: %s", user_id, api_data)
                     response_data.update(api_data)
@@ -235,6 +258,7 @@ class SpammerCheckResource(resource.Resource):
             }
 
         def handle_API_error(failure):
+            """Handle errors from API requests."""
             LOGGER.error("Error querying APIs: %s", failure)
             return None
 

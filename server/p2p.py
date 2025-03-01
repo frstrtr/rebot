@@ -38,6 +38,7 @@ class P2PProtocol(protocol.Protocol):
 
     def __init__(self):
         self.processed_data = set()
+        self.buffer = ""  # Initialize buffer
         self.received_from_peer = None  # Add this attribute
         self.timeout_call = None  # Initialize timeout_call
         self.peer_uuid = None  # Initialize peer_uuid
@@ -76,29 +77,28 @@ class P2PProtocol(protocol.Protocol):
 
     def dataReceived(self, data):
         """Handle received P2P data."""
-        message = data.decode("utf-8")
         peer = self.get_peer()
         self.received_from_peer = (
             peer  # Store the peer from which the data was received
         )
-        LOGGER.debug(
-            "%sP2P message received%s from %s:%d: %s",
-            INVERSE_COLOR,
-            RESET_COLOR,
-            peer.host,
-            peer.port,
-            message,
-        )
+        self.buffer += data.decode("utf-8")
 
-        # Split the message by '}{' and add the braces back
-        json_strings = self.split_json_objects(message)
-
-        for json_string in json_strings:
+        while True:
             try:
-                data = json.loads(json_string)
+                # Attempt to parse the buffer as a JSON object
+                data = json.loads(self.buffer)
+
+                LOGGER.debug(
+                    "%sP2P message received%s from %s:%d: %s",
+                    INVERSE_COLOR,
+                    RESET_COLOR,
+                    peer.host,
+                    peer.port,
+                    data,
+                )
+
                 if "type" not in data:
                     self.handle_p2p_data(data)
-                    continue
 
                 if data["type"] == HANDSHAKE_INIT:
                     self.handle_handshake_init(data)
@@ -106,8 +106,6 @@ class P2PProtocol(protocol.Protocol):
                     self.handle_handshake_response(data)
                 elif data["type"] == "check_p2p_data":
                     self.handle_check_p2p_data(data)
-                elif data["type"] == "check_p2p_data_response":
-                    self.handle_check_p2p_data_response(data)
                 elif data["type"] == "spammer_info_broadcast":
                     self.handle_p2p_data(data)
                 else:
@@ -115,6 +113,11 @@ class P2PProtocol(protocol.Protocol):
 
             except json.JSONDecodeError as e:
                 LOGGER.error("Failed to decode JSON: %s", e)
+                # If there's an error, it might be because the message is incomplete
+                break
+
+            # Clear the buffer after processing the message
+            self.buffer = ""
 
     def handle_handshake_init(self, data):
         """Handle handshake initiation message."""

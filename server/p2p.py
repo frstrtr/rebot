@@ -220,6 +220,7 @@ class P2PProtocol(protocol.Protocol):
                 "lols_bot_data": spammer_data["lols_bot_data"],
                 "cas_chat_data": spammer_data["cas_chat_data"],
                 "p2p_data": spammer_data["p2p_data"],
+                "is_spammer": spammer_data["is_spammer"],
             }
             self.transport.write(json.dumps(response).encode("utf-8"))
             LOGGER.debug("%s sent check_p2p_data response: %s", user_id, response)
@@ -279,6 +280,7 @@ class P2PProtocol(protocol.Protocol):
             p2p_data = data.get("p2p_data", {})
             if isinstance(p2p_data, str):
                 p2p_data = json.loads(p2p_data)
+            is_spammer = data.get("is_spammer", False)
 
             # Retrieve existing data from the database
             existing_data = retrieve_spammer_data_from_db(user_id)
@@ -292,11 +294,13 @@ class P2PProtocol(protocol.Protocol):
                 existing_p2p_data = existing_data.get("p2p_data", {})
                 if isinstance(existing_p2p_data, str):
                     existing_p2p_data = json.loads(existing_p2p_data)
+                existing_is_spammer = existing_data.get("is_spammer", False)
 
                 # Compare new data with existing data
                 if (
                     lols_bot_data == existing_lols_bot_data
                     and cas_chat_data == existing_cas_chat_data
+                    and is_spammer == existing_is_spammer
                     and p2p_data == existing_p2p_data
                 ):
                     LOGGER.debug(
@@ -307,7 +311,13 @@ class P2PProtocol(protocol.Protocol):
 
             # Store the new data
             LOGGER.debug("%s Storing new data", user_id)
-            store_spammer_data(user_id, lols_bot_data, cas_chat_data, p2p_data)
+            store_spammer_data(
+                user_id,
+                json.dumps(lols_bot_data),
+                json.dumps(cas_chat_data),
+                json.dumps(p2p_data),
+                is_spammer,
+            )
             self.factory.broadcast_spammer_info(user_id)
         elif "peers" in data:
             LOGGER.debug("Updating peer list: %s", data["peers"])

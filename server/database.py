@@ -4,7 +4,6 @@
 This module handles database operations for storing and retrieving spammer data.
 """
 
-import json
 import sqlite3
 from server_config import DATABASE_FILE, LOGGER
 
@@ -13,13 +12,28 @@ def initialize_database():
     """Initialize the database and create tables if they don't exist."""
     conn = sqlite3.connect(DATABASE_FILE)
     cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            ALTER TABLE spammers ADD COLUMN is_spammer BOOLEAN DEFAULT FALSE
+            """
+        )
+        conn.commit()
+        LOGGER.info("Added is_spammer column to spammers table")
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" in str(e):
+            LOGGER.info("is_spammer column already exists in spammers table")
+        else:
+            LOGGER.error("Error adding is_spammer column: %s", e)
+
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS spammers (
             user_id TEXT PRIMARY KEY,
             lols_bot_data TEXT,
             cas_chat_data TEXT,
-            p2p_data TEXT
+            p2p_data TEXT,
+            is_spammer BOOLEAN DEFAULT FALSE
         )
     """
     )
@@ -28,24 +42,17 @@ def initialize_database():
     LOGGER.info("Database initialized")
 
 
-def store_spammer_data(user_id, lols_bot_data, cas_chat_data, p2p_data):
-    """Store spammer data in the database."""
-    # Convert dictionaries to JSON strings if necessary
-    if isinstance(lols_bot_data, dict):
-        lols_bot_data = json.dumps(lols_bot_data)
-    if isinstance(cas_chat_data, dict):
-        cas_chat_data = json.dumps(cas_chat_data)
-    if isinstance(p2p_data, dict):
-        p2p_data = json.dumps(p2p_data)
-
+def store_spammer_data(
+    user_id, lols_bot_data, cas_chat_data, p2p_data, is_spammer=False
+):
     conn = sqlite3.connect(DATABASE_FILE)
     cursor = conn.cursor()
     cursor.execute(
         """
-        INSERT OR REPLACE INTO spammers (user_id, lols_bot_data, cas_chat_data, p2p_data)
-        VALUES (?, ?, ?, ?)
+        INSERT OR REPLACE INTO spammers (user_id, lols_bot_data, cas_chat_data, p2p_data, is_spammer)
+        VALUES (?, ?, ?, ?, ?)
     """,
-        (user_id, lols_bot_data, cas_chat_data, p2p_data),
+        (user_id, lols_bot_data, cas_chat_data, p2p_data, is_spammer),
     )
     conn.commit()
     conn.close()
@@ -58,21 +65,21 @@ def retrieve_spammer_data_from_db(user_id):
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT lols_bot_data, cas_chat_data, p2p_data FROM spammers WHERE user_id = ?
-    """,
+        SELECT lols_bot_data, cas_chat_data, p2p_data, is_spammer FROM spammers WHERE user_id = ?
+        """,
         (user_id,),
     )
     row = cursor.fetchone()
     conn.close()
     if row:
-        lols_bot_data, cas_chat_data, p2p_data = row
+        lols_bot_data, cas_chat_data, p2p_data, is_spammer = row
         return {
             "lols_bot_data": lols_bot_data,
             "cas_chat_data": cas_chat_data,
             "p2p_data": p2p_data,
+            "is_spammer": is_spammer,
         }
-    else:
-        return None
+    return None
 
 
 def get_all_spammer_ids():

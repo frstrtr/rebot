@@ -178,6 +178,7 @@ class SpammerCheckResource(resource.Resource):
                     json.dumps(response_data["lols_bot"]),
                     json.dumps(response_data["cas_chat"]),
                     json.dumps(response_data["p2p"]),
+                    response_data["is_spammer"],
                 )
 
                 # Propagate P2P data over peer network if they don't have such records
@@ -224,7 +225,7 @@ class SpammerCheckResource(resource.Resource):
             response_data["p2p"] = (
                 json.loads(spammer_data["p2p_data"]) if spammer_data["p2p_data"] else {}
             )
-            response_data["is_spammer"] = self.is_spammer(response_data)
+            response_data["is_spammer"] = spammer_data["is_spammer"]
             LOGGER.info("%s Data found in database: %s", user_id, response_data)
 
     def check_p2p_data(self, user_id):
@@ -284,8 +285,15 @@ class SpammerCheckResource(resource.Resource):
         cas_chat_data = data.get("cas_chat", {})
         p2p_data = data.get("p2p", {})
 
-        return (
+        is_spammer_result = (
             lols_bot_data.get("banned", False)
             or cas_chat_data.get("result", {}).get("offenses", 0) > 0
             or p2p_data.get("is_spammer", False)
         )
+
+        LOGGER.debug("lols_bot_data: %s", lols_bot_data)
+        LOGGER.debug("cas_chat_data: %s", cas_chat_data)
+        LOGGER.debug("p2p_data: %s", p2p_data)
+        LOGGER.debug("is_spammer_result: %s", is_spammer_result)
+
+        return is_spammer_result

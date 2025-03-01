@@ -168,6 +168,9 @@ class SpammerCheckResource(resource.Resource):
                     if api_data.get("is_spammer", False):
                         response_data["is_spammer"] = True
 
+                # Update the overall is_spammer status
+                response_data["p2p"]["is_spammer"] = response_data["is_spammer"]
+
                 # Store the data in the database
                 LOGGER.debug("%s Storing data in database", user_id)
                 store_spammer_data(

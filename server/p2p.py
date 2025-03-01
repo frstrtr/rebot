@@ -83,7 +83,12 @@ class P2PProtocol(protocol.Protocol):
             peer  # Store the peer from which the data was received
         )
         LOGGER.debug(
-            "P2P message received from %s:%d: %s", peer.host, peer.port, message
+            "%sP2P message received%s from %s:%d: %s",
+            INVERSE_COLOR,
+            RESET_COLOR,
+            peer.host,
+            peer.port,
+            message,
         )
 
         # Split the message by '}{' and add the braces back
@@ -646,7 +651,11 @@ class P2PFactory(protocol.Factory):
 
                 def handle_response(result):
                     """Handle the response from the peer."""
-                    if hasattr(proto, "timeout_call") and isinstance(proto.timeout_call, task.DelayedCall) and proto.timeout_call.active():
+                    if (
+                        hasattr(proto, "timeout_call")
+                        and isinstance(proto.timeout_call, task.DelayedCall)
+                        and proto.timeout_call.active()
+                    ):
                         proto.timeout_call.cancel()
                     return result
 

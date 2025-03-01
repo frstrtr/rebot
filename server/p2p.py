@@ -41,6 +41,7 @@ class P2PProtocol(protocol.Protocol):
         self.processed_data = set()
         self.received_from_peer = None  # Add this attribute
         self.timeout_call = None  # Initialize timeout_call
+        self.peer_uuid = None  # Initialize peer_uuid
 
     def connectionMade(self):
         """Handle new P2P connections."""
@@ -115,6 +116,8 @@ class P2PProtocol(protocol.Protocol):
         peer_uuid = data["uuid"]
         peer = self.get_peer()
         peer.node_uuid = peer_uuid
+        self.peer_uuid = peer_uuid  # Store the peer UUID in the protocol instance
+
         LOGGER.info(
             "%sReceived handshake initiation from %s:%d (UUID: %s)%s",
             GREEN_COLOR,
@@ -133,6 +136,16 @@ class P2PProtocol(protocol.Protocol):
                 RESET_COLOR,
             )
             self.transport.loseConnection()
+        elif self.factory.is_duplicate_uuid(peer_uuid, self):
+            LOGGER.info(
+                "%sDisconnecting duplicate connection to %s:%d (UUID: %s)%s",
+                RED_COLOR,
+                peer.host,
+                peer.port,
+                peer.node_uuid,
+                RESET_COLOR,
+            )
+            self.transport.loseConnection()
         else:
             self.send_handshake_response(self.factory.node_uuid)
 
@@ -141,6 +154,8 @@ class P2PProtocol(protocol.Protocol):
         peer_uuid = data["uuid"]
         peer = self.get_peer()
         peer.node_uuid = peer_uuid
+        self.peer_uuid = peer_uuid  # Store the peer UUID in the protocol instance
+
         LOGGER.info(
             "%sReceived handshake response from %s:%d (UUID: %s)%s",
             GREEN_COLOR,
@@ -159,6 +174,18 @@ class P2PProtocol(protocol.Protocol):
                 RESET_COLOR,
             )
             self.transport.loseConnection()
+        elif self.factory.is_duplicate_uuid(peer_uuid, self):
+            LOGGER.info(
+                "%sDisconnecting duplicate connection to %s:%d (UUID: %s)%s",
+                RED_COLOR,
+                peer.host,
+                peer.port,
+                peer.node_uuid,
+                RESET_COLOR,
+            )
+            self.transport.loseConnection()
+        else:
+            self.send_handshake_response(self.factory.node_uuid)
 
     def handle_check_p2p_data(self, data):
         """Handle check_p2p_data request and respond with data if available."""
@@ -367,6 +394,7 @@ class P2PFactory(protocol.Factory):
         self.node_uuid = node_uuid or str(uuid.uuid4())
         self.bootstrap_peers = []
         self.protocol_instances = []
+        self.known_uuids = set()  # Keep track of known UUIDs
 
     def buildProtocol(self, addr):
         """Build and return a protocol instance."""
@@ -422,15 +450,14 @@ class P2PFactory(protocol.Factory):
                             and spammer_data["p2p_data"] == existing_p2p_data
                         ):
                             continue  # Skip sending if data has not changed
-
-                # Broadcast updated data
-                proto.transport.write(message.encode("utf-8"))
-                LOGGER.debug(
-                    "%s Sent updated spammer info to peer %s:%d",
-                    user_id,
-                    proto.get_peer().host,
-                    proto.get_peer().port,
-                )
+                if proto.peer_uuid != self.node_uuid:
+                    proto.transport.write(message.encode("utf-8"))
+                    LOGGER.debug(
+                        "%s Sent updated spammer info to peer %s:%d",
+                        user_id,
+                        proto.get_peer().host,
+                        proto.get_peer().port,
+                    )
             LOGGER.info(
                 "%s%s Broadcasted spammer info: %s%s",
                 INVERSE_COLOR,
@@ -675,6 +702,13 @@ class P2PFactory(protocol.Factory):
         if proto in self.protocol_instances:
             self.protocol_instances.remove(proto)
         LOGGER.info("Removed peer %s:%d from active peer list", peer.host, peer.port)
+
+    def is_duplicate_uuid(self, peer_uuid, current_proto):
+        """Check if a peer with the same UUID already exists."""
+        for proto in self.protocol_instances:
+            if proto != current_proto and proto.peer_uuid == peer_uuid:
+                return True
+        return False
 
 
 def find_available_port(start_port):

@@ -410,6 +410,7 @@ class P2PFactory(protocol.Factory):
         proto = self.protocol()
         proto.factory = self
         proto.processed_data = set()
+        LOGGER.debug("New connection from address: %s", addr)
         self.protocol_instances.append(proto)
         return proto
 

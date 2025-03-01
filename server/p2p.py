@@ -42,6 +42,7 @@ class P2PProtocol(protocol.Protocol):
         self.received_from_peer = None  # Add this attribute
         self.timeout_call = None  # Initialize timeout_call
         self.peer_uuid = None  # Initialize peer_uuid
+        self.handshake_complete = False  # Track handshake status
 
     def connectionMade(self):
         """Handle new P2P connections."""
@@ -148,9 +149,13 @@ class P2PProtocol(protocol.Protocol):
             self.transport.loseConnection()
         else:
             self.send_handshake_response(self.factory.node_uuid)
+            self.handshake_complete = True  # Mark handshake as complete
 
     def handle_handshake_response(self, data):
         """Handle handshake response message."""
+        if self.handshake_complete:
+            return  # Ignore further handshake messages
+
         peer_uuid = data["uuid"]
         peer = self.get_peer()
         peer.node_uuid = peer_uuid
@@ -185,7 +190,7 @@ class P2PProtocol(protocol.Protocol):
             )
             self.transport.loseConnection()
         else:
-            self.send_handshake_response(self.factory.node_uuid)
+            self.handshake_complete = True  # Mark handshake as complete
 
     def handle_check_p2p_data(self, data):
         """Handle check_p2p_data request and respond with data if available."""

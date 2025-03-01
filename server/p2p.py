@@ -2,7 +2,6 @@
 
 import json
 import uuid
-from functools import partial
 
 from twisted.internet import endpoints, defer, error, protocol, reactor, task
 from twisted.internet.address import IPv4Address
@@ -223,7 +222,7 @@ class P2PProtocol(protocol.Protocol):
                 "p2p_data": spammer_data["p2p_data"],
             }
             self.transport.write(json.dumps(response).encode("utf-8"))
-            LOGGER.info("%s sent check_p2p_data response: %s", user_id, response)
+            LOGGER.debug("%s sent check_p2p_data response: %s", user_id, response)
         else:
             response = {
                 "type": "check_p2p_data_response",
@@ -468,7 +467,7 @@ class P2PFactory(protocol.Factory):
                         proto.get_peer().host,
                         proto.get_peer().port,
                     )
-            LOGGER.info(
+            LOGGER.debug(
                 "%s%s Broadcasted spammer info: %s%s",
                 INVERSE_COLOR,
                 user_id,

@@ -35,7 +35,7 @@ class CustomFormatter(logging.Formatter):
         record.filename = (
             f"{CustomFormatter.PURPLE}{record.filename}{CustomFormatter.RESET}"
         )
-        formatter_string = f"{CustomFormatter.BLACK_BG}{CustomFormatter.GREEN}%(asctime)s - %(filename)s - {levelname_color}{CustomFormatter.WHITE_BG}%(levelname)s{CustomFormatter.RESET} - %(message)s{CustomFormatter.RESET}"
+        formatter_string = f"{CustomFormatter.BLACK_BG}{CustomFormatter.GREEN}%(asctime)s - %(filename)s - {levelname_color}%(levelname)s{CustomFormatter.RESET} - %(message)s{CustomFormatter.RESET}"
         return logging.Formatter(formatter_string, datefmt="%Y-%m-%d %H:%M:%S").format(
             record
         )

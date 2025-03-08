@@ -30,12 +30,14 @@ class CustomFormatter(logging.Formatter):
         elif record.levelno == logging.ERROR:
             levelname_color = CustomFormatter.RED
 
+        levelname_color = f"{CustomFormatter.BLACK_BG}{levelname_color}"
+
         if record.levelno == logging.ERROR:
             record.msg = f"{CustomFormatter.RED}{record.msg}{CustomFormatter.RESET}"
         record.filename = (
             f"{CustomFormatter.PURPLE}{record.filename}{CustomFormatter.RESET}"
         )
-        formatter_string = f"{CustomFormatter.BLACK_BG}{CustomFormatter.GREEN}%(asctime)s - %(filename)s - {levelname_color}%(levelname)s{CustomFormatter.RESET} - %(message)s{CustomFormatter.RESET}"
+        formatter_string = f"{CustomFormatter.BLACK_BG}{CustomFormatter.GREEN}%(asctime)s - %(filename)s - {levelname_color}%(levelname)s{CustomFormatter.RESET} - %(message)s"
         return logging.Formatter(formatter_string, datefmt="%Y-%m-%d %H:%M:%S").format(
             record
         )

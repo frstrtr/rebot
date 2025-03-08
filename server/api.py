@@ -323,6 +323,13 @@ class ReportIdResource(resource.Resource):
         """Handle POST requests to report a spammer by ID."""
         try:
             user_id = request.args.get(b"user_id", [None])[0]
+
+            # Get the client IP address
+            client_ip = request.getClientIP()
+            if client_ip != "127.0.0.1":
+                LOGGER.warning("Unauthorized access attempt from IP: %s", client_ip)
+                request.setResponseCode(403)  # Forbidden
+                return b"Forbidden: Only localhost can access this endpoint."
             if not user_id:
                 LOGGER.error("%s Invalid request. Must include user_id.", "unknown")
                 request.setResponseCode(400)

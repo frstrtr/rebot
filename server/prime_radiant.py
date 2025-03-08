@@ -10,7 +10,7 @@ from twisted.web import resource, server
 
 from p2p import P2PFactory, find_available_port
 from websocket import SpammerCheckFactory
-from api import SpammerCheckResource
+from api import SpammerCheckResource, ReportIdResource
 from database import initialize_database
 from server_config import (
     LOGGER,
@@ -53,6 +53,7 @@ def main():
 
     root = resource.Resource()
     root.putChild(b"check", SpammerCheckResource(p2p_factory))
+    root.putChild(b"report_id", ReportIdResource(p2p_factory))
     http_factory = server.Site(root)
     http_endpoint = endpoints.TCP4ServerEndpoint(reactor, HTTP_API_PORT)
     http_endpoint.listen(http_factory)

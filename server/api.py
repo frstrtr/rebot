@@ -7,6 +7,7 @@ from twisted.internet import defer, reactor
 from twisted.web.iweb import IPolicyForHTTPS
 from twisted.internet.ssl import CertificateOptions
 from twisted.internet._sslverify import ClientTLSOptions
+from twisted.web.server import Request
 
 from zope.interface import implementer
 
@@ -147,9 +148,11 @@ class SpammerCheckResource(resource.Resource):
                     # Reconstruct p2p data if it's not available
                     lols_bot_data = response_data.get("lols_bot", {})
                     cas_chat_data = response_data.get("cas_chat", {})
-                    is_spammer = (
+                    # local_report_data =
+                    is_spammer = bool(
                         lols_bot_data.get("banned", False)
                         or cas_chat_data.get("result", {}).get("offenses", 0) > 0
+                        or response_data.get("is_spammer", False)
                     )
                     response_data["lols_bot"] = lols_bot_data
                     response_data["cas_chat"] = cas_chat_data
@@ -158,17 +161,25 @@ class SpammerCheckResource(resource.Resource):
                         "user_id": user_id,
                         "is_spammer": is_spammer,
                     }
-                    response_data["is_spammer"] = (
+                    response_data["is_spammer"] = bool(
                         is_spammer  # Update overall is_spammer status
                     )
 
                 if api_success and api_data:
                     LOGGER.debug("%s API data found: %s", user_id, api_data)
+                    if response_data[
+                        "is_spammer"
+                    ]:  # if not already marked as spammer by local endpoint report
+                        api_data.pop(
+                            "is_spammer", None
+                        )  # ignore is_spammer from API data
+                    # Update response data with API data
                     response_data.update(api_data)
+                    # Check if the API data indicates the user is a spammer
                     if api_data.get("is_spammer", False):
                         response_data["is_spammer"] = True
 
-                # Update the overall is_spammer status
+                # Update the overall is_spammer status for the p2p section
                 response_data["p2p"]["is_spammer"] = response_data["is_spammer"]
 
                 # Store the data in the database
@@ -297,3 +308,50 @@ class SpammerCheckResource(resource.Resource):
         LOGGER.debug("is_spammer_result: %s", is_spammer_result)
 
         return is_spammer_result
+
+
+class ReportIdResource(resource.Resource):
+    """Resource for reporting a spammer by ID."""
+
+    isLeaf = True
+
+    def __init__(self, p2p_factory):
+        resource.Resource.__init__(self)
+        self.p2p_factory = p2p_factory
+
+    def render_POST(self, request: Request):
+        """Handle POST requests to report a spammer by ID."""
+        try:
+            user_id = request.args.get(b"user_id", [None])[0]
+            if not user_id:
+                LOGGER.error("%s Invalid request. Must include user_id.", "unknown")
+                request.setResponseCode(400)
+                return b"Invalid request. Must include user_id."
+
+            user_id = user_id.decode("utf-8")
+            LOGGER.info("%s Received POST request to report spammer", user_id)
+
+            # Assuming that if the request reaches here, the user is a spammer
+            is_spammer = True
+
+            # Store the data and broadcast
+            LOGGER.debug("%s Storing spammer data", user_id)
+            store_spammer_data(user_id, "{}", "{}", "{}", is_spammer)
+            LOGGER.debug("%s Broadcasting spammer info", user_id)
+            self.p2p_factory.broadcast_spammer_info(user_id)
+
+            request.setHeader(b"content-type", b"application/json")
+            response = json.dumps(
+                {"status": "success", "user_id": user_id, "is_spammer": is_spammer}
+            ).encode("utf-8")
+            request.write(response)
+            request.finish()
+            LOGGER.info("%s POST request processed successfully", user_id)
+            return server.NOT_DONE_YET
+        except (ValueError, KeyError, TypeError) as e:
+            LOGGER.error(
+                "%s Error processing POST request: %s",
+                user_id if "user_id" in locals() else "unknown",
+                e,
+            )
+            return f"Error processing request: {str(e)}".encode("utf-8")

@@ -336,7 +336,7 @@ class ReportIdResource(resource.Resource):
                 return b"Invalid request. Must include user_id."
 
             user_id = user_id.decode("utf-8")
-            LOGGER.info("%s Received POST request to report spammer", user_id)
+            LOGGER.warning("%s Received POST request to report spammer", user_id)
 
             # Assuming that if the request reaches here, the user is a spammer
             is_spammer = True

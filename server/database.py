@@ -5,6 +5,7 @@ This module handles database operations for storing and retrieving spammer data.
 """
 
 import sqlite3
+import time
 from server_config import DATABASE_FILE, LOGGER
 
 
@@ -12,6 +13,17 @@ def initialize_database():
     """Initialize the database and create tables if they don't exist."""
     conn = sqlite3.connect(DATABASE_FILE)
     cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            ALTER TABLE spammers ADD COLUMN timestamp INTEGER DEFAULT 0
+            """
+        )
+        conn.commit()
+        LOGGER.info("Added timestamp column to spammers table")
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" in str(e):
+            LOGGER.info("timestamp column already exists in spammers table")
     try:
         cursor.execute(
             """
@@ -33,7 +45,8 @@ def initialize_database():
             lols_bot_data TEXT,
             cas_chat_data TEXT,
             p2p_data TEXT,
-            is_spammer BOOLEAN DEFAULT FALSE
+            is_spammer BOOLEAN DEFAULT FALSE,
+            timestamp INTEGER DEFAULT 0
         )
     """
     )
@@ -45,14 +58,15 @@ def initialize_database():
 def store_spammer_data(
     user_id, lols_bot_data, cas_chat_data, p2p_data, is_spammer=False
 ):
+    timestamp = int(time.time())  # Get current timestamp
     conn = sqlite3.connect(DATABASE_FILE)
     cursor = conn.cursor()
     cursor.execute(
         """
-        INSERT OR REPLACE INTO spammers (user_id, lols_bot_data, cas_chat_data, p2p_data, is_spammer)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT OR REPLACE INTO spammers (user_id, lols_bot_data, cas_chat_data, p2p_data, is_spammer, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?)
     """,
-        (user_id, lols_bot_data, cas_chat_data, p2p_data, is_spammer),
+        (user_id, lols_bot_data, cas_chat_data, p2p_data, is_spammer, timestamp),
     )
     conn.commit()
     conn.close()

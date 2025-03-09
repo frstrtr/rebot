@@ -43,17 +43,34 @@ class CustomFormatter(logging.Formatter):
         )
 
 
+class NoColorFormatter(logging.Formatter):
+    def format(self, record):
+        formatter_string = "%(asctime)s - %(filename)s - %(levelname)s - %(message)s"
+        return logging.Formatter(formatter_string, datefmt="%Y-%m-%d %H:%M:%S").format(
+            record
+        )
+
+
 formatter = CustomFormatter(
     fmt="%(asctime)s - %(filename)s - %(levelname)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
-handler = logging.StreamHandler()
-handler.setFormatter(formatter)
+no_color_formatter = NoColorFormatter(
+    fmt="%(asctime)s - %(filename)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+
+stream_handler = logging.StreamHandler()
+stream_handler.setFormatter(formatter)
+
+file_handler = logging.FileHandler('server.log')
+file_handler.setFormatter(no_color_formatter)
 
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.DEBUG)
-LOGGER.addHandler(handler)
+LOGGER.addHandler(stream_handler)
+LOGGER.addHandler(file_handler)
 
 # Default port for P2P server
 DEFAULT_P2P_PORT = 9828

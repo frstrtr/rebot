@@ -711,6 +711,7 @@ class P2PFactory(protocol.Factory):
         def handle_peer_resp_error(failure):
             """Handle errors during the P2P data check."""
             LOGGER.error("Error checking P2P data: %s", failure)
+            return None  # Ensure a None value is returned on error
 
         return (
             defer.gatherResults(deferreds, consumeErrors=True)

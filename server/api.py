@@ -255,10 +255,18 @@ class SpammerCheckResource(resource.Resource):
 
         def handle_response(responses):
             lols_bot_response, cas_chat_response = responses
-            LOGGER.info("LOLS bot response: %s", lols_bot_response.decode("utf-8"))
-            LOGGER.info("CAS chat response: %s", cas_chat_response.decode("utf-8"))
-            lols_bot_data = json.loads(lols_bot_response.decode("utf-8"))
-            cas_chat_data = json.loads(cas_chat_response.decode("utf-8"))
+            LOGGER.info("LOLS bot response: %s", lols_bot_response)
+            LOGGER.info("CAS chat response: %s", cas_chat_response)
+            lols_bot_data = (
+                json.loads(lols_bot_response.decode("utf-8"))
+                if lols_bot_response
+                else {}
+            )
+            cas_chat_data = (
+                json.loads(cas_chat_response.decode("utf-8"))
+                if cas_chat_response
+                else {}
+            )
 
             return {
                 "lols_bot": lols_bot_data,
@@ -274,14 +282,16 @@ class SpammerCheckResource(resource.Resource):
 
         def handle_API_error(failure):
             """Handle errors from API requests."""
-            LOGGER.error("Error querying APIs: %s", failure)
-            return None
+            LOGGER.warning("Error querying APIs: %s", failure)
+            return ""  # Return an empty string to be handled as a missing response
 
-        return (
-            defer.gatherResults([d1, d2])
+        api_deferred = (
+            defer.gatherResults([d1, d2], consumeErrors=True)
             .addCallback(handle_response)
             .addErrback(handle_API_error)
         )
+
+        return api_deferred
 
     def is_spammer(self, data) -> bool:
         """Determine if the user is a spammer based on the data."""

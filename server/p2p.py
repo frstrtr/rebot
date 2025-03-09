@@ -82,7 +82,7 @@ class P2PProtocol(protocol.Protocol):
             peer  # Store the peer from which the data was received
         )
         LOGGER.debug(
-            "%sP2P message received%s from %s:%d: %s",
+            "%sP2P message%s from %s:%d: %s",
             INVERSE_COLOR,
             RESET_COLOR,
             peer.host,

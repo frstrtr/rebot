@@ -412,15 +412,16 @@ class P2PFactory(protocol.Factory):
 
     protocol = P2PProtocol
 
-    def __init__(self, node_uuid=None):
+    def __init__(self, node_uuid=None, bootstrap_peers=None):
         self.peers = []
         self.node_uuid = node_uuid or str(uuid.uuid4())
-        self.bootstrap_peers = []
+        self.bootstrap_peers = bootstrap_peers or []  # Take bootstrap peers as argument
         self.protocol_instances = []
         self.known_uuids = set()  # Keep track of known UUIDs
         self.reconnect_delay = 10  # seconds
         self.max_reconnect_attempts = 5
         self.reconnect_attempts = 0
+        self.is_bootstrap = not bootstrap_peers  # True if it's a bootstrap node
 
     def buildProtocol(self, addr):
         """Build and return a protocol instance."""
@@ -514,7 +515,7 @@ class P2PFactory(protocol.Factory):
             deferred.addCallback(self.on_bootstrap_peer_connected)
             deferred.addErrback(self.on_bootstrap_peer_failed, address)
             deferreds.append(deferred)
-        return defer.gatherResults(deferreds)
+        return defer.gatherResults(deferreds, consumeErrors=True)
 
     def on_bootstrap_peer_connected(self, peer_protocol):
         """Handle successful connection to a bootstrap peer."""
@@ -568,6 +569,8 @@ class P2PFactory(protocol.Factory):
                 "Max reconnection attempts (%d) reached. Giving up on bootstrap peers.",
                 self.max_reconnect_attempts,
             )
+            # Stop further reconnection attempts
+            self.bootstrap_peers = []
 
     def update_peer_list(self, peers):
         """Update the list of known peers."""
@@ -759,8 +762,12 @@ class P2PFactory(protocol.Factory):
 
     def reconnect_to_bootstrap(self):
         """Reconnect to bootstrap peers."""
-        if self.peers:
-            return  # Don't reconnect if we already have peers
+        if self.peers or self.is_bootstrap:
+            return  # Don't reconnect if we already have peers or it's a bootstrap node
+
+        if not self.bootstrap_peers:
+            LOGGER.warning("No bootstrap peers available. Skipping reconnection.")
+            return
 
         LOGGER.info("Attempting to reconnect to bootstrap peers...")
         bootstrap_addresses = [f"{p.host}:{p.port}" for p in self.bootstrap_peers]

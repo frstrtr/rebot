@@ -387,6 +387,9 @@ class P2PProtocol(protocol.Protocol):
                 )
             finally:
                 del self.deferred
+        # Check if all peers are disconnected and reconnect to bootstrap peers
+        if not self.factory.peers:
+            self.factory.reconnect_to_bootstrap()
 
     def send_peer_info(self):
         """Send the list of known peers to the connected peer."""
@@ -414,6 +417,7 @@ class P2PFactory(protocol.Factory):
         self.bootstrap_peers = []
         self.protocol_instances = []
         self.known_uuids = set()  # Keep track of known UUIDs
+        self.reconnect_task = None  # To store the LoopingCall instance
 
     def buildProtocol(self, addr):
         """Build and return a protocol instance."""
@@ -735,6 +739,14 @@ class P2PFactory(protocol.Factory):
                 return True
         return False
 
+    def reconnect_to_bootstrap(self):
+        """Reconnect to bootstrap peers."""
+        if self.peers:
+            return  # Don't reconnect if we already have peers
+
+        LOGGER.info("Attempting to reconnect to bootstrap peers...")
+        bootstrap_addresses = [f"{p.host}:{p.port}" for p in self.bootstrap_peers]
+        self.connect_to_bootstrap_peers(bootstrap_addresses)
 
 def find_available_port(start_port):
     """Find an available port starting from the given port."""

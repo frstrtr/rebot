@@ -417,7 +417,9 @@ class P2PFactory(protocol.Factory):
         self.bootstrap_peers = []
         self.protocol_instances = []
         self.known_uuids = set()  # Keep track of known UUIDs
-        self.reconnect_task = None  # To store the LoopingCall instance
+        self.reconnect_delay = 10  # seconds
+        self.max_reconnect_attempts = 5
+        self.reconnect_attempts = 0
 
     def buildProtocol(self, addr):
         """Build and return a protocol instance."""
@@ -527,6 +529,7 @@ class P2PFactory(protocol.Factory):
         self.bootstrap_peers.append(peer_address)
         # Send local UUID to the bootstrap node
         peer_protocol.send_handshake_init()
+        self.reconnect_attempts = 0  # Reset attempts on success
 
     def handle_peer_uuid(self, peer_protocol, peer_uuid):
         """Handle the received UUID from a peer."""
@@ -550,6 +553,19 @@ class P2PFactory(protocol.Factory):
             address,
             failure,
         )
+        self.reconnect_attempts += 1
+        if self.reconnect_attempts < self.max_reconnect_attempts:
+            LOGGER.info(
+                "Scheduling reconnection attempt %d to bootstrap peers in %d seconds...",
+                self.reconnect_attempts,
+                self.reconnect_delay,
+            )
+            reactor.callLater(self.reconnect_delay, self.reconnect_to_bootstrap)
+        else:
+            LOGGER.warning(
+                "Max reconnection attempts (%d) reached. Giving up on bootstrap peers.",
+                self.max_reconnect_attempts,
+            )
 
     def update_peer_list(self, peers):
         """Update the list of known peers."""

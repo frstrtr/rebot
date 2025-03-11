@@ -116,6 +116,12 @@ class P2PProtocol(protocol.Protocol):
 
             except json.JSONDecodeError as e:
                 LOGGER.error("Failed to decode JSON: %s", e)
+                LOGGER.debug(
+                    "Received from %s:%d",
+                    peer.host,
+                    peer.port,
+                )
+                LOGGER.debug("Received data: %s", message)
 
     def handle_handshake_init(self, data):
         """Handle handshake initiation message."""

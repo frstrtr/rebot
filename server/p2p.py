@@ -3,7 +3,8 @@
 import json
 import uuid
 
-from twisted.internet import endpoints, defer, error, protocol, reactor, task
+from twisted.internet import endpoints, defer, error, protocol
+from twisted.internet import reactor, task
 from twisted.internet.address import IPv4Address
 from database import (
     store_spammer_data,
@@ -560,6 +561,7 @@ class P2PFactory(protocol.Factory):
                 self.reconnect_attempts,
                 self.reconnect_delay,
             )
+            # pylint: disable=no-member
             reactor.callLater(self.reconnect_delay, self.reconnect_to_bootstrap)
         else:
             LOGGER.warning(
@@ -763,6 +765,7 @@ class P2PFactory(protocol.Factory):
         LOGGER.info("Attempting to reconnect to bootstrap peers...")
         bootstrap_addresses = [f"{p.host}:{p.port}" for p in self.bootstrap_peers]
         self.connect_to_bootstrap_peers(bootstrap_addresses)
+
 
 def find_available_port(start_port):
     """Find an available port starting from the given port."""

@@ -1,3 +1,5 @@
+"""P2P module."""
+
 from .config import *
 from .address import PeerAddress
 from .protocol import P2PProtocol

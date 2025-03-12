@@ -1,3 +1,9 @@
+"""Address module for handling peer addresses in a P2P network"""
+
+# -*- coding: utf-8 -*-
+# server/p2p/address.py
+# SPDX-License-Identifier: MIT
+
 import uuid
 from twisted.internet.address import IPv4Address
 

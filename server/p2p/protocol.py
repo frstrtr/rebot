@@ -1,8 +1,13 @@
+"""P2P Protocol for handling connections and data exchange."""
+# SPDX-License-Identifier: MIT
+# -*- coding: utf-8 -*-
+# server/p2p/protocol.py
+
 import json
 from twisted.internet import protocol
 from twisted.internet import task, defer
-from database import retrieve_spammer_data_from_db
-from server_config import LOGGER
+from ..database import retrieve_spammer_data_from_db
+from ..server_config import LOGGER
 from .config import HANDSHAKE_INIT, HANDSHAKE_RESPONSE, RED_COLOR, GREEN_COLOR
 from .config import YELLOW_COLOR, INVERSE_COLOR, RESET_COLOR
 from .utils import split_json_objects

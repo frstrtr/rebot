@@ -1,3 +1,9 @@
+"""Configuration for the P2P server."""
+
+# SPDX-License-Identifier: MIT
+# -*- coding: utf-8 -*-
+# server/p2p/config.py
+
 # Define ANSI escape codes for terminal colors
 RED_COLOR = "\033[91m"
 YELLOW_COLOR = "\033[93m"

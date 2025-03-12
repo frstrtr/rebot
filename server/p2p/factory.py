@@ -1,4 +1,5 @@
 """Factory for managing P2P connections and data synchronization."""
+
 # SPDX-License-Identifier: MIT
 # -*- coding: utf-8 -*-
 # server/p2p/factory.py
@@ -7,12 +8,12 @@ import json
 import uuid
 from twisted.internet import endpoints, defer, protocol
 from twisted.internet import reactor, task
-from ..database import (
+from server.database import (
     store_spammer_data,
     retrieve_spammer_data_from_db,
     get_all_spammer_ids,
 )
-from ..server_config import LOGGER
+from server.server_config import LOGGER
 from .config import YELLOW_COLOR, RESET_COLOR, PURPLE_COLOR, GREEN_COLOR, INVERSE_COLOR
 from .protocol import P2PProtocol
 from .address import PeerAddress

@@ -1,18 +1,28 @@
 """Prime Radiant - p2p antispam server."""
 
+# SPDX-License-Identifier: MIT
+# -*- coding: utf-8 -*-
+# server/prime_radiant.py
+
 # TODO each node signature with spam markup criteria - to choose the best node for spam checking condition
 
 import sys
 import uuid
+import os  # Import the os module
 from twisted.internet import reactor, endpoints
 from twisted.internet.error import CannotListenError
 from twisted.web import resource, server
 
-from p2p import P2PFactory, find_available_port
-from websocket import SpammerCheckFactory
-from api import SpammerCheckResource, ReportIdResource
-from database import initialize_database
-from server_config import (
+# Add the project root to the Python path
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, PROJECT_ROOT)
+
+from server.p2p.factory import P2PFactory
+from server.p2p.utils import find_available_port
+from server.websocket import SpammerCheckFactory
+from server.api import SpammerCheckResource, ReportIdResource
+from server.database import initialize_database
+from server.server_config import (
     LOGGER,
     DEFAULT_P2P_PORT,
     WEBSOCKET_PORT,

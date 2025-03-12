@@ -1,4 +1,5 @@
 """Utility functions for the P2P server."""
+
 # SPDX-License-Identifier: MIT
 # -*- coding: utf-8 -*-
 # server/p2p/utils.py

@@ -1,4 +1,6 @@
 import json
+import sys
+import os
 
 from twisted.web import server, resource
 from twisted.web.client import Agent, readBody
@@ -11,10 +13,14 @@ from twisted.web.server import Request
 
 from zope.interface import implementer
 
-from .database import retrieve_spammer_data_from_db, store_spammer_data
-from .p2p import P2PFactory
+# Add the project root to the Python path
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, PROJECT_ROOT)
 
-from .server_config import LOGGER
+from server.database import retrieve_spammer_data_from_db, store_spammer_data
+from server.p2p import P2PFactory
+
+from server.server_config import LOGGER
 
 
 @implementer(IPolicyForHTTPS)

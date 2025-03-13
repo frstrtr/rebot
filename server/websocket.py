@@ -6,11 +6,19 @@ This module handles WebSocket connections and spammer checks.
 
 
 import json
+import os
+import sys
+
 from twisted.internet import defer, reactor
 from autobahn.twisted.websocket import WebSocketServerProtocol, WebSocketServerFactory
-from api import APIClient
 
-from server_config import LOGGER
+# Add the project root to the Python path
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, PROJECT_ROOT)
+
+from server.api import APIClient
+
+from server.server_config import LOGGER
 
 
 class SpammerCheckProtocol(WebSocketServerProtocol):

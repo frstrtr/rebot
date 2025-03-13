@@ -13,6 +13,7 @@ from server.database import (
     retrieve_spammer_data_from_db,
     get_all_spammer_ids,
 )
+
 from server.server_config import LOGGER
 from .config import YELLOW_COLOR, RESET_COLOR, PURPLE_COLOR, GREEN_COLOR, INVERSE_COLOR
 from .protocol import P2PProtocol
@@ -38,6 +39,17 @@ class P2PFactory(protocol.Factory):
 
     def buildProtocol(self, addr):
         """Build and return a protocol instance."""
+        host = addr.host
+        port = addr.port
+        # Check if there's already a connection to this peer
+        for proto in self.protocol_instances:
+            peer = proto.get_peer()
+            if peer.host == host and peer.port == port:
+                LOGGER.info(
+                    "Closing duplicate incoming connection from %s:%d", host, port
+                )
+                return None  # Reject the new connection
+
         proto = self.protocol()
         proto.factory = self
         proto.processed_data = set()
@@ -120,6 +132,14 @@ class P2PFactory(protocol.Factory):
         for address in bootstrap_addresses:
             host, port = address.split(":")
             port = int(port)
+            # Check if there's already a connection to this peer
+            if any(p.host == host and p.port == port for p in self.peers):
+                LOGGER.info(
+                    "Already connected to peer %s:%d, skipping bootstrap connection",
+                    host,
+                    port,
+                )
+                continue  # Skip if already connected
             LOGGER.debug(
                 "%sAttempting to connect to bootstrap peer %s:%d%s",
                 PURPLE_COLOR,
@@ -149,6 +169,7 @@ class P2PFactory(protocol.Factory):
         # Send local UUID to the bootstrap node
         peer_protocol.send_handshake_init()
         self.reconnect_attempts = 0  # Reset attempts on success
+        self.log_connected_peers()  # Log connected peers after bootstrap
 
     def handle_peer_uuid(self, peer_protocol, peer_uuid):
         """Handle the received UUID from a peer."""
@@ -424,7 +445,10 @@ class P2PFactory(protocol.Factory):
 
     def is_duplicate_uuid(self, peer_uuid, current_proto):
         """Check if a peer with the same UUID already exists."""
-        return peer_uuid in self.known_uuids
+        for proto in self.protocol_instances:
+            if proto != current_proto and proto.peer_uuid == peer_uuid:
+                return True
+        return False
 
     def reconnect_to_bootstrap(self):
         """Reconnect to bootstrap peers."""
@@ -444,3 +468,12 @@ class P2PFactory(protocol.Factory):
     ):
         """Store spammer data in the database."""
         store_spammer_data(user_id, lols_bot_data, cas_chat_data, p2p_data, is_spammer)
+
+    def log_connected_peers(self):
+        """Log details of all connected peers."""
+        LOGGER.info("Logging details of all connected peers:")
+        for proto in self.protocol_instances:
+            peer = proto.get_peer()
+            LOGGER.info(
+                "  - Host: %s, Port: %s, UUID: %s", peer.host, peer.port, peer.node_uuid
+            )

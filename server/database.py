@@ -77,7 +77,7 @@ def store_spammer_data(
     )
     conn.commit()
     conn.close()
-    LOGGER.info("\033[7m%s Stored spammer data\033[0m", user_id)
+    LOGGER.info("%s stored spammer data", user_id)
 
 
 def retrieve_spammer_data_from_db(user_id):

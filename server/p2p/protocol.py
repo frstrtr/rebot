@@ -322,7 +322,7 @@ class P2PProtocol(protocol.Protocol):
         self.factory.peers = [
             p for p in self.factory.peers if p.host != peer.host or p.port != peer.port
         ]
-        LOGGER.info("P2P connection lost: %s", reason)
+        LOGGER.warning("P2P connection lost: %s", reason)
         if hasattr(self, "deferred"):
             try:
                 self.deferred.errback(reason)

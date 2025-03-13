@@ -254,9 +254,14 @@ class P2PFactory(protocol.Factory):
         active_protocols = list(self.protocol_instances)  # Iterate over a copy
 
         for proto in active_protocols:
+            peer = proto.get_peer()
+            # Check if the peer's UUID is known
+            if not proto.peer_uuid:
+                LOGGER.warning("Skipping check_p2p_data for %s, peer UUID not yet known: %s:%d", user_id, peer.host, peer.port)
+                continue
+
             deferred = defer.Deferred()
             proto.deferred = deferred
-            peer = proto.get_peer()
             host = peer.host
             port = peer.port
 

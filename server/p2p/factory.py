@@ -373,6 +373,13 @@ class P2PFactory(protocol.Factory):
 
     def schedule_reconnection(self, host, port):
         """Schedule a reconnection attempt to a peer."""
+        # Check if the peer's UUID matches our own
+        for proto in self.protocol_instances:
+            peer = proto.get_peer()
+            if peer.host == host and peer.port == port and peer.node_uuid == self.node_uuid:
+                LOGGER.warning("Skipping reconnection attempt to self (UUID match): %s:%d", host, port)
+                return
+
         LOGGER.info("Scheduling reconnection to peer %s:%d in %d seconds", host, port, self.reconnect_delay)
         # pylint: disable=no-member
         reactor.callLater(self.reconnect_delay, self.attempt_reconnection, host, port)

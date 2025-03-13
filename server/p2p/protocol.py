@@ -41,8 +41,9 @@ class P2PProtocol(protocol.Protocol):
     def get_peer(self):
         """Override getPeer to return PeerAddress with UUID."""
         peer = self.transport.getPeer()
+        peer_uuid = self.peer_uuid if self.peer_uuid else self.factory.node_uuid
         return self.factory.PeerAddress(
-            peer.type, peer.host, peer.port, self.factory.node_uuid
+            peer.type, peer.host, peer.port, peer_uuid
         )
 
     def send_handshake_init(self):

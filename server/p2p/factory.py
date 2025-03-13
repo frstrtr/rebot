@@ -362,13 +362,30 @@ class P2PFactory(protocol.Factory):
         )
 
     def remove_peer(self, proto):
-        """Remove a peer from the active peer list."""
+        """Remove a peer from the active peer list and schedule a reconnection."""
         peer = proto.get_peer()
         if peer in self.peers:
             self.peers.remove(peer)
         if proto in self.protocol_instances:
             self.protocol_instances.remove(proto)
         LOGGER.info("Removed peer %s:%d from active peer list", peer.host, peer.port)
+        self.schedule_reconnection(peer.host, peer.port)
+
+    def schedule_reconnection(self, host, port):
+        """Schedule a reconnection attempt to a peer."""
+        LOGGER.info("Scheduling reconnection to peer %s:%d in %d seconds", host, port, self.reconnect_delay)
+        # pylint: disable=no-member
+        reactor.callLater(self.reconnect_delay, self.attempt_reconnection, host, port)
+
+    def attempt_reconnection(self, host, port):
+        """Attempt to reconnect to a peer."""
+        LOGGER.info("Attempting reconnection to peer %s:%d", host, port)
+        endpoint = endpoints.TCP4ClientEndpoint(reactor, host, port)
+        endpoint.connect(self).addCallback(
+            lambda _, h=host, p=port: LOGGER.info("Reconnected to peer %s:%d", h, p)
+        ).addErrback(
+            lambda err, h=host, p=port: LOGGER.error("Failed to reconnect to peer %s:%d: %s", h, p, err)
+        )
 
     def is_duplicate_uuid(self, peer_uuid, current_proto):
         """Check if a peer with the same UUID already exists."""

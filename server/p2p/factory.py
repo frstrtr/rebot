@@ -402,10 +402,7 @@ class P2PFactory(protocol.Factory):
 
     def is_duplicate_uuid(self, peer_uuid, current_proto):
         """Check if a peer with the same UUID already exists."""
-        for proto in self.protocol_instances:
-            if proto != current_proto and proto.peer_uuid == peer_uuid:
-                return True
-        return False
+        return peer_uuid in self.known_uuids
 
     def reconnect_to_bootstrap(self):
         """Reconnect to bootstrap peers."""

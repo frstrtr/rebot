@@ -142,6 +142,7 @@ class P2PProtocol(protocol.Protocol):
         else:
             self.send_handshake_response(self.factory.node_uuid)
             self.handshake_complete = True  # Mark handshake as complete
+            self.factory.known_uuids.add(peer_uuid)  # Add UUID to known UUIDs
 
     def handle_handshake_response(self, data):
         """Handle handshake response message."""
@@ -183,6 +184,7 @@ class P2PProtocol(protocol.Protocol):
             self.transport.loseConnection()
         else:
             self.handshake_complete = True  # Mark handshake as complete
+            self.factory.known_uuids.add(peer_uuid)  # Add UUID to known UUIDs
 
     def handle_check_p2p_data(self, data):
         """Handle check_p2p_data request and respond with data if available."""
@@ -195,7 +197,7 @@ class P2PProtocol(protocol.Protocol):
             peer.port,
         )
         spammer_data = retrieve_spammer_data_from_db(user_id)
-        if spammer_data:
+        if (spammer_data):
             # If p2p_data is not available, construct it from other data
             if not spammer_data.get("p2p_data"):
                 spammer_data["p2p_data"] = {

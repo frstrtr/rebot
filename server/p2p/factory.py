@@ -65,6 +65,10 @@ class P2PFactory(protocol.Factory):
                     "p2p_data": spammer_data["p2p_data"],
                 }
             )
+            if not self.protocol_instances:
+                LOGGER.warning("No peers to broadcast spammer info to.")
+                return
+
             for proto in self.protocol_instances:
                 # Check if the data has been received from the same peer
                 if (

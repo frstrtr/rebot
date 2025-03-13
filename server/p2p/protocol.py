@@ -42,9 +42,7 @@ class P2PProtocol(protocol.Protocol):
         """Override getPeer to return PeerAddress with UUID."""
         peer = self.transport.getPeer()
         peer_uuid = self.peer_uuid if self.peer_uuid else self.factory.node_uuid
-        return self.factory.PeerAddress(
-            peer.type, peer.host, peer.port, peer_uuid
-        )
+        return self.factory.PeerAddress(peer.type, peer.host, peer.port, peer_uuid)
 
     def send_handshake_init(self):
         """Send handshake initiation message."""
@@ -320,10 +318,16 @@ class P2PProtocol(protocol.Protocol):
     def connectionLost(self, reason=protocol.connectionDone):
         """Handle lost P2P connections."""
         peer = self.get_peer()
+        LOGGER.warning(
+            "P2P connection lost: %s (Host: %s, Port: %s, UUID: %s)",
+            reason,
+            peer.host,
+            peer.port,
+            peer.node_uuid,
+        )
         self.factory.peers = [
             p for p in self.factory.peers if p.host != peer.host or p.port != peer.port
         ]
-        LOGGER.warning("P2P connection lost: %s", reason)
         if hasattr(self, "deferred"):
             try:
                 self.deferred.errback(reason)

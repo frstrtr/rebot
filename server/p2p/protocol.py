@@ -197,7 +197,7 @@ class P2PProtocol(protocol.Protocol):
             peer.port,
         )
         spammer_data = retrieve_spammer_data_from_db(user_id)
-        if (spammer_data):
+        if spammer_data:
             # If p2p_data is not available, construct it from other data
             if not spammer_data.get("p2p_data"):
                 spammer_data["p2p_data"] = {
@@ -321,11 +321,11 @@ class P2PProtocol(protocol.Protocol):
         """Handle lost P2P connections."""
         peer = self.get_peer()
         LOGGER.warning(
-            "P2P connection lost: %s (Host: %s, Port: %s, UUID: %s)",
-            reason,
+            "(Host: %s, Port: %s, UUID: %s) P2P connection lost: %s",
             peer.host,
             peer.port,
             peer.node_uuid,
+            reason,
         )
         self.factory.peers = [
             p for p in self.factory.peers if p.host != peer.host or p.port != peer.port

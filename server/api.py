@@ -11,10 +11,10 @@ from twisted.web.server import Request
 
 from zope.interface import implementer
 
-from database import retrieve_spammer_data_from_db, store_spammer_data
-from p2p import P2PFactory
+from .database import retrieve_spammer_data_from_db, store_spammer_data
+from .p2p import P2PFactory
 
-from server_config import LOGGER
+from .server_config import LOGGER
 
 
 @implementer(IPolicyForHTTPS)
@@ -144,7 +144,7 @@ class SpammerCheckResource(resource.Resource):
                     }
                     response_data.update(p2p_data)
                 else:
-                    LOGGER.debug("%s No P2P data found", user_id)
+                    LOGGER.debug("%s no P2P data found", user_id)
                     # Reconstruct p2p data if it's not available
                     lols_bot_data = response_data.get("lols_bot", {})
                     cas_chat_data = response_data.get("cas_chat", {})

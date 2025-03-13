@@ -255,9 +255,14 @@ class P2PFactory(protocol.Factory):
 
         for proto in active_protocols:
             peer = proto.get_peer()
-            # Check if the peer's UUID is known
-            if not proto.peer_uuid:
+
+            # Check if the peer's UUID is known and is not self
+            if not peer.node_uuid:
                 LOGGER.warning("Skipping check_p2p_data for %s, peer UUID not yet known: %s:%d", user_id, peer.host, peer.port)
+                continue
+
+            if peer.node_uuid == self.node_uuid:
+                LOGGER.warning("Skipping check_p2p_data for %s, is self: %s:%d", user_id, peer.host, peer.port)
                 continue
 
             deferred = defer.Deferred()

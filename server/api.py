@@ -211,7 +211,7 @@ class SpammerCheckResource(resource.Resource):
                     LOGGER.error("Request timed out.")
                 elif failure.check(defer.CancelledError):
                     LOGGER.error("Request cancelled.")
-
+                    
                 response = {
                     "ok": False,
                     "user_id": user_id,

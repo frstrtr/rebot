@@ -142,6 +142,7 @@ class P2PProtocol(protocol.Protocol):
         else:
             self.send_handshake_response(self.factory.node_uuid)
             self.handshake_complete = True  # Mark handshake as complete
+            self.factory.known_uuids.add(peer_uuid)  # Add UUID to known UUIDs
 
     def handle_handshake_response(self, data):
         """Handle handshake response message."""
@@ -183,6 +184,7 @@ class P2PProtocol(protocol.Protocol):
             self.transport.loseConnection()
         else:
             self.handshake_complete = True  # Mark handshake as complete
+            self.factory.known_uuids.add(peer_uuid)  # Add UUID to known UUIDs
 
     def handle_check_p2p_data(self, data):
         """Handle check_p2p_data request and respond with data if available."""
@@ -319,11 +321,11 @@ class P2PProtocol(protocol.Protocol):
         """Handle lost P2P connections."""
         peer = self.get_peer()
         LOGGER.warning(
-            "P2P connection lost: %s (Host: %s, Port: %s, UUID: %s)",
-            reason,
+            "(Host: %s, Port: %s, UUID: %s) P2P connection lost: %s",
             peer.host,
             peer.port,
             peer.node_uuid,
+            reason,
         )
         self.factory.peers = [
             p for p in self.factory.peers if p.host != peer.host or p.port != peer.port

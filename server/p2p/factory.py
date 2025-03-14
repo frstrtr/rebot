@@ -13,6 +13,7 @@ from server.database import (
     retrieve_spammer_data_from_db,
     get_all_spammer_ids,
 )
+
 from server.server_config import LOGGER
 from .config import YELLOW_COLOR, RESET_COLOR, PURPLE_COLOR, GREEN_COLOR, INVERSE_COLOR
 from .protocol import P2PProtocol
@@ -38,6 +39,17 @@ class P2PFactory(protocol.Factory):
 
     def buildProtocol(self, addr):
         """Build and return a protocol instance."""
+        host = addr.host
+        port = addr.port
+        # Check if there's already a connection to this peer
+        for proto in self.protocol_instances:
+            peer = proto.get_peer()
+            if peer.host == host and peer.port == port:
+                LOGGER.info(
+                    "Closing duplicate incoming connection from %s:%d", host, port
+                )
+                return None  # Reject the new connection
+
         proto = self.protocol()
         proto.factory = self
         proto.processed_data = set()
@@ -63,13 +75,12 @@ class P2PFactory(protocol.Factory):
                 }
             )
             LOGGER.debug(
-                "%s%s Broadcasting spammer info%s\n%s",
+                "%s%s Broadcasting spammer info:%s %s",
                 INVERSE_COLOR,
                 user_id,
                 RESET_COLOR,
                 message,
             )
-
             if not self.protocol_instances:
                 LOGGER.warning("No peers to broadcast spammer info to.")
                 return
@@ -110,7 +121,7 @@ class P2PFactory(protocol.Factory):
                         proto.get_peer().node_uuid,
                     )
             LOGGER.debug(
-                "%s%s Spammer info broadcasted%s",
+                "%s%s spammer info broadcasted%s",
                 INVERSE_COLOR,
                 user_id,
                 RESET_COLOR,
@@ -125,6 +136,14 @@ class P2PFactory(protocol.Factory):
         for address in bootstrap_addresses:
             host, port = address.split(":")
             port = int(port)
+            # Check if there's already a connection to this peer
+            if any(p.host == host and p.port == port for p in self.peers):
+                LOGGER.info(
+                    "Already connected to peer %s:%d, skipping bootstrap connection",
+                    host,
+                    port,
+                )
+                continue  # Skip if already connected
             LOGGER.debug(
                 "%sAttempting to connect to bootstrap peer %s:%d%s",
                 PURPLE_COLOR,
@@ -154,6 +173,7 @@ class P2PFactory(protocol.Factory):
         # Send local UUID to the bootstrap node
         peer_protocol.send_handshake_init()
         self.reconnect_attempts = 0  # Reset attempts on success
+        self.log_connected_peers()  # Log connected peers after bootstrap
 
     def handle_peer_uuid(self, peer_protocol, peer_uuid):
         """Handle the received UUID from a peer."""
@@ -264,7 +284,7 @@ class P2PFactory(protocol.Factory):
             # Check if the peer's UUID is known and is not self
             if not peer.node_uuid:
                 LOGGER.warning(
-                    "Skipping check_p2p_data for %s, peer UUID not yet known: %s:%d",
+                    "%s skipping check_p2p_data, peer UUID not yet known: %s:%d",
                     user_id,
                     peer.host,
                     peer.port,
@@ -273,10 +293,11 @@ class P2PFactory(protocol.Factory):
 
             if peer.node_uuid == self.node_uuid:
                 LOGGER.warning(
-                    "Skipping check_p2p_data for %s, is self: %s:%d",
+                    "%s skipping check_p2p_data, is self: %s:%d %s",
                     user_id,
                     peer.host,
                     peer.port,
+                    peer.node_uuid,
                 )
                 continue
 
@@ -296,7 +317,7 @@ class P2PFactory(protocol.Factory):
                                 proto.transport.getPeer().host,  # Access host from peer
                                 proto.transport.getPeer().port,  # Access port from peer
                             )
-                        except Exception as e:
+                        except (AttributeError, RuntimeError) as e:
                             LOGGER.error("Error accessing peer info in timeout: %s", e)
                     else:
                         LOGGER.warning(
@@ -395,6 +416,11 @@ class P2PFactory(protocol.Factory):
                 peer.host,
                 peer.port,
             )
+            LOGGER.warning(
+                "Skipping reconnection attempt to self (UUID match): %s:%d",
+                peer.host,
+                peer.port,
+            )
             return
         if peer in self.peers:
             self.peers.remove(peer)
@@ -411,6 +437,12 @@ class P2PFactory(protocol.Factory):
             port,
             self.reconnect_delay,
         )
+        LOGGER.info(
+            "Scheduling reconnection to peer %s:%d in %d seconds",
+            host,
+            port,
+            self.reconnect_delay,
+        )
         # pylint: disable=no-member
         reactor.callLater(self.reconnect_delay, self.attempt_reconnection, host, port)
 
@@ -421,6 +453,9 @@ class P2PFactory(protocol.Factory):
         endpoint.connect(self).addCallback(
             lambda _, h=host, p=port: LOGGER.info("Reconnected to peer %s:%d", h, p)
         ).addErrback(
+            lambda err, h=host, p=port: LOGGER.error(
+                "Failed to reconnect to peer %s:%d: %s", h, p, err
+            )
             lambda err, h=host, p=port: LOGGER.error(
                 "Failed to reconnect to peer %s:%d: %s", h, p, err
             )
@@ -451,3 +486,12 @@ class P2PFactory(protocol.Factory):
     ):
         """Store spammer data in the database."""
         store_spammer_data(user_id, lols_bot_data, cas_chat_data, p2p_data, is_spammer)
+
+    def log_connected_peers(self):
+        """Log details of all connected peers."""
+        LOGGER.info("Logging details of all connected peers:")
+        for proto in self.protocol_instances:
+            peer = proto.get_peer()
+            LOGGER.info(
+                "  - Host: %s, Port: %s, UUID: %s", peer.host, peer.port, peer.node_uuid
+            )

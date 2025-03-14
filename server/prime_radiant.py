@@ -47,7 +47,7 @@ def main():
     node_uuid = str(uuid.uuid4())
 
     LOGGER.info("\033[95mStarting P2P server on port: %d\033[0m", port)
-    LOGGER.info("\033[30;47mNode UUID: %s\033[0m", node_uuid)
+    LOGGER.info("Server UUID: \033[30;47m%s\033[0m", node_uuid)
 
     # Find an available port if the default port is not available
     # port = find_available_port(port)

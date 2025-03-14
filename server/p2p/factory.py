@@ -173,7 +173,6 @@ class P2PFactory(protocol.Factory):
         # Send local UUID to the bootstrap node
         peer_protocol.send_handshake_init()
         self.reconnect_attempts = 0  # Reset attempts on success
-        self.log_connected_peers()  # Log connected peers after bootstrap
 
     def handle_peer_uuid(self, peer_protocol, peer_uuid):
         """Handle the received UUID from a peer."""
@@ -456,9 +455,6 @@ class P2PFactory(protocol.Factory):
             lambda err, h=host, p=port: LOGGER.error(
                 "Failed to reconnect to peer %s:%d: %s", h, p, err
             )
-            lambda err, h=host, p=port: LOGGER.error(
-                "Failed to reconnect to peer %s:%d: %s", h, p, err
-            )
         )
 
     def is_duplicate_uuid(self, peer_uuid, current_proto):
@@ -487,11 +483,11 @@ class P2PFactory(protocol.Factory):
         """Store spammer data in the database."""
         store_spammer_data(user_id, lols_bot_data, cas_chat_data, p2p_data, is_spammer)
 
-    def log_connected_peers(self):
-        """Log details of all connected peers."""
-        LOGGER.info("Logging details of all connected peers:")
-        for proto in self.protocol_instances:
-            peer = proto.get_peer()
-            LOGGER.info(
-                "  - Host: %s, Port: %s, UUID: %s", peer.host, peer.port, peer.node_uuid
-            )
+    # def log_connected_peers(self):
+    #     """Log details of all connected peers."""
+    #     LOGGER.info("Logging details of all connected peers:")
+    #     for proto in self.protocol_instances:
+    #         peer = proto.get_peer()
+    #         LOGGER.info(
+    #             "  - Host: %s, Port: %s, UUID: %s", peer.host, peer.port, peer.node_uuid
+    #         )

@@ -64,7 +64,7 @@ class P2PProtocol(protocol.Protocol):
             peer  # Store the peer from which the data was received
         )
         LOGGER.debug(
-            "%sP2P message%s from %s:%d: %s",
+            "%sP2P message%s from %s:%d:\n%s",
             INVERSE_COLOR,
             RESET_COLOR,
             peer.host,
@@ -211,7 +211,7 @@ class P2PProtocol(protocol.Protocol):
                 "is_spammer": spammer_data["is_spammer"],
             }
             self.transport.write(json.dumps(response).encode("utf-8"))
-            LOGGER.debug("%s sent check_p2p_data response: %s", user_id, response)
+            LOGGER.debug("%s sent check_p2p_data response:\n%s", user_id, response)
         else:
             response = {
                 "type": "check_p2p_data_response",

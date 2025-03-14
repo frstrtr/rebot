@@ -1,10 +1,17 @@
 """P2P module."""
 
-from .config import *
-from .address import PeerAddress
-from .protocol import P2PProtocol
-from .factory import P2PFactory
-from .utils import split_json_objects, decode_nested_json, find_available_port
+import os
+import sys
+
+# Add the project root to the Python path
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, PROJECT_ROOT)
+
+from server.p2p.config import *
+from server.p2p.address import PeerAddress
+from server.p2p.protocol import P2PProtocol
+from server.p2p.factory import P2PFactory
+from server.p2p.utils import split_json_objects, decode_nested_json, find_available_port
 
 __all__ = [
     "RED_COLOR",

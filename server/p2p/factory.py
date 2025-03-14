@@ -114,10 +114,11 @@ class P2PFactory(protocol.Factory):
                 if proto.peer_uuid != self.node_uuid:
                     proto.transport.write(message.encode("utf-8"))
                     LOGGER.debug(
-                        "%s Sent updated spammer info to peer %s:%d",
+                        "%s Sent updated spammer info to peer %s:%d (%s)",
                         user_id,
                         proto.get_peer().host,
                         proto.get_peer().port,
+                        proto.get_peer().node_uuid,
                     )
             LOGGER.debug(
                 "%s%s spammer info broadcasted%s",
@@ -172,7 +173,6 @@ class P2PFactory(protocol.Factory):
         # Send local UUID to the bootstrap node
         peer_protocol.send_handshake_init()
         self.reconnect_attempts = 0  # Reset attempts on success
-        self.log_connected_peers()  # Log connected peers after bootstrap
 
     def handle_peer_uuid(self, peer_protocol, peer_uuid):
         """Handle the received UUID from a peer."""
@@ -415,6 +415,11 @@ class P2PFactory(protocol.Factory):
                 peer.host,
                 peer.port,
             )
+            LOGGER.warning(
+                "Skipping reconnection attempt to self (UUID match): %s:%d",
+                peer.host,
+                peer.port,
+            )
             return
         if peer in self.peers:
             self.peers.remove(peer)
@@ -425,6 +430,12 @@ class P2PFactory(protocol.Factory):
 
     def schedule_reconnection(self, host, port):
         """Schedule a reconnection attempt to a peer."""
+        LOGGER.info(
+            "Scheduling reconnection to peer %s:%d in %d seconds",
+            host,
+            port,
+            self.reconnect_delay,
+        )
         LOGGER.info(
             "Scheduling reconnection to peer %s:%d in %d seconds",
             host,
@@ -472,11 +483,11 @@ class P2PFactory(protocol.Factory):
         """Store spammer data in the database."""
         store_spammer_data(user_id, lols_bot_data, cas_chat_data, p2p_data, is_spammer)
 
-    def log_connected_peers(self):
-        """Log details of all connected peers."""
-        LOGGER.info("Logging details of all connected peers:")
-        for proto in self.protocol_instances:
-            peer = proto.get_peer()
-            LOGGER.info(
-                "  - Host: %s, Port: %s, UUID: %s", peer.host, peer.port, peer.node_uuid
-            )
+    # def log_connected_peers(self):
+    #     """Log details of all connected peers."""
+    #     LOGGER.info("Logging details of all connected peers:")
+    #     for proto in self.protocol_instances:
+    #         peer = proto.get_peer()
+    #         LOGGER.info(
+    #             "  - Host: %s, Port: %s, UUID: %s", peer.host, peer.port, peer.node_uuid
+    #         )

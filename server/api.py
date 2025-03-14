@@ -5,7 +5,7 @@ import os
 from twisted.web import server, resource
 from twisted.web.client import Agent, readBody
 from twisted.web.http_headers import Headers
-from twisted.internet import defer, reactor
+from twisted.internet import defer, reactor, error
 from twisted.web.iweb import IPolicyForHTTPS
 from twisted.internet.ssl import CertificateOptions
 from twisted.internet._sslverify import ClientTLSOptions
@@ -109,16 +109,16 @@ class SpammerCheckResource(resource.Resource):
 
             def send_response(response_data):
                 """Helper function to send the HTTP response."""
-                # try:
-                # if not request.connectionLost:
-                request.setHeader(b"content-type", b"application/json")
-                request.write(json.dumps(response_data).encode("utf-8"))
-                request.finish()
-                LOGGER.debug("HTTP GET response sent: %s", response_data)
-                # else:
-                #     LOGGER.warning("Connection lost, not sending response.")
-                # except Exception as e:
-                #     LOGGER.error("Error sending response: %s", e)
+                try:
+                    if not request.connectionLost:
+                        request.setHeader(b"content-type", b"application/json")
+                        request.write(json.dumps(response_data).encode("utf-8"))
+                        request.finish()
+                        LOGGER.debug("HTTP GET response sent: %s", response_data)
+                    else:
+                        LOGGER.warning("Connection lost, not sending response.")
+                except Exception as e:
+                    LOGGER.error("Error sending response: %s", e)
 
             def handle_combined_results(results):
                 LOGGER.debug("Handling combined results: %s", results)
@@ -207,6 +207,10 @@ class SpammerCheckResource(resource.Resource):
 
             def handle_combined_error(failure):
                 LOGGER.error("Error combining results: %s", failure)
+                if failure.check(defer.TimeoutError):
+                    LOGGER.error("Request timed out.")
+                elif failure.check(defer.CancelledError):
+                    LOGGER.error("Request cancelled.")
 
                 response = {
                     "ok": False,

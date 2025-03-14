@@ -12,6 +12,7 @@ import os  # Import the os module
 from twisted.internet import reactor, endpoints
 from twisted.internet.error import CannotListenError
 from twisted.web import resource, server
+from twisted.internet import task
 
 # Add the project root to the Python path
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -46,9 +47,8 @@ def main():
 
     node_uuid = str(uuid.uuid4())
 
-    LOGGER.info(
-        "\033[95mStarting P2P server on port: %d, node UUID: %s\033[0m", port, node_uuid
-    )
+    LOGGER.info("\033[95mStarting P2P server on port: %d\033[0m", port)
+    LOGGER.info("Server UUID: \033[30;47m%s\033[0m", node_uuid)
 
     # Find an available port if the default port is not available
     # port = find_available_port(port)
@@ -85,9 +85,22 @@ def main():
                 reactor, port, interface="0.0.0.0"
             )
 
+    def log_peer_info():
+        """Logs the details of connected peers."""
+        LOGGER.info("\033[30;47mConnected bootstrap peers:\033[0m")
+        for proto in p2p_factory.protocol_instances:
+            if hasattr(proto, "peer_uuid"):
+                peer = proto.transport.getPeer()
+                LOGGER.info("\033[92m  %s:%d - UUID: %s\033[0m", peer.host, peer.port, proto.peer_uuid)
+            else:
+                peer = proto.transport.getPeer()
+                LOGGER.warning(
+                    "Peer %s:%d has not completed handshake.", peer.host, peer.port
+                )
+
     p2p_factory.connect_to_bootstrap_peers(BOOTSTRAP_ADDRESSES).addCallback(
         lambda _: LOGGER.info("\033[95mFinished connecting to bootstrap peers\033[0m")
-    )
+    ).addCallback(lambda _: task.deferLater(reactor, 5, log_peer_info))
 
     for peer in peers:
         peer_host, peer_port = peer.split(":")

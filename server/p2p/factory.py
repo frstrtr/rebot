@@ -98,10 +98,11 @@ class P2PFactory(protocol.Factory):
                 if proto.peer_uuid != self.node_uuid:
                     proto.transport.write(message.encode("utf-8"))
                     LOGGER.debug(
-                        "%s Sent updated spammer info to peer %s:%d",
+                        "%s Sent updated spammer info to peer %s:%d (%s)",
                         user_id,
                         proto.get_peer().host,
                         proto.get_peer().port,
+                        proto.get_peer().node_uuid,
                     )
             LOGGER.debug(
                 "%s%s Broadcasted spammer info: %s%s",
@@ -258,11 +259,21 @@ class P2PFactory(protocol.Factory):
 
             # Check if the peer's UUID is known and is not self
             if not peer.node_uuid:
-                LOGGER.warning("Skipping check_p2p_data for %s, peer UUID not yet known: %s:%d", user_id, peer.host, peer.port)
+                LOGGER.warning(
+                    "Skipping check_p2p_data for %s, peer UUID not yet known: %s:%d",
+                    user_id,
+                    peer.host,
+                    peer.port,
+                )
                 continue
 
             if peer.node_uuid == self.node_uuid:
-                LOGGER.warning("Skipping check_p2p_data for %s, is self: %s:%d", user_id, peer.host, peer.port)
+                LOGGER.warning(
+                    "Skipping check_p2p_data for %s, is self: %s:%d",
+                    user_id,
+                    peer.host,
+                    peer.port,
+                )
                 continue
 
             deferred = defer.Deferred()
@@ -375,7 +386,11 @@ class P2PFactory(protocol.Factory):
         """Remove a peer from the active peer list and schedule a reconnection."""
         peer = proto.get_peer()
         if peer.node_uuid == self.node_uuid:
-            LOGGER.warning("Skipping reconnection attempt to self (UUID match): %s:%d", peer.host, peer.port)
+            LOGGER.warning(
+                "Skipping reconnection attempt to self (UUID match): %s:%d",
+                peer.host,
+                peer.port,
+            )
             return
         if peer in self.peers:
             self.peers.remove(peer)
@@ -386,7 +401,12 @@ class P2PFactory(protocol.Factory):
 
     def schedule_reconnection(self, host, port):
         """Schedule a reconnection attempt to a peer."""
-        LOGGER.info("Scheduling reconnection to peer %s:%d in %d seconds", host, port, self.reconnect_delay)
+        LOGGER.info(
+            "Scheduling reconnection to peer %s:%d in %d seconds",
+            host,
+            port,
+            self.reconnect_delay,
+        )
         # pylint: disable=no-member
         reactor.callLater(self.reconnect_delay, self.attempt_reconnection, host, port)
 
@@ -397,7 +417,9 @@ class P2PFactory(protocol.Factory):
         endpoint.connect(self).addCallback(
             lambda _, h=host, p=port: LOGGER.info("Reconnected to peer %s:%d", h, p)
         ).addErrback(
-            lambda err, h=host, p=port: LOGGER.error("Failed to reconnect to peer %s:%d: %s", h, p, err)
+            lambda err, h=host, p=port: LOGGER.error(
+                "Failed to reconnect to peer %s:%d: %s", h, p, err
+            )
         )
 
     def is_duplicate_uuid(self, peer_uuid, current_proto):

@@ -11,7 +11,7 @@ from server.database import retrieve_spammer_data_from_db
 from server.server_config import LOGGER
 from .config import HANDSHAKE_INIT, HANDSHAKE_RESPONSE, RED_COLOR, GREEN_COLOR
 from .config import YELLOW_COLOR, INVERSE_COLOR, RESET_COLOR
-from .utils import split_json_objects
+from .utils import split_json_objects, decode_nested_json
 
 
 class P2PProtocol(protocol.Protocol):
@@ -76,6 +76,7 @@ class P2PProtocol(protocol.Protocol):
         for json_string in json_strings:
             try:
                 data = json.loads(json_string)
+                data = decode_nested_json(data)
                 LOGGER.debug(
                     "\n%s",
                     json.dumps(data, indent=4),

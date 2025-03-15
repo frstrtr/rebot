@@ -86,12 +86,23 @@ class P2PFactory(protocol.Factory):
                     "p2p_data": p2p_data,
                 }
             )
+            log_message = json.loads(message)
+            if (
+                "cas_chat_data" in log_message
+                and "result" in log_message["cas_chat_data"]
+                and "messages" in log_message["cas_chat_data"]["result"]
+            ):
+                messages = log_message["cas_chat_data"]["result"]["messages"]
+                decoded_messages = [
+                    m.encode("utf-8").decode("unicode_escape") for m in messages
+                ]
+                log_message["cas_chat_data"]["result"]["messages"] = decoded_messages
             LOGGER.debug(
                 "%s%s Broadcasting spammer info:%s\n%s",
                 INVERSE_COLOR,
                 user_id,
                 RESET_COLOR,
-                json.dumps(json.loads(message), indent=4),
+                json.dumps(log_message, indent=4),
             )
             if not self.protocol_instances:
                 LOGGER.warning("No peers to broadcast spammer info to.")

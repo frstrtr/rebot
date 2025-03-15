@@ -113,8 +113,10 @@ class SpammerCheckResource(resource.Resource):
                 try:
                     # if not request.connectionLost:
                     request.setHeader(b"content-type", b"application/json")
-                    request.write(json.dumps(response_data).encode("utf-8"))
-                    LOGGER.debug("HTTP GET response sent: %s", response_data)
+                    response_json = json.dumps(response_data, indent=4)
+                    request.write(response_json.encode("utf-8"))
+                    LOGGER.debug("HTTP GET response sent:")
+                    LOGGER.debug("\n%s", response_json)
                     request.finish()
                     LOGGER.debug("Request finished successfully.")
                     # else:

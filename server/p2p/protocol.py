@@ -215,17 +215,19 @@ class P2PProtocol(protocol.Protocol):
                 "p2p_data": spammer_data["p2p_data"],
                 "is_spammer": spammer_data["is_spammer"],
             }
-            self.transport.write(json.dumps(response).encode("utf-8"))
-            LOGGER.debug("%s sent check_p2p_data response:\n%s", user_id, response)
+            response_json = json.dumps(response, indent=4)
+            self.transport.write(response_json.encode("utf-8"))
+            LOGGER.debug("%s sent check_p2p_data response:\n%s", user_id, response_json)
         else:
             response = {
                 "type": "check_p2p_data_response",
                 "user_id": user_id,
                 "error": "No spammer data found",
             }
-            self.transport.write(json.dumps(response).encode("utf-8"))
+            response_json = json.dumps(response, indent=4)
+            self.transport.write(response_json.encode("utf-8"))
             LOGGER.info(
-                "%s No spammer data found, sent response: %s", user_id, response
+                "%s No spammer data found, sent response:\n%s", user_id, response_json
             )
 
     def handle_check_p2p_data_response(self, data):

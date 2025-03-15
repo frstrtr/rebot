@@ -62,6 +62,17 @@ class P2PFactory(protocol.Factory):
         """Broadcast spammer information to all connected peers."""
         spammer_data = retrieve_spammer_data_from_db(user_id)
         if spammer_data:
+            # Parse nested JSON data
+            lols_bot_data = spammer_data.get("lols_bot_data", {})
+            if isinstance(lols_bot_data, str):
+                lols_bot_data = json.loads(lols_bot_data)
+            cas_chat_data = spammer_data.get("cas_chat_data", {})
+            if isinstance(cas_chat_data, str):
+                cas_chat_data = json.loads(cas_chat_data)
+            p2p_data = spammer_data.get("p2p_data", {})
+            if isinstance(p2p_data, str):
+                p2p_data = json.loads(p2p_data)
+
             # Ensure nested JSON data is properly encoded
             message = json.dumps(
                 {
@@ -70,17 +81,17 @@ class P2PFactory(protocol.Factory):
                     "is_spammer": spammer_data.get(
                         "is_spammer", False
                     ),  # Add is_spammer field
-                    "lols_bot_data": spammer_data["lols_bot_data"],
-                    "cas_chat_data": spammer_data["cas_chat_data"],
-                    "p2p_data": spammer_data["p2p_data"],
+                    "lols_bot_data": lols_bot_data,
+                    "cas_chat_data": cas_chat_data,
+                    "p2p_data": p2p_data,
                 }
             )
             LOGGER.debug(
-                "%s%s Broadcasting spammer info:%s %s",
+                "%s%s Broadcasting spammer info:%s\n%s",
                 INVERSE_COLOR,
                 user_id,
                 RESET_COLOR,
-                message,
+                json.dumps(json.loads(message), indent=4),
             )
             if not self.protocol_instances:
                 LOGGER.warning("No peers to broadcast spammer info to.")

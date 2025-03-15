@@ -321,10 +321,12 @@ class P2PProtocol(protocol.Protocol):
         """Handle lost P2P connections."""
         peer = self.get_peer()
         LOGGER.warning(
-            "(Host: %s, Port: %s, UUID: %s) P2P connection lost: %s",
+            "(Host: %s, Port: %s, UUID: %s%s%s) P2P connection lost:\n%s",
             peer.host,
             peer.port,
+            YELLOW_COLOR,
             peer.node_uuid,
+            RESET_COLOR,
             reason,
         )
         self.factory.peers = [

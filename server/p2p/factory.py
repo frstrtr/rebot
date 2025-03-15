@@ -292,11 +292,13 @@ class P2PFactory(protocol.Factory):
 
             if peer.node_uuid == self.node_uuid:
                 LOGGER.warning(
-                    "%s skipping check_p2p_data, is self: %s:%d %s",
+                    "%s skipping check_p2p_data, is self: %s:%d %s%s%s",
                     user_id,
                     peer.host,
                     peer.port,
+                    YELLOW_COLOR,
                     peer.node_uuid,
+                    RESET_COLOR,
                 )
                 continue
 

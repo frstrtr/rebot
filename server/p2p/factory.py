@@ -93,10 +93,17 @@ class P2PFactory(protocol.Factory):
                 and "messages" in log_message["cas_chat_data"]["result"]
             ):
                 messages = log_message["cas_chat_data"]["result"]["messages"]
-                decoded_messages = [
-                    m.encode("utf-8").decode("unicode_escape") for m in messages
-                ]
-                log_message["cas_chat_data"]["result"]["messages"] = decoded_messages
+                if isinstance(messages, list):  # Add this check
+                    decoded_messages = [
+                        m.encode("utf-8").decode("unicode_escape") for m in messages
+                    ]
+                    log_message["cas_chat_data"]["result"][
+                        "messages"
+                    ] = decoded_messages
+                else:
+                    LOGGER.warning(
+                        "cas_chat_data messages is not a list, skipping decoding"
+                    )
             LOGGER.debug(
                 "%s%s Broadcasting spammer info:%s\n%s",
                 INVERSE_COLOR,

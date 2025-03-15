@@ -64,20 +64,22 @@ class P2PProtocol(protocol.Protocol):
             peer  # Store the peer from which the data was received
         )
         LOGGER.debug(
-            "%sP2P message%s from %s:%d:\n%s",
+            "%sP2P message%s from %s:%d:",
             INVERSE_COLOR,
             RESET_COLOR,
             peer.host,
             peer.port,
-            message,
         )
-
         # Split the message by '}{' and add the braces back
         json_strings = split_json_objects(message)
 
         for json_string in json_strings:
             try:
                 data = json.loads(json_string)
+                LOGGER.debug(
+                    "\n%s",
+                    json.dumps(data, indent=4),
+                )
                 if "type" not in data:
                     self.handle_p2p_data(data)
                     continue

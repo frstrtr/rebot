@@ -131,16 +131,17 @@ class SpammerCheckResource(resource.Resource):
                 # Check if results are tuples before unpacking
                 if isinstance(p2p_result, tuple):
                     p2p_success, p2p_data = p2p_result
+                    LOGGER.debug("%s P2P data found: %s", user_id, p2p_data)
                 else:
                     p2p_success, p2p_data = False, {}
 
                 if isinstance(api_result, tuple):
                     api_success, api_data = api_result
+                    LOGGER.debug("%s API data found: %s", user_id, api_data)
                 else:
                     api_success, api_data = False, {}
 
                 if p2p_success and p2p_data and p2p_data.get("p2p_data") != "{}":
-                    LOGGER.debug("%s P2P data found: %s", user_id, p2p_data)
                     # rename keys in p2p_data dict and convert str value to dict
                     lols_bot_data = p2p_data.get("lols_bot_data", {})
                     cas_chat_data = p2p_data.get("cas_chat_data", {})
@@ -154,7 +155,6 @@ class SpammerCheckResource(resource.Resource):
                     }
                     response_data.update(p2p_data)
                 else:
-                    LOGGER.debug("%s no P2P data found", user_id)
                     # Reconstruct p2p data if it's not available
                     lols_bot_data = response_data.get("lols_bot", {})
                     cas_chat_data = response_data.get("cas_chat", {})
@@ -176,7 +176,6 @@ class SpammerCheckResource(resource.Resource):
                     )
 
                 if api_success and api_data:
-                    LOGGER.debug("%s API data found: %s", user_id, api_data)
                     if response_data[
                         "is_spammer"
                     ]:  # if not already marked as spammer by local endpoint report
@@ -194,11 +193,18 @@ class SpammerCheckResource(resource.Resource):
 
                 # Store the data in the database
                 LOGGER.debug("%s Storing data in database", user_id)
+                lols_bot_json = json.dumps(response_data["lols_bot"])
+                LOGGER.debug("%s lols_bot_json: %s", user_id, lols_bot_json)
+                cas_chat_json = json.dumps(response_data["cas_chat"])
+                LOGGER.debug("%s cas_chat_json: %s", user_id, cas_chat_json)
+                p2p_json = json.dumps(response_data["p2p"])
+                LOGGER.debug("%s p2p_json: %s", user_id, p2p_json)
+                # Store the data in the database
                 store_spammer_data(
                     user_id,
-                    json.dumps(response_data["lols_bot"]),
-                    json.dumps(response_data["cas_chat"]),
-                    json.dumps(response_data["p2p"]),
+                    lols_bot_json,
+                    cas_chat_json,
+                    p2p_json,
                     response_data["is_spammer"],
                 )
 
@@ -234,7 +240,6 @@ class SpammerCheckResource(resource.Resource):
 
     def check_database(self, user_id, response_data):
         """Check the database for spammer data."""
-        LOGGER.debug("%s Checking database", user_id)
         spammer_data = retrieve_spammer_data_from_db(user_id)
         if spammer_data:
             response_data["lols_bot"] = (

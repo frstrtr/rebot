@@ -63,13 +63,6 @@ class P2PProtocol(protocol.Protocol):
         self.received_from_peer = (
             peer  # Store the peer from which the data was received
         )
-        LOGGER.debug(
-            "%sP2P message%s from %s:%d:",
-            INVERSE_COLOR,
-            RESET_COLOR,
-            peer.host,
-            peer.port,
-        )
         # Split the message by '}{' and add the braces back
         json_strings = split_json_objects(message)
 
@@ -78,7 +71,11 @@ class P2PProtocol(protocol.Protocol):
                 data = json.loads(json_string)
                 data = decode_nested_json(data)
                 LOGGER.debug(
-                    "\n%s",
+                    "%sP2P message%s from %s:%d\n%s",
+                    INVERSE_COLOR,
+                    RESET_COLOR,
+                    peer.host,
+                    peer.port,
                     json.dumps(data, indent=4),
                 )
                 if "type" not in data:

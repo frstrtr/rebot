@@ -140,9 +140,9 @@ class SpammerCheckResource(resource.Resource):
                 if p2p_success and p2p_data and p2p_data.get("p2p_data") != "{}":
                     LOGGER.debug("%s P2P data found: %s", user_id, p2p_data)
                     # rename keys in p2p_data dict and convert str value to dict
-                    lols_bot_data = json.loads(p2p_data.get("lols_bot_data", "{}"))
-                    cas_chat_data = json.loads(p2p_data.get("cas_chat_data", "{}"))
-                    p2p_section = json.loads(p2p_data.get("p2p_data", "{}"))
+                    lols_bot_data = p2p_data.get("lols_bot_data", {})
+                    cas_chat_data = p2p_data.get("cas_chat_data", {})
+                    p2p_section = p2p_data.get("p2p_data", {})
                     p2p_data = {
                         "lols_bot": lols_bot_data,
                         "cas_chat": cas_chat_data,

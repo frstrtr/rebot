@@ -7,6 +7,7 @@
 # TODO each node signature with spam markup criteria - to choose the best node for spam checking condition
 # TODO if no peers or bootsrap available node stops reconnecting
 # XXX how the node itself can understand that it is a bootstrap node?
+# TODO prevent data mutation during rebroadcast cas messages
 
 import sys
 import uuid

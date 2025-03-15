@@ -207,12 +207,24 @@ class P2PProtocol(protocol.Protocol):
                     "lols_bot_data": spammer_data["lols_bot_data"],
                     "cas_chat_data": spammer_data["cas_chat_data"],
                 }
+
+            # Parse nested JSON data
+            lols_bot_data = spammer_data.get("lols_bot_data", {})
+            if isinstance(lols_bot_data, str):
+                lols_bot_data = json.loads(lols_bot_data)
+            cas_chat_data = spammer_data.get("cas_chat_data", {})
+            if isinstance(cas_chat_data, str):
+                cas_chat_data = json.loads(cas_chat_data)
+            p2p_data = spammer_data.get("p2p_data", {})
+            if isinstance(p2p_data, str):
+                p2p_data = json.loads(p2p_data)
+
             response = {
                 "type": "check_p2p_data_response",
                 "user_id": user_id,
-                "lols_bot_data": spammer_data["lols_bot_data"],
-                "cas_chat_data": spammer_data["cas_chat_data"],
-                "p2p_data": spammer_data["p2p_data"],
+                "lols_bot_data": lols_bot_data,
+                "cas_chat_data": cas_chat_data,
+                "p2p_data": p2p_data,
                 "is_spammer": spammer_data["is_spammer"],
             }
             response_json = json.dumps(response, indent=4)

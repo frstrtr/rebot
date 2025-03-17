@@ -22,6 +22,7 @@ from server.database import retrieve_spammer_data_from_db, store_spammer_data
 from server.p2p import P2PFactory
 
 from server.server_config import LOGGER
+from server.database import delete_spammer_data
 
 
 @implementer(IPolicyForHTTPS)
@@ -384,6 +385,59 @@ class ReportIdResource(resource.Resource):
             request.finish()
             LOGGER.info("%s POST request processed successfully", user_id)
             return server.NOT_DONE_YET
+        except (ValueError, KeyError, TypeError) as e:
+            LOGGER.error(
+                "%s Error processing POST request: %s",
+                user_id if "user_id" in locals() else "unknown",
+                e,
+            )
+            return f"Error processing request: {str(e)}".encode("utf-8")
+
+
+class RemoveIdResource(resource.Resource):
+    """Resource for removing a spammer by ID."""
+
+    isLeaf = True
+
+    def __init__(self, p2p_factory):
+        resource.Resource.__init__(self)
+        self.p2p_factory = p2p_factory
+
+    def render_POST(self, request: Request):
+        """Handle POST requests to remove a spammer by ID."""
+        try:
+            user_id = request.args.get(b"user_id", [None])[0]
+
+            # Get the client IP address
+            client_ip = request.getClientIP()
+            if client_ip != "127.0.0.1":
+                LOGGER.warning("Unauthorized access attempt from IP: %s", client_ip)
+                request.setResponseCode(403)  # Forbidden
+                return b"Forbidden: Only localhost can access this endpoint."
+
+            if not user_id:
+                LOGGER.error("%s Invalid request. Must include user_id.", "unknown")
+                request.setResponseCode(400)
+                return b"Invalid request. Must include user_id."
+
+            user_id = user_id.decode("utf-8")
+            LOGGER.warning("%s Received POST request to remove spammer", user_id)
+
+            # Remove the data and broadcast
+            LOGGER.debug("%s Removing spammer data", user_id)
+            delete_spammer_data(user_id)
+            LOGGER.debug("%s Broadcasting spammer removal info", user_id)
+            self.p2p_factory.broadcast_spammer_removal(user_id)
+
+            request.setHeader(b"content-type", b"application/json")
+            response = json.dumps(
+                {"status": "success", "user_id": user_id, "removed": True}
+            ).encode("utf-8")
+            request.write(response)
+            request.finish()
+            LOGGER.info("%s POST request processed successfully", user_id)
+            return server.NOT_DONE_YET
+
         except (ValueError, KeyError, TypeError) as e:
             LOGGER.error(
                 "%s Error processing POST request: %s",

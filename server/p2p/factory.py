@@ -115,12 +115,26 @@ class P2PFactory(protocol.Factory):
                 LOGGER.warning("No peers to broadcast spammer info to.")
                 return
 
+            sent_uuids = set()  # Keep track of UUIDs we've already sent to
+
             for proto in self.protocol_instances:
+                peer = proto.get_peer()
+
+                # Check if we've already sent to this UUID
+                if proto.peer_uuid in sent_uuids:
+                    LOGGER.debug(
+                        "%s Skipping send to %s (already sent to this UUID)",
+                        user_id,
+                        proto.peer_uuid,
+                    )
+                    continue
+
                 # Check if the data has been received from the same peer
+                # AND if the data has not changed
                 if (
                     proto.received_from_peer
-                    and proto.received_from_peer.host == proto.get_peer().host
-                    and proto.received_from_peer.port == proto.get_peer().port
+                    and proto.received_from_peer.host == peer.host
+                    and proto.received_from_peer.port == peer.port
                 ):
                     # Check if the data has changed
                     existing_data = retrieve_spammer_data_from_db(user_id)
@@ -136,20 +150,30 @@ class P2PFactory(protocol.Factory):
                             existing_p2p_data = json.loads(existing_p2p_data)
 
                         if (
-                            spammer_data["lols_bot_data"] == existing_lols_bot_data
-                            and spammer_data["cas_chat_data"] == existing_cas_chat_data
-                            and spammer_data["p2p_data"] == existing_p2p_data
+                            lols_bot_data == existing_lols_bot_data
+                            and cas_chat_data == existing_cas_chat_data
+                            and p2p_data == existing_p2p_data
                         ):
+                            LOGGER.debug(
+                                "%s Skipping send to %s (data has not changed)",
+                                user_id,
+                                proto.peer_uuid,
+                            )
                             continue  # Skip sending if data has not changed
-                if proto.peer_uuid != self.node_uuid:
-                    proto.transport.write(message.encode("utf-8"))
-                    LOGGER.debug(
-                        "%s Sent updated spammer info to peer %s:%d (%s)",
-                        user_id,
-                        proto.get_peer().host,
-                        proto.get_peer().port,
-                        proto.get_peer().node_uuid,
-                    )
+                else:
+                    if proto.peer_uuid != self.node_uuid:
+                        proto.transport.write(message.encode("utf-8"))
+                        LOGGER.debug(
+                            "%s Sent updated spammer info to peer %s:%d (%s)",
+                            user_id,
+                            peer.host,
+                            peer.port,
+                            proto.get_peer().node_uuid,
+                        )
+                        sent_uuids.add(
+                            proto.peer_uuid
+                        )  # Add the UUID to the set of sent UUIDs
+
             LOGGER.debug(
                 "%s%s spammer info broadcasted%s",
                 INVERSE_COLOR,
@@ -159,6 +183,27 @@ class P2PFactory(protocol.Factory):
         else:
             LOGGER.warning("No spammer data found for user_id in local DB: %s", user_id)
             # TODO check other spam nodes and endpoints
+
+    def broadcast_user_amnesty(self, user_id):
+        """Broadcast spammer removal information to all connected peers."""
+        message = json.dumps(
+            {"type": "spammer_info_removal", "user_id": user_id}
+        ).encode("utf-8")
+
+        LOGGER.debug(
+            "%s Broadcasting spammer removal info for user_id: %s",
+            INVERSE_COLOR,
+            user_id,
+        )
+
+        for proto in self.protocol_instances:
+            proto.transport.write(message)
+            LOGGER.debug(
+                "%s Sent spammer removal info to peer %s:%d",
+                user_id,
+                proto.transport.getPeer().host,
+                proto.transport.getPeer().port,
+            )
 
     def connect_to_bootstrap_peers(self, bootstrap_addresses):
         """Connect to bootstrap peers and gather available peers."""

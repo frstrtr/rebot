@@ -80,6 +80,22 @@ def store_spammer_data(
     LOGGER.info("%s stored spammer data", user_id)
 
 
+def delete_spammer_data(user_id):
+    """Remove spammer data from the database."""
+    conn = sqlite3.connect(DATABASE_FILE)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        DELETE FROM spammers WHERE user_id = ?
+        """,
+        (user_id,),
+    )
+    conn.commit()
+    conn.close()
+    LOGGER.info("%s removed from spammer data", user_id)
+    LOGGER.info("Removed spammer data for user_id: %s", user_id)
+
+
 def retrieve_spammer_data_from_db(user_id):
     """Retrieve spammer data from the database."""
     conn = sqlite3.connect(DATABASE_FILE)

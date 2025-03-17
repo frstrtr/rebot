@@ -7,7 +7,7 @@
 import json
 from twisted.internet import protocol
 from twisted.internet import task, defer
-from server.database import retrieve_spammer_data_from_db
+from server.database import retrieve_spammer_data_from_db, delete_spammer_data
 from server.server_config import LOGGER
 from .config import HANDSHAKE_INIT, HANDSHAKE_RESPONSE, RED_COLOR, GREEN_COLOR
 from .config import YELLOW_COLOR, INVERSE_COLOR, RESET_COLOR
@@ -58,43 +58,61 @@ class P2PProtocol(protocol.Protocol):
 
     def dataReceived(self, data):
         """Handle received P2P data."""
-        message = data.decode("utf-8")
-        peer = self.get_peer()
-        self.received_from_peer = (
-            peer  # Store the peer from which the data was received
-        )
+        message_string = data.decode("utf-8")
         # Split the message by '}{' and add the braces back
-        json_strings = split_json_objects(message)
+        json_strings = split_json_objects(message_string)
+
+        LOGGER.debug("Number of JSON strings: %d", len(json_strings))
+        LOGGER.debug("Split JSON strings: %s", json_strings)
 
         for json_string in json_strings:
             try:
-                data = json.loads(json_string)
-                data = decode_nested_json(data)
+                message = json.loads(json_string)
+                message = decode_nested_json(message)
+
+                # message = json.loads(data.decode("utf-8"))
+                # LOGGER.debug("Received data: %s", message)
+
+                message_type = message.get("type")
+
+                peer = (
+                    self.get_peer()
+                )  # XXX if there is concatenated data, this will be the last peer but what about others?
+                self.received_from_peer = (
+                    peer  # Store the peer from which the data was received
+                )
+
                 LOGGER.debug(
                     "%sP2P message%s from %s:%d\n%s",
                     INVERSE_COLOR,
                     RESET_COLOR,
                     peer.host,
                     peer.port,
-                    json.dumps(data, indent=4),
+                    json.dumps(message, indent=4),
                 )
-                if "type" not in data:
-                    self.handle_p2p_data(data)
-                    continue
+                # if "type" not in data:
+                #     self.handle_p2p_data(data)
+                #     continue
 
-                if data["type"] == HANDSHAKE_INIT:
-                    self.handle_handshake_init(data)
-                elif data["type"] == HANDSHAKE_RESPONSE:
-                    self.handle_handshake_response(data)
-                elif data["type"] == "check_p2p_data":
-                    self.handle_check_p2p_data(data)
-                elif data["type"] == "check_p2p_data_response":
-                    self.handle_check_p2p_data_response(data)
-                elif data["type"] == "spammer_info_broadcast":
-                    self.handle_p2p_data(data)
+                if message_type == HANDSHAKE_INIT:
+                    self.handle_handshake_init(message)
+                elif message_type == HANDSHAKE_RESPONSE:
+                    self.handle_handshake_response(message)
+                elif message_type == "check_p2p_data":
+                    self.handle_check_p2p_data(message)
+                elif message_type == "check_p2p_data_response":
+                    self.handle_check_p2p_data_response(message)
+                elif message_type == "spammer_info_broadcast":
+                    self.handle_p2p_data(message)
+                elif message_type == "spammer_info_removal":
+                    self.handle_spammer_info_removal(message)
                 else:
-                    self.handle_p2p_data(data)
-
+                    LOGGER.warning(
+                        "%sUnknown message type: %s%s",
+                        RED_COLOR,
+                        message_type,
+                        RESET_COLOR,
+                    )
             except json.JSONDecodeError as e:
                 LOGGER.error("Failed to decode JSON: %s", e)
                 LOGGER.debug(
@@ -103,6 +121,22 @@ class P2PProtocol(protocol.Protocol):
                     peer.port,
                 )
                 LOGGER.debug("Received data: %s", message)
+                # Handle the case where the message is not valid JSON
+                LOGGER.error("Failed to decode JSON data: %s", e)
+            except Exception as e:
+                LOGGER.error("Error processing data: %s", e)
+
+    def handle_spammer_info_removal(self, message):
+        """Handle spammer info removal message."""
+        user_id = message.get("user_id")
+        if user_id:
+            LOGGER.info("%s received spammer removal request", user_id)
+            # Remove the data from the database
+
+            delete_spammer_data(user_id)
+            LOGGER.info("%s spammer data removed from database", user_id)
+        else:
+            LOGGER.warning("User ID missing in spammer removal request")
 
     def handle_handshake_init(self, data):
         """Handle handshake initiation message."""

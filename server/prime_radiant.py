@@ -24,7 +24,7 @@ sys.path.insert(0, PROJECT_ROOT)
 from server.p2p.factory import P2PFactory
 from server.p2p.utils import find_available_port
 from server.websocket import SpammerCheckFactory
-from server.api import SpammerCheckResource, ReportIdResource
+from server.api import SpammerCheckResource, ReportIdResource, RemoveIdResource
 from server.database import initialize_database
 from server.server_config import (
     LOGGER,
@@ -72,6 +72,9 @@ def main():
     http_endpoint.listen(http_factory)
     LOGGER.info("\033[92mHTTP server listening on port %d\033[0m", HTTP_API_PORT)
 
+    remove_resource = RemoveIdResource(p2p_factory)
+    root.putChild(b"remove_id", remove_resource)
+
     # p2p_endpoint = endpoints.TCP4ServerEndpoint(reactor, port, interface="0.0.0.0")
     p2p_endpoint = endpoints.TCP4ServerEndpoint(reactor, port)
 
@@ -94,7 +97,12 @@ def main():
         for proto in p2p_factory.protocol_instances:
             if hasattr(proto, "peer_uuid"):
                 peer = proto.transport.getPeer()
-                LOGGER.info("\033[92m  %s:%d - UUID: %s\033[0m", peer.host, peer.port, proto.peer_uuid)
+                LOGGER.info(
+                    "\033[92m  %s:%d - UUID: %s\033[0m",
+                    peer.host,
+                    peer.port,
+                    proto.peer_uuid,
+                )
             else:
                 peer = proto.transport.getPeer()
                 LOGGER.warning(

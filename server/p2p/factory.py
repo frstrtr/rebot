@@ -58,6 +58,39 @@ class P2PFactory(protocol.Factory):
         self.protocol_instances.append(proto)
         return proto
 
+    def remove_duplicate_peers(self, peer_uuid):
+        """Remove duplicate peers with the same UUID, keeping only the most recent one."""
+        duplicates = []
+        most_recent_proto = None
+        most_recent_time = 0
+
+        for proto in self.protocol_instances:
+            if proto.peer_uuid == peer_uuid:
+                duplicates.append(proto)
+                # Determine the most recent connection based on connection time
+                if proto.transport and proto.transport.connected:
+                    current_time = (
+                        proto.transport.connector.startTime
+                        if hasattr(proto.transport, "connector")
+                        and hasattr(proto.transport.connector, "startTime")
+                        else 0
+                    )
+                    if current_time > most_recent_time:
+                        most_recent_time = current_time
+                        most_recent_proto = proto
+
+        # Remove all duplicates except the most recent one
+        for proto in duplicates:
+            if proto != most_recent_proto:
+                LOGGER.info(
+                    "Removing duplicate peer %s:%d with UUID %s",
+                    proto.transport.getPeer().host,
+                    proto.transport.getPeer().port,
+                    peer_uuid,
+                )
+                proto.transport.loseConnection()  # Close the connection
+                self.protocol_instances.remove(proto)  # Remove from the list
+
     def broadcast_spammer_info(self, user_id):
         """Broadcast spammer information to all connected peers."""
         spammer_data = retrieve_spammer_data_from_db(user_id)
@@ -155,8 +188,10 @@ class P2PFactory(protocol.Factory):
                             and p2p_data == existing_p2p_data
                         ):
                             LOGGER.debug(
-                                "%s Skipping send to %s (data has not changed)",
+                                "%s Skipping send to %s:%d (%s) (data has not changed)",
                                 user_id,
+                                peer.host,
+                                peer.port,
                                 proto.peer_uuid,
                             )
                             continue  # Skip sending if data has not changed
@@ -261,7 +296,12 @@ class P2PFactory(protocol.Factory):
             )
             peer_protocol.transport.loseConnection()
             return
+
         LOGGER.info("Received UUID %s from peer %s:%d", peer_uuid, peer.host, peer.port)
+
+        # Remove duplicate peers with the same UUID
+        self.remove_duplicate_peers(peer_uuid)
+
         self.synchronize_spammer_data(peer_protocol)
 
     def on_bootstrap_peer_failed(self, failure, address):

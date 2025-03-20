@@ -148,10 +148,35 @@ class P2PFactory(protocol.Factory):
                 LOGGER.warning("No peers to broadcast spammer info to.")
                 return
 
+            # Remove inactive nodes
+            active_protocols = []
+            for proto in self.protocol_instances:
+                if proto.transport and proto.transport.connected:
+                    active_protocols.append(proto)
+                else:
+                    peer = proto.get_peer()
+                    LOGGER.warning(
+                        "Removing inactive peer %s:%s with UUID %s",
+                        peer.host if peer else "unknown",
+                        peer.port if peer else "unknown",
+                        proto.peer_uuid,
+                    )
+                    self.remove_peer(proto)  # Use the remove_peer method to handle removal
+                    if peer:
+                        self.schedule_reconnection(peer.host, peer.port)
+            self.protocol_instances = active_protocols
+
             sent_uuids = set()  # Keep track of UUIDs we've already sent to
 
             for proto in self.protocol_instances:
                 peer = proto.get_peer()
+
+                if not peer:
+                    LOGGER.warning(
+                        "%s Skipping send to peer with unknown host and port",
+                        user_id,
+                    )
+                    continue
 
                 # Check if we've already sent to this UUID
                 if proto.peer_uuid in sent_uuids:

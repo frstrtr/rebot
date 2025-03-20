@@ -225,10 +225,11 @@ class P2PProtocol(protocol.Protocol):
         user_id = data["user_id"]
         peer = self.get_peer()
         LOGGER.info(
-            "%s Received check_p2p_data request from %s:%d",
+            "%s Received check_p2p_data request from %s:%d (UUID: %s)",
             user_id,
             peer.host,
             peer.port,
+            peer.node_uuid,
         )
         spammer_data = retrieve_spammer_data_from_db(user_id)
         if spammer_data:

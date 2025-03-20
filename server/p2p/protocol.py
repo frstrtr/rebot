@@ -63,7 +63,7 @@ class P2PProtocol(protocol.Protocol):
         json_strings = split_json_objects(message_string)
 
         LOGGER.debug("Number of JSON strings: %d", len(json_strings))
-        LOGGER.debug("Split JSON strings: %s", json_strings)
+        LOGGER.debug("Split JSON strings: %s", "\n".join(json_strings))
 
         for json_string in json_strings:
             try:
@@ -83,11 +83,12 @@ class P2PProtocol(protocol.Protocol):
                 )
 
                 LOGGER.debug(
-                    "%sP2P message%s from %s:%d\n%s",
+                    "%sP2P message%s from %s:%d (UUID: %s)\n%s",
                     INVERSE_COLOR,
                     RESET_COLOR,
                     peer.host,
                     peer.port,
+                    peer.node_uuid,
                     json.dumps(message, indent=4),
                 )
                 # if "type" not in data:

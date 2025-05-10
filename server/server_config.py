@@ -90,3 +90,11 @@ BOOTSTRAP_ADDRESSES = [
 
 # Database file for storing spammer data
 DATABASE_FILE = "spammers.db"
+
+BEACON = False
+# Set to True to enable beacon mode
+# Set to False to disable beacon mode
+
+DISABLE_DB = False
+# Set to True to disable database functionality
+# Set to False to enable database functionality

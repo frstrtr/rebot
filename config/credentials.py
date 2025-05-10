@@ -16,7 +16,7 @@ class Credentials:
     def read_token_from_file(self):
         """Read the bot token from token.txt"""
         try:
-            with open("config\\token.txt", "r", encoding="utf-8") as file:
+            with open("./config/token.txt", "r", encoding="utf-8") as file:
                 return file.read().strip()
         except FileNotFoundError as exc:
             raise RuntimeError(

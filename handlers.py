@@ -4,14 +4,40 @@ import logging
 import json
 from aiogram import html
 from aiogram.types import Message, ChatMemberUpdated, Update
+from synapsifier.crypto_address import CryptoAddressFinder
+
+crypto_finder = CryptoAddressFinder()
 
 
 async def command_start_handler(message: Message) -> None:
     """
     This handler receives messages with `/start` command
     """
-    await message.answer(f"Hello, {html.bold(message.from_user.full_name)}!")
+    user_full_name = message.from_user.full_name if message.from_user else "there"
+    await message.answer(f"Hello, {html.bold(user_full_name)}!")
 
+
+async def handle_crypto_address(message: Message) -> None:
+    """
+    Handler to check if the received message is a valid crypto address and validate its checksum if possible.
+    """
+    text = message.text.strip() if message.text else ""
+    if not text:
+        await message.answer("Please send a crypto address.")
+        return
+
+    results = crypto_finder.find_addresses(text)
+    if not results:
+        await message.answer("No valid crypto address found in your message.")
+        return
+
+    reply_lines = []
+    for blockchain, addresses in results.items():
+        for address in addresses:
+            reply_lines.append(f"✅ <b>{blockchain.capitalize()}</b> address detected and checksum is valid:\n<code>{address}</code>")
+
+    await message.answer("\n\n".join(reply_lines), parse_mode="HTML")
+    
 
 async def handle_story(message: Message) -> None:
     """
@@ -27,7 +53,7 @@ async def handle_story(message: Message) -> None:
         if "story" in msg_copy_dict:
             logging.info(
                 "%s sent story object in chat %s (%s) message forwarded from %s",
-                message.from_user.id,
+                message.from_user.id if message.from_user else "unknown_user",
                 (
                     getattr(message.chat, "title", None)
                     if getattr(message.chat, "title", None)

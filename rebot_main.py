@@ -10,12 +10,13 @@ import sys
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, StateFilter
 
 from config.credentials import Credentials
 from config.config import Config
 from handlers import (
     command_start_handler,
+    handle_crypto_address,
     handle_story,
     member_status_update_handler,
     unhandled_updates_handler,
@@ -34,8 +35,11 @@ class Rebot:
 
     def create_bot(self):
         """Function to create the bot"""
+        token = self.credentials.get_bot_token()
+        if token is None:
+            raise ValueError("Bot token must not be None.")
         return Bot(
-            token=self.credentials.get_bot_token(),
+            token=token,
             default=DefaultBotProperties(
                 parse_mode=self.parse_mode,
             ),
@@ -45,6 +49,11 @@ class Rebot:
         """Function to setup all the handlers for the bot"""
 
         self.rebot_dp.message.register(command_start_handler, CommandStart())
+
+        self.rebot_dp.message.register(
+            handle_crypto_address,
+            StateFilter("*"),
+        )
         self.rebot_dp.message.register(handle_story)
         self.rebot_dp.chat_member.register(member_status_update_handler)
         self.rebot_dp.edited_message.register(unhandled_updates_handler)

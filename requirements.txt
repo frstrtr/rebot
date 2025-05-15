@@ -1,5 +1,5 @@
 # python 3.13.0
-aiogram>=3.13.1
+aiogram>=3.20.0
 twisted>=24.7.0
 autobahn>=24.4.2
 zope.interface>=7.1.1

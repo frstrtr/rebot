@@ -4,7 +4,10 @@ import logging
 # import hashlib
 import base58
 import bech32
+
+from utils import segwit_addr
 from Crypto.Hash import keccak  # Add this import at the top
+
 
 class CryptoAddressFinder:
     """
@@ -18,22 +21,22 @@ class CryptoAddressFinder:
         # TODO: bitcoin lower and upper case need to be checked
         self.patterns = {
             "bitcoin": (
-                r'\b('
-                r'1[a-km-zA-HJ-NP-Z1-9]{25,34}'                  # Legacy
-                r'|3[a-km-zA-HJ-NP-Z1-9]{25,34}'                 # P2SH
-                r'|bc1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{39,87}' # Bech32/Bech32m (SegWit v0/v1+), 42-90 chars total
-                r')\b'
+                r"\b("
+                r"1[a-km-zA-HJ-NP-Z1-9]{25,34}"  # Legacy
+                r"|3[a-km-zA-HJ-NP-Z1-9]{25,34}"  # P2SH
+                r"|[bB][cC]1[qpzry9x8gf2tvdw0s3jn54khce6mua7lQPZRY9X8GF2TVDW0S3JN54KHCE6MUA7L]{11,87}"  # Bech32/Bech32m, 14-90 chars total
+                r")\b"
             ),
-            "ethereum": r'\b0x[a-fA-F0-9]{40}\b',  # Ethereum-compatible (Ethereum, BSC, Polygon, Avalanche, BASE)
-            "solana": r'\b[A-HJ-NP-Za-km-z1-9]{32,44}\b',
-            "tron": r'\bT[a-zA-Z0-9]{33}\b',
-            "ripple": r'\br[a-zA-Z0-9]{24,34}\b',
-            "stellar": r'\bG[A-Z2-7]{55}\b',
-            "ton": r'\b(EQ|Ef|kQ)[A-Za-z0-9_-]{46}\b',
-            "tezos": r'\btz[1-3][a-zA-Z0-9]{33}\b',
-            "cosmos": r'\bcosmos1[a-zA-Z0-9]{38,}\b',
-            "polkadot": r'\b1[a-zA-Z0-9]{47}\b',
-            "algorand": r'\b[A-Z2-7]{58}\b',
+            "ethereum": r"\b0x[a-fA-F0-9]{40}\b",  # Ethereum-compatible (Ethereum, BSC, Polygon, Avalanche, BASE)
+            "solana": r"\b[A-HJ-NP-Za-km-z1-9]{32,44}\b",
+            "tron": r"\bT[a-zA-Z0-9]{33}\b",
+            "ripple": r"\br[a-zA-Z0-9]{24,34}\b",
+            "stellar": r"\bG[A-Z2-7]{55}\b",
+            "ton": r"\b(EQ|Ef|kQ)[A-Za-z0-9_-]{46}\b",
+            "tezos": r"\btz[1-3][a-zA-Z0-9]{33}\b",
+            "cosmos": r"\bcosmos1[a-zA-Z0-9]{38,}\b",
+            "polkadot": r"\b1[a-zA-Z0-9]{47}\b",
+            "algorand": r"\b[A-Z2-7]{58}\b",
         }
 
     def validate_checksum(self, blockchain_name, address_to_validate):
@@ -45,13 +48,20 @@ class CryptoAddressFinder:
         :return: True if the checksum is valid, False otherwise.
         """
         if blockchain_name == "bitcoin":
-            if address_to_validate.startswith("bc1"):
-                try:
-                    hrp, data = bech32.bech32_decode(address_to_validate)
-                    # hrp should be 'bc' for mainnet, data should not be None and length > 0
-                    return hrp == "bc" and data is not None and len(data) > 0
-                except Exception:
+            # Convert to lowercase for case-insensitive validation
+            addr_lower = address_to_validate.lower()
+            if addr_lower.startswith("bc1"):
+                hrp = "bc"
+                witver, _witprog = segwit_addr.decode(hrp, addr_lower)  # Pass lowercase
+                if witver is None:
                     return False
+                # witver == 0: Bech32 (SegWit v0), witver == 1: Bech32m (Taproot)
+                if addr_lower.startswith("bc1p"):
+                    return witver == 1
+                elif addr_lower.startswith("bc1q"):
+                    return witver == 0
+                else:
+                    return witver is not None
             else:
                 try:
                     decoded = base58.b58decode_check(address_to_validate)
@@ -70,7 +80,9 @@ class CryptoAddressFinder:
                 checksum_address = "0x"
                 for i, c in enumerate(addr):
                     if c.isalpha():
-                        checksum_address += c.upper() if int(keccak_hash[i], 16) >= 8 else c.lower()
+                        checksum_address += (
+                            c.upper() if int(keccak_hash[i], 16) >= 8 else c.lower()
+                        )
                     else:
                         checksum_address += c
                 return checksum_address == address_to_validate
@@ -119,16 +131,25 @@ class CryptoAddressFinder:
 
         for _blockchain, pattern in self.patterns.items():
             matches = re.findall(pattern, text)
-            logging.info("[%s] Regex matches: %s", _blockchain, matches)
-            for _address in matches:
-                if self.validate_checksum(_blockchain, _address):
-                    logging.info("[%s] Address passed checksum: %s", _blockchain, _address)
-                    results[_blockchain].append(_address)
-                else:
-                    logging.warning("[%s] Address failed checksum: %s", _blockchain, _address)
+            if matches:  # Only log if matches is not empty
+                logging.info("[%s] Regex matches: %s", _blockchain, matches)
+                for _address in matches:
+                    if self.validate_checksum(_blockchain, _address):
+                        logging.info(
+                            "[%s] Address passed checksum: %s", _blockchain, _address
+                        )
+                        results[_blockchain].append(_address)
+                    else:
+                        logging.warning(
+                            "[%s] Address failed checksum: %s", _blockchain, _address
+                        )
 
         # Remove empty results
-        return {blockchain: addresses for blockchain, addresses in results.items() if addresses}
+        return {
+            blockchain: addresses
+            for blockchain, addresses in results.items()
+            if addresses
+        }
 
 
 if __name__ == "__main__":
@@ -138,9 +159,9 @@ if __name__ == "__main__":
     Bitcoin: 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa
     Ethereum: 0xde0B295669a9FD93d5F28D9Ec85E40f4cb697BAe
     Ripple: rEb8TK3gBgk5auZkwc6sHnwrGVJH8DuaLh
-    Stellar: GCFX4V4X7Z2X6X7X7X7X7X7X7X7X7X7X7X7X7X7X7X7X7X7X7X7X7X7X7X7X7X
-    Cosmos: cosmos1vladlqg7t7v9l9w0j9q9w9w9w9w9w9w9w9w9w9w9
-    Polkadot: 1vladlqg7t7v9l9w0j9q9w9w9w9w9w9w9w9w9w9w9w9
+    Stellar: GCFX4V4X7Z2X6X7X7X7X7X7X7X7X7X7X7X7X7X7X7X7X7X7X7X7X7X7X7X7X7X7X7X7X7X7X7X7X
+    Cosmos: cosmos1vladlqg7t7v9l9w0j9q9w9w9w9w9
+    Polkadot: 1vladlqg7t7v9l9w0j9q9w9w9w9w9
     """
 
     finder = CryptoAddressFinder()

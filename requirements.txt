@@ -12,6 +12,5 @@ base58>=2.1.1
 bech32>=1.2.0
 pycryptodome>=3.22.0
 
-
 # for testing
 websockets>=13.1.0

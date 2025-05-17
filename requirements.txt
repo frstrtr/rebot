@@ -14,3 +14,7 @@ pycryptodome>=3.22.0
 
 # for testing
 websockets>=13.1.0
+
+# database
+sqlalchemy>=2.0.41
+greenlet>=3.2.2

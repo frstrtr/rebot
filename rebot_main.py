@@ -14,6 +14,7 @@ from aiogram.filters import CommandStart, StateFilter
 
 from config.credentials import Credentials
 from config.config import Config
+from database import create_tables  # Import database functionality
 from handlers import (
     command_start_handler,
     handle_crypto_address,
@@ -32,6 +33,7 @@ class Rebot:
         self.rebot_dp = Dispatcher()
         self.bot = self.create_bot()
         self.setup_handlers()
+        self.init_database()  # Initialize the database
 
     def create_bot(self):
         """Function to create the bot"""
@@ -44,6 +46,15 @@ class Rebot:
                 parse_mode=self.parse_mode,
             ),
         )
+
+    def init_database(self):
+        """Initialize the database"""
+        try:
+            create_tables()
+            logging.info("Database initialized successfully")
+        except Exception as e:
+            logging.error(f"Failed to initialize database: {e}")
+            raise
 
     def setup_handlers(self):
         """Function to setup all the handlers for the bot"""

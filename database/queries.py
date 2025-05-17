@@ -84,7 +84,7 @@ def save_message(db: Session, telegram_message: TelegramMessage) -> Message:
     try:
         raw_data = json_dumps(telegram_message.model_dump(exclude_none=True))
     except Exception as e:
-        logging.error(f"Failed to serialize message: {e}")
+        logging.error("Failed to serialize message: %s", e)
         raw_data = None
 
     # Create message

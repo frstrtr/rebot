@@ -53,7 +53,7 @@ class Rebot:
             create_tables()
             logging.info("Database initialized successfully")
         except Exception as e:
-            logging.error(f"Failed to initialize database: {e}")
+            logging.error("Failed to initialize database: %s", e)
             raise
 
     def setup_handlers(self):

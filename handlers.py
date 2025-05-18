@@ -28,6 +28,9 @@ async def command_start_handler(message: Message) -> None:
     """
     This handler receives messages with `/start` command
     """
+    # Add this log line
+    logging.info(f"command_start_handler received /start from user.") 
+    
     user_full_name = message.from_user.full_name if message.from_user else "there"
     await message.answer(f"Hello, {html.bold(user_full_name)}!")
 
@@ -40,6 +43,7 @@ async def handle_message_with_potential_crypto_address(
     Handles incoming messages. If not in a specific state, scans for crypto addresses.
     If in 'awaiting_memo' state, processes the user's reply as a memo or a skip command.
     """
+    logging.info(f"Handling message from user in handle_message_with_potential_crypto_address. Text: '{message.text}'")  # ADD THIS LINE
     current_fsm_state = await state.get_state()
 
     if current_fsm_state == AddressProcessingStates.awaiting_memo:

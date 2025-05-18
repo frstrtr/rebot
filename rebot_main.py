@@ -23,6 +23,7 @@ from handlers import (
     handle_story,
     member_status_update_handler,
     unhandled_updates_handler,
+    checkmemo_handler,  # <-- Add this
 )
 
 # 1. Define Context Variable for user_id
@@ -127,17 +128,14 @@ class Rebot:
         """Function to setup all the handlers for the bot"""
 
         self.rebot_dp.message.register(command_start_handler, CommandStart())
-
-        # MODIFIED: Register the new handler name for crypto addresses and FSM
+        self.rebot_dp.message.register(
+            checkmemo_handler,
+            lambda m: m.text and m.text.startswith("/checkmemo"),
+        )
         self.rebot_dp.message.register(
             handle_message_with_potential_crypto_address,
-            StateFilter("*"),  # This allows the handler to manage states
+            StateFilter("*"),
         )
-
-        # Ensure other handlers are registered appropriately
-        # If handle_story is a general text handler, it might need to be
-        # registered after the FSM handler or with more specific filters
-        # to avoid interfering with the memo input process.
         self.rebot_dp.message.register(handle_story)
         self.rebot_dp.chat_member.register(member_status_update_handler)
         self.rebot_dp.edited_message.register(unhandled_updates_handler)

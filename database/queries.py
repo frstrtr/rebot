@@ -116,17 +116,22 @@ def save_message(db: Session, telegram_message: TelegramMessage) -> Message:
 def save_crypto_address(
     db: Session, message_id: int, address: str, blockchain: str
 ) -> CryptoAddress:
-    """Save a crypto address to the database"""
-    # Check if this address already exists in this message
+    """Save a crypto address to the database.
+    An address is unique per message_id, address string, and blockchain."""
+    # Check if this address for this specific blockchain already exists in this message
     existing = (
         db.query(CryptoAddress)
         .filter(
-            CryptoAddress.message_id == message_id, CryptoAddress.address == address
+            CryptoAddress.message_id == message_id,
+            CryptoAddress.address == address,
+            CryptoAddress.blockchain == blockchain  # ADDED THIS CONDITION
         )
         .first()
     )
 
     if existing:
+        # Log or handle if you want to know it's a re-detection of the exact same entry
+        logging.debug(f"CryptoAddress {address} on {blockchain} for message_id {message_id} already exists with id {existing.id}.")
         return existing
 
     crypto_address = CryptoAddress(

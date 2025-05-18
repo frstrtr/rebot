@@ -1,11 +1,11 @@
 import logging
 import json
 from aiogram import html, F, types
-from aiogram.types import Message, ChatMemberUpdated, Update
+from aiogram.types import Message, ChatMemberUpdated, Update  # Ensure Update is imported
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command  # For /skip command
-from sqlalchemy import func  # Make sure this import is present at the top of your handlers.py
+from sqlalchemy import func
 
 from synapsifier.crypto_address import CryptoAddressFinder
 from database import (
@@ -28,9 +28,8 @@ async def command_start_handler(message: Message) -> None:
     """
     This handler receives messages with `/start` command
     """
-    # Add this log line
-    logging.info(f"command_start_handler received /start from user.") 
-    
+    logging.info(f"command_start_handler received /start from user.")
+
     user_full_name = message.from_user.full_name if message.from_user else "there"
     await message.answer(f"Hello, {html.bold(user_full_name)}!")
 
@@ -43,7 +42,9 @@ async def handle_message_with_potential_crypto_address(
     Handles incoming messages. If not in a specific state, scans for crypto addresses.
     If in 'awaiting_memo' state, processes the user's reply as a memo or a skip command.
     """
-    logging.info(f"Handling message from user in handle_message_with_potential_crypto_address. Text: '{message.text}'")  # ADD THIS LINE
+    logging.info(
+        f"Handling message in handle_message_with_potential_crypto_address. Text: '{message.text}'"
+    )
     current_fsm_state = await state.get_state()
 
     if current_fsm_state == AddressProcessingStates.awaiting_memo:
@@ -88,7 +89,10 @@ async def _scan_message_for_addresses_action(message: Message, state: FSMContext
         logging.debug(f"Detected map from crypto_finder: {detected_raw_addresses_map}")
 
         if not detected_raw_addresses_map:
-            logging.debug("No crypto addresses found in message ID %s.", db_message.id if db_message else "N/A")
+            logging.debug(
+                "No crypto addresses found in message ID %s.",
+                db_message.id if db_message else "N/A",
+            )
             return
 
         addresses_for_memo_prompt = []
@@ -266,6 +270,7 @@ async def handle_story(message: Message) -> None:
     Handler will forward receive a message back to the sender
     By default, message handler will handle all message types (like a text, photo, sticker etc.)
     """
+    logging.info(f"handle_story received a story from chat_id: {message.chat.id}")
     try:
         # Send a copy of the received message
         msg_copy = await message.send_copy(chat_id=message.chat.id)
@@ -296,8 +301,11 @@ async def handle_story(message: Message) -> None:
 
 async def member_status_update_handler(update: ChatMemberUpdated) -> None:
     """
-    Handle all updates
+    Handle member status updates.
     """
+    logging.info(
+        f"member_status_update_handler received update for chat_id: {update.chat.id}, user_id: {update.new_chat_member.user.id}"
+    )
     update_by_user_id = update.from_user.id
     update_member_id = update.old_chat_member.user.id
     update_member_old_status = update.old_chat_member.status
@@ -311,12 +319,15 @@ async def member_status_update_handler(update: ChatMemberUpdated) -> None:
     )
 
 
-async def unhandled_updates_handler(update: Update) -> None:
+async def unhandled_updates_handler(message: types.Message) -> None:
     """
-    Log all unhandled updates
+    Log all unhandled updates (specifically edited messages as currently registered).
     """
-    event = update.model_dump_json(indent=4, exclude_none=True)
-    logging.info("Update: %s", event)
+    logging.info(
+        f"unhandled_updates_handler received an edited_message. Chat ID: {message.chat.id}, Message ID: {message.message_id}"
+    )
+    event_data = message.model_dump_json(indent=4, exclude_none=True)
+    logging.info("Edited Message Content: %s", event_data)
 
 
 async def checkmemo_handler(message: types.Message):
@@ -325,48 +336,53 @@ async def checkmemo_handler(message: types.Message):
     Fetches records for the specified address across all its associated blockchains
     where a memo (notes) is present.
     """
+    logging.info(f"checkmemo_handler received command from user. Text: '{message.text}'")
     if not message.text:
-        await message.reply("Usage: /checkmemo <code>crypto_address</code>", parse_mode="HTML")
+        await message.reply(
+            "Usage: /checkmemo <code>crypto_address</code>", parse_mode="HTML"
+        )
         return
 
     parts = message.text.strip().split(maxsplit=1)
     if len(parts) < 2:
-        await message.reply("Usage: /checkmemo <code>crypto_address</code>", parse_mode="HTML")
+        await message.reply(
+            "Usage: /checkmemo <code>crypto_address</code>", parse_mode="HTML"
+        )
         return
 
     address_arg = parts[1].strip()
     if not address_arg:
-        await message.reply("Usage: /checkmemo <code>crypto_address</code>", parse_mode="HTML")
+        await message.reply(
+            "Usage: /checkmemo <code>crypto_address</code>", parse_mode="HTML"
+        )
         return
 
     db = SessionLocal()
     try:
-        # This query fetches all CryptoAddress records where:
-        # 1. The 'address' matches address_arg (case-insensitively).
-        #    This will include records for this address even if they are on different blockchains.
-        # 2. 'notes' is not NULL and not an empty string.
         results = (
             db.query(CryptoAddress)
             .filter(
-                func.lower(CryptoAddress.address) == address_arg.lower(),  # Case-insensitive match
+                func.lower(CryptoAddress.address) == address_arg.lower(),
                 CryptoAddress.notes.isnot(None),
                 CryptoAddress.notes != "",
             )
-            .order_by(CryptoAddress.blockchain, CryptoAddress.id)  # For consistent output
+            .order_by(CryptoAddress.blockchain, CryptoAddress.id)
             .all()
         )
 
         if not results:
-            await message.reply(f"No memos found for address: <code>{html.quote(address_arg)}</code>", parse_mode="HTML")
+            await message.reply(
+                f"No memos found for address: <code>{html.quote(address_arg)}</code>",
+                parse_mode="HTML"
+            )
             return
 
         memos_text_parts = []
         for row in results:
-            # Correctly get the string value from the CryptoAddressStatus enum
-            status_display = "N/A" # Default if status is None or not an enum
+            status_display = "N/A"
             if isinstance(row.status, CryptoAddressStatus):
-                status_display = row.status.value  # e.g., "pending", "confirmed"
-            elif row.status is not None: # If it's already a string or other simple type
+                status_display = row.status.value
+            elif row.status is not None:
                 status_display = str(row.status)
 
             memos_text_parts.append(
@@ -374,24 +390,31 @@ async def checkmemo_handler(message: types.Message):
                 f"<b>Status:</b> {html.quote(status_display)}\n"
                 f"<b>Memo:</b> {html.quote(row.notes)}"
             )
-        
-        response_header = f"<b>Memos for Address:</b> <code>{html.quote(address_arg)}</code>\n\n"
+
+        response_header = (
+            f"<b>Memos for Address:</b> <code>{html.quote(address_arg)}</code>\n\n"
+        )
         response_body = "\n\n".join(memos_text_parts)
         full_response_text = response_header + response_body
-        
-        # Handle Telegram's message length limit
+
         if len(full_response_text) > 4096:
-            # Consider sending multiple messages or a summary for very long lists
             await message.reply(
-                response_header + "The list of memos is too long to display in a single message. Please check logs or refine your search if possible.",
-                parse_mode="HTML"
+                response_header
+                + "The list of memos is too long to display in a single message. Please check logs or refine your search if possible.",
+                parse_mode="HTML",
             )
-            logging.info(f"Full memo list for {address_arg} was too long for Telegram. Full text: {full_response_text}")
+            logging.info(
+                f"Full memo list for {address_arg} was too long for Telegram. Full text: {full_response_text}"
+            )
         else:
             await message.reply(full_response_text, parse_mode="HTML")
-            
+
     except Exception as e:
-        logging.exception(f"Error in checkmemo_handler for address {html.quote(address_arg)}: {e}")
-        await message.reply("An error occurred while retrieving memos. Please check the bot logs.")
+        logging.exception(
+            f"Error in checkmemo_handler for address {html.quote(address_arg)}: {e}"
+        )
+        await message.reply(
+            "An error occurred while retrieving memos. Please check the bot logs."
+        )
     finally:
         db.close()

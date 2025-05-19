@@ -122,8 +122,8 @@ class Rebot:
             logging.info("Database initialized successfully")
         except Exception as e:
             logging.error(
-                f"Failed to initialize database: {e}"
-            )  # MODIFIED: Use f-string for error logging
+                "Failed to initialize database: %s", e
+            )  # MODIFIED: Use %-style formatting
             raise
 
     def setup_handlers(self):

@@ -9,7 +9,7 @@ import logging
 import sys
 import contextvars  # ADDED
 
-from aiogram import Bot, Dispatcher, BaseMiddleware  # MODIFIED: Added BaseMiddleware
+from aiogram import Bot, Dispatcher, BaseMiddleware, F  # MODIFIED: Added F here
 from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import CommandStart, StateFilter
 from aiogram.types import Update  # ADDED
@@ -24,6 +24,8 @@ from handlers import (
     member_status_update_handler,
     unhandled_updates_handler,
     checkmemo_handler,  # <-- Add this
+    handle_blockchain_clarification_callback,  # Add this
+    AddressProcessingStates,  # Ensure this is imported if not already
 )
 
 # 1. Define Context Variable for user_id
@@ -139,6 +141,13 @@ class Rebot:
         self.rebot_dp.message.register(handle_story)
         self.rebot_dp.chat_member.register(member_status_update_handler)
         self.rebot_dp.edited_message.register(unhandled_updates_handler)
+
+        # For blockchain clarification via inline buttons
+        self.rebot_dp.callback_query.register(
+            handle_blockchain_clarification_callback,
+            AddressProcessingStates.awaiting_blockchain,
+            F.data.startswith("clarify_bc:"),
+        )
 
 
 async def main():

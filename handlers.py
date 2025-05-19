@@ -43,7 +43,7 @@ async def handle_message_with_potential_crypto_address(
     If in 'awaiting_memo' state, processes the user's reply as a memo or a skip command.
     """
     logging.info(
-        f"Handling message in handle_message_with_potential_crypto_address. Text: '{message.text}'"
+        f"Handling message in handle_message_with_potential_crypto_address. \033[93mText: '{message.text}'\033[0m"
     )
     current_fsm_state = await state.get_state()
 

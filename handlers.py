@@ -1,7 +1,13 @@
 import logging
 import json
 from aiogram import html, F, types
-from aiogram.types import Message, ChatMemberUpdated, Update, InlineKeyboardMarkup, InlineKeyboardButton  # Ensure Update and InlineKeyboardMarkup, InlineKeyboardButton are imported
+from aiogram.types import (
+    Message,
+    ChatMemberUpdated,
+    Update,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+)  # Ensure Update and InlineKeyboardMarkup, InlineKeyboardButton are imported
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command  # For /skip command
@@ -25,15 +31,21 @@ class AddressProcessingStates(StatesGroup):
     awaiting_memo = State()
 
 
-async def command_start_handler(message: Message, state: FSMContext) -> None:  # MODIFIED: Added state: FSMContext
+async def command_start_handler(
+    message: Message, state: FSMContext
+) -> None:  # MODIFIED: Added state: FSMContext
     """
     This handler receives messages with `/start` command
     """
     logging.info(f"command_start_handler received /start from user.")
 
     user_full_name = message.from_user.full_name if message.from_user else "there"
-    await message.answer(f"Hello, {html.bold(user_full_name)}!")
-    await state.set_state(AddressProcessingStates.awaiting_blockchain)
+    await message.answer(
+        f"Hello, {html.bold(user_full_name)}!\n\n Please send me a message containing a crypto address, and I will help you with it.\n\n"
+        "You can also use /checkmemo to check existing memos for a crypto address.\n"
+        "If you want to skip the memo process, just reply with /skip.\n"
+    )
+    await state.clear()  # MODIFIED: Clear state to ensure fresh start for next message
 
 
 # Main handler for messages, routes based on FSM state
@@ -71,18 +83,24 @@ async def _scan_message_for_addresses_action(message: Message, state: FSMContext
     """
     Scans the message for crypto addresses, displays previous memos,
     and initiates blockchain clarification or memo prompting.
+    If no addresses are found, informs the user.
     """
     db = SessionLocal()
     try:
         db_message = save_message(db, message)
         if db_message is None:
             logging.error("Failed to save message to database.")
-            await message.reply("An error occurred while processing your message (DB save failed).")
+            await message.reply(
+                "An error occurred while processing your message (DB save failed)."
+            )
             return
 
         text_to_scan = (message.text or message.caption or "").strip()
         if not text_to_scan:
-            logging.debug("Message ID %s has no text content to scan for addresses.", db_message.id)
+            logging.debug(
+                "Message ID %s has no text content to scan for addresses.",
+                db_message.id,
+            )
             return
 
         detected_raw_addresses_map = crypto_finder.find_addresses(text_to_scan)
@@ -90,17 +108,21 @@ async def _scan_message_for_addresses_action(message: Message, state: FSMContext
 
         if not detected_raw_addresses_map:
             logging.debug("No crypto addresses found in message ID %s.", db_message.id)
+            await message.reply(
+                "No crypto addresses found in your message. Please send a message containing a crypto address."
+            )
             return
 
         # Store db_message.id in FSM for later use by blockchain/memo handlers
-        # This is crucial as save_crypto_address will be called later.
         await state.update_data(current_scan_db_message_id=db_message.id)
 
         # Lists to hold addresses based on processing needs
         pending_blockchain_clarification = []
-        addresses_for_memo_prompt_details = [] # Will store {'address': str, 'blockchain': str}
-                                            # to be processed by _prompt_for_next_memo later.
-                                            # save_crypto_address will happen inside _prompt_for_next_memo's setup.
+        addresses_for_memo_prompt_details = (
+            []
+        )  # Will store {'address': str, 'blockchain': str}
+        # to be processed by _prompt_for_next_memo later.
+        # save_crypto_address will happen inside _prompt_for_next_memo's setup.
 
         # This list will hold strings for the initial info message
         detected_address_info_blocks = []
@@ -110,15 +132,17 @@ async def _scan_message_for_addresses_action(message: Message, state: FSMContext
         for bc, addr_list in detected_raw_addresses_map.items():
             for addr in addr_list:
                 if addr not in aggregated_detections:
-                    aggregated_detections[addr] = {'chains': set()}
-                aggregated_detections[addr]['chains'].add(bc)
+                    aggregated_detections[addr] = {"chains": set()}
+                aggregated_detections[addr]["chains"].add(bc)
 
         for addr_str, data in aggregated_detections.items():
-            detected_chains_set = data['chains']
+            detected_chains_set = data["chains"]
             current_address_block_parts = []
 
             # Display detection and previous memos
-            potential_chains_display = ", ".join(sorted(list(chain.capitalize() for chain in detected_chains_set)))
+            potential_chains_display = ", ".join(
+                sorted(list(chain.capitalize() for chain in detected_chains_set))
+            )
             current_address_block_parts.append(
                 f"🔍 Found: <code>{html.quote(addr_str)}</code>\n"
                 f"   (Potential chains: {potential_chains_display})"
@@ -138,65 +162,84 @@ async def _scan_message_for_addresses_action(message: Message, state: FSMContext
             if existing_memos:
                 memo_lines = ["📜 <b>Previous Memos:</b>"]
                 for memo_item in existing_memos:
-                    status_display = memo_item.status.value if isinstance(memo_item.status, CryptoAddressStatus) else str(memo_item.status or "N/A")
+                    status_display = (
+                        memo_item.status.value
+                        if isinstance(memo_item.status, CryptoAddressStatus)
+                        else str(memo_item.status or "N/A")
+                    )
                     memo_lines.append(
                         f"  • <b>{memo_item.blockchain.capitalize()}</b> (<i>{status_display}</i>): {html.quote(memo_item.notes)}"
                     )
                 current_address_block_parts.append("\n".join(memo_lines))
             else:
-                current_address_block_parts.append("  (No previous memos found for this address.)")
-            
+                current_address_block_parts.append(
+                    "  (No previous memos found for this address.)"
+                )
+
             detected_address_info_blocks.append("\n".join(current_address_block_parts))
 
             # Decide if clarification is needed
-            specific_chains = {chain for chain in detected_chains_set if chain != 'address'}
+            specific_chains = {
+                chain for chain in detected_chains_set if chain != "address"
+            }
 
             if len(specific_chains) == 1:
                 # Exactly one specific blockchain identified by the finder
                 chosen_blockchain = list(specific_chains)[0]
-                addresses_for_memo_prompt_details.append({
-                    "address": addr_str,
-                    "blockchain": chosen_blockchain,
-                    # db_message_id is already in FSM state.current_scan_db_message_id
-                })
+                addresses_for_memo_prompt_details.append(
+                    {
+                        "address": addr_str,
+                        "blockchain": chosen_blockchain,
+                        # db_message_id is already in FSM state.current_scan_db_message_id
+                    }
+                )
             else:
                 # Multiple specific chains, or only generic 'address', or ambiguous. Needs user clarification.
                 # detected_on_options will be used to generate inline keyboard buttons
-                options = sorted(list(specific_chains)) if specific_chains else [] # If only 'address', options is empty
-                pending_blockchain_clarification.append({
-                    "address": addr_str,
-                    "detected_on_options": options,
-                    # db_message_id is in FSM state.current_scan_db_message_id
-                })
+                options = (
+                    sorted(list(specific_chains)) if specific_chains else []
+                )  # If only 'address', options is empty
+                pending_blockchain_clarification.append(
+                    {
+                        "address": addr_str,
+                        "detected_on_options": options,
+                        # db_message_id is in FSM state.current_scan_db_message_id
+                    }
+                )
 
         # Send the consolidated information message about detections and previous memos
         if detected_address_info_blocks:
             await message.answer(
-                "<b>Address Detections & History:</b>\n\n" + "\n\n".join(detected_address_info_blocks),
+                "<b>Address Detections & History:</b>\n\n"
+                + "\n\n".join(detected_address_info_blocks),
                 parse_mode="HTML",
             )
 
         # Store lists in FSM state for the orchestrator
         await state.update_data(
             pending_blockchain_clarification=pending_blockchain_clarification,
-            addresses_for_memo_prompt_details=addresses_for_memo_prompt_details
+            addresses_for_memo_prompt_details=addresses_for_memo_prompt_details,
             # current_scan_db_message_id is already set
         )
-        db.close() # Close session before calling next async step that might use new sessions
+        db.close()  # Close session before calling next async step that might use new sessions
         await _orchestrate_next_processing_step(message, state)
 
     except ValueError as ve:
         logging.error("ValueError in address scanning: %s", ve)
         await message.reply("An error occurred while processing your message.")
     except Exception as e:
-        logging.exception("Unexpected error in _scan_message_for_addresses_action: %s", e)
+        logging.exception(
+            "Unexpected error in _scan_message_for_addresses_action: %s", e
+        )
         await message.reply("An unexpected error occurred.")
     finally:
         if db.is_active:
             db.close()
 
 
-async def _orchestrate_next_processing_step(message_to_reply_to: Message, state: FSMContext):
+async def _orchestrate_next_processing_step(
+    message_to_reply_to: Message, state: FSMContext
+):
     """
     Orchestrates the next step in processing:
     1. Ask for blockchain clarification if pending.
@@ -206,12 +249,18 @@ async def _orchestrate_next_processing_step(message_to_reply_to: Message, state:
     """
     data = await state.get_data()
     pending_blockchain_clarification = data.get("pending_blockchain_clarification", [])
-    addresses_for_memo_prompt_details = data.get("addresses_for_memo_prompt_details", []) # [{'address': str, 'blockchain': str}]
+    addresses_for_memo_prompt_details = data.get(
+        "addresses_for_memo_prompt_details", []
+    )  # [{'address': str, 'blockchain': str}]
     current_scan_db_message_id = data.get("current_scan_db_message_id")
 
     if not current_scan_db_message_id:
-        logging.error("Cannot orchestrate: current_scan_db_message_id not found in FSM state.")
-        await message_to_reply_to.answer("An internal error occurred (missing message context). Please try scanning again.")
+        logging.error(
+            "Cannot orchestrate: current_scan_db_message_id not found in FSM state."
+        )
+        await message_to_reply_to.answer(
+            "An internal error occurred (missing message context). Please try scanning again."
+        )
         await state.clear()
         return
 
@@ -223,30 +272,40 @@ async def _orchestrate_next_processing_step(message_to_reply_to: Message, state:
                 current_item_for_blockchain_clarification=item_to_clarify,
                 pending_blockchain_clarification=pending_blockchain_clarification,
             )
-            await _ask_for_blockchain_clarification(message_to_reply_to, item_to_clarify, state)
-        
+            await _ask_for_blockchain_clarification(
+                message_to_reply_to, item_to_clarify, state
+            )
+
         elif addresses_for_memo_prompt_details:
             # Convert details to items with IDs by saving them
             ready_for_memo_prompt_with_ids = []
             for detail in addresses_for_memo_prompt_details:
                 addr_str = detail["address"]
                 blockchain = detail["blockchain"]
-                
-                db_crypto_address = save_crypto_address(db, current_scan_db_message_id, addr_str, blockchain)
+
+                db_crypto_address = save_crypto_address(
+                    db, current_scan_db_message_id, addr_str, blockchain
+                )
                 if db_crypto_address:
-                    ready_for_memo_prompt_with_ids.append({
-                        "id": db_crypto_address.id,
-                        "address": addr_str,
-                        "blockchain": blockchain,
-                    })
+                    ready_for_memo_prompt_with_ids.append(
+                        {
+                            "id": db_crypto_address.id,
+                            "address": addr_str,
+                            "blockchain": blockchain,
+                        }
+                    )
                 else:
-                    logging.error(f"Failed to save address {addr_str} on {blockchain} during orchestration for memo prompt.")
-            
+                    logging.error(
+                        f"Failed to save address {addr_str} on {blockchain} during orchestration for memo prompt."
+                    )
+
             # Clear the list from FSM as we've processed them for saving
             await state.update_data(addresses_for_memo_prompt_details=[])
 
             if ready_for_memo_prompt_with_ids:
-                await _prompt_for_next_memo(message_to_reply_to, state, ready_for_memo_prompt_with_ids)
+                await _prompt_for_next_memo(
+                    message_to_reply_to, state, ready_for_memo_prompt_with_ids
+                )
             else:
                 # All failed to save or list was empty after filtering
                 logging.info("No addresses successfully saved to prompt for memo.")
@@ -257,9 +316,11 @@ async def _orchestrate_next_processing_step(message_to_reply_to: Message, state:
                     await message_to_reply_to.answer("Finished processing addresses.")
                     await state.clear()
                 # else, the next interaction will trigger orchestration again.
-        
+
         else:
-            logging.info("Orchestration complete: No pending clarifications or memo prompts.")
+            logging.info(
+                "Orchestration complete: No pending clarifications or memo prompts."
+            )
             await message_to_reply_to.answer("All detected addresses processed.")
             await state.clear()
     finally:
@@ -267,12 +328,14 @@ async def _orchestrate_next_processing_step(message_to_reply_to: Message, state:
             db.close()
 
 
-async def _ask_for_blockchain_clarification(message_to_reply_to: Message, item_to_clarify: dict, state: FSMContext):
+async def _ask_for_blockchain_clarification(
+    message_to_reply_to: Message, item_to_clarify: dict, state: FSMContext
+):
     """
     Asks the user to specify the blockchain for a given address using inline buttons.
     """
-    address = item_to_clarify['address']
-    detected_options = item_to_clarify['detected_on_options']  # list of strings
+    address = item_to_clarify["address"]
+    detected_options = item_to_clarify["detected_on_options"]  # list of strings
 
     keyboard_buttons = []
     if detected_options:
@@ -280,17 +343,30 @@ async def _ask_for_blockchain_clarification(message_to_reply_to: Message, item_t
             # Callback data format: "clarify_bc:chosen:<blockchain_name>"
             # The address itself is already in FSM state (current_item_for_blockchain_clarification)
             keyboard_buttons.append(
-                [InlineKeyboardButton(text=option.capitalize(), callback_data=f"clarify_bc:chosen:{option.lower()}")]
+                [
+                    InlineKeyboardButton(
+                        text=option.capitalize(),
+                        callback_data=f"clarify_bc:chosen:{option.lower()}",
+                    )
+                ]
             )
-    
+
     # Add "Other" and "Skip" buttons
     # Callback data format: "clarify_bc:other"
     keyboard_buttons.append(
-        [InlineKeyboardButton(text="Other (Type manually)", callback_data="clarify_bc:other")]
+        [
+            InlineKeyboardButton(
+                text="Other (Type manually)", callback_data="clarify_bc:other"
+            )
+        ]
     )
     # Callback data format: "clarify_bc:skip"
     keyboard_buttons.append(
-        [InlineKeyboardButton(text="Skip this address", callback_data="clarify_bc:skip")]
+        [
+            InlineKeyboardButton(
+                text="Skip this address", callback_data="clarify_bc:skip"
+            )
+        ]
     )
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
@@ -302,16 +378,16 @@ async def _ask_for_blockchain_clarification(message_to_reply_to: Message, item_t
     )
     if not detected_options:
         prompt_text += "\n(No specific chains were auto-detected, please choose 'Other' or 'Skip'.)"
-    
+
     await message_to_reply_to.answer(
-        prompt_text,
-        reply_markup=keyboard,
-        parse_mode="HTML"
+        prompt_text, reply_markup=keyboard, parse_mode="HTML"
     )
     await state.set_state(AddressProcessingStates.awaiting_blockchain)
 
 
-async def handle_blockchain_clarification_callback(callback_query: types.CallbackQuery, state: FSMContext):
+async def handle_blockchain_clarification_callback(
+    callback_query: types.CallbackQuery, state: FSMContext
+):
     """
     Handles callback queries for blockchain clarification.
     """
@@ -319,7 +395,9 @@ async def handle_blockchain_clarification_callback(callback_query: types.Callbac
 
     data = await state.get_data()
     item_being_clarified = data.get("current_item_for_blockchain_clarification")
-    addresses_for_memo_prompt_details = data.get("addresses_for_memo_prompt_details", [])
+    addresses_for_memo_prompt_details = data.get(
+        "addresses_for_memo_prompt_details", []
+    )
 
     if not item_being_clarified:
         await callback_query.message.answer(
@@ -335,18 +413,20 @@ async def handle_blockchain_clarification_callback(callback_query: types.Callbac
 
     if params[0] == "chosen":
         chosen_blockchain = params[1]
-        addresses_for_memo_prompt_details.append({
-            "address": item_being_clarified["address"],
-            "blockchain": chosen_blockchain
-        })
+        addresses_for_memo_prompt_details.append(
+            {
+                "address": item_being_clarified["address"],
+                "blockchain": chosen_blockchain,
+            }
+        )
         await state.update_data(
             addresses_for_memo_prompt_details=addresses_for_memo_prompt_details,
-            current_item_for_blockchain_clarification=None  # Clear the item
+            current_item_for_blockchain_clarification=None,  # Clear the item
         )
         await callback_query.message.edit_text(
             f"Noted: Address <code>{html.quote(item_being_clarified['address'])}</code> will be associated with <b>{html.quote(chosen_blockchain.capitalize())}</b>.",
             parse_mode="HTML",
-            reply_markup=None # Remove the inline keyboard
+            reply_markup=None,  # Remove the inline keyboard
         )
         await _orchestrate_next_processing_step(callback_query.message, state)
 
@@ -355,7 +435,7 @@ async def handle_blockchain_clarification_callback(callback_query: types.Callbac
             f"For address: <code>{html.quote(item_being_clarified['address'])}</code>\n"
             "Please type the name of the blockchain network.",
             parse_mode="HTML",
-            reply_markup=None
+            reply_markup=None,
         )
 
     elif params[0] == "skip":
@@ -365,13 +445,17 @@ async def handle_blockchain_clarification_callback(callback_query: types.Callbac
         await callback_query.message.edit_text(
             f"Skipped blockchain clarification for address: <code>{html.quote(item_being_clarified['address'])}</code>.",
             parse_mode="HTML",
-            reply_markup=None
+            reply_markup=None,
         )
         await _orchestrate_next_processing_step(callback_query.message, state)
 
     else:
-        logging.warning(f"Unknown callback data received for blockchain clarification: {callback_query.data}")
-        await callback_query.message.answer("An unexpected error occurred with your selection.")
+        logging.warning(
+            f"Unknown callback data received for blockchain clarification: {callback_query.data}"
+        )
+        await callback_query.message.answer(
+            "An unexpected error occurred with your selection."
+        )
 
 
 async def _handle_blockchain_reply(message: Message, state: FSMContext):
@@ -380,30 +464,38 @@ async def _handle_blockchain_reply(message: Message, state: FSMContext):
     """
     data = await state.get_data()
     item_being_clarified = data.get("current_item_for_blockchain_clarification")
-    addresses_for_memo_prompt_details = data.get("addresses_for_memo_prompt_details", [])
+    addresses_for_memo_prompt_details = data.get(
+        "addresses_for_memo_prompt_details", []
+    )
 
     if not item_being_clarified:
-        await message.reply("Error: Could not determine which address this blockchain choice is for. Please try scanning again.")
+        await message.reply(
+            "Error: Could not determine which address this blockchain choice is for. Please try scanning again."
+        )
         await state.clear()
         return
 
     chosen_blockchain = (message.text or "").strip().lower()
     if not chosen_blockchain:
-        await message.reply("Blockchain name cannot be empty. Please try again, or use /skip_address_processing to cancel this address.")
+        await message.reply(
+            "Blockchain name cannot be empty. Please try again, or use /skip_address_processing to cancel this address."
+        )
         return
 
-    addresses_for_memo_prompt_details.append({
-        "address": item_being_clarified["address"],
-        "blockchain": chosen_blockchain
-    })
-    
+    addresses_for_memo_prompt_details.append(
+        {"address": item_being_clarified["address"], "blockchain": chosen_blockchain}
+    )
+
     await state.update_data(
         addresses_for_memo_prompt_details=addresses_for_memo_prompt_details,
-        current_item_for_blockchain_clarification=None
+        current_item_for_blockchain_clarification=None,
     )
-    
-    await message.reply(f"Noted: Address <code>{html.quote(item_being_clarified['address'])}</code> will be associated with <b>{html.quote(chosen_blockchain.capitalize())}</b>.", parse_mode="HTML")
-    
+
+    await message.reply(
+        f"Noted: Address <code>{html.quote(item_being_clarified['address'])}</code> will be associated with <b>{html.quote(chosen_blockchain.capitalize())}</b>.",
+        parse_mode="HTML",
+    )
+
     await _orchestrate_next_processing_step(message, state)
 
 
@@ -593,7 +685,9 @@ async def checkmemo_handler(message: types.Message):
     Fetches records for the specified address across all its associated blockchains
     where a memo (notes) is present.
     """
-    logging.info(f"checkmemo_handler received command from user. Text: '{message.text}'")
+    logging.info(
+        f"checkmemo_handler received command from user. Text: '{message.text}'"
+    )
     if not message.text:
         await message.reply(
             "Usage: /checkmemo <code>crypto_address</code>", parse_mode="HTML"
@@ -630,7 +724,7 @@ async def checkmemo_handler(message: types.Message):
         if not results:
             await message.reply(
                 f"No memos found for address: <code>{html.quote(address_arg)}</code>",
-                parse_mode="HTML"
+                parse_mode="HTML",
             )
             return
 

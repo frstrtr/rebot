@@ -87,6 +87,29 @@ class CryptoAddressFinder:
                         checksum_address += c
                 return checksum_address == address_to_validate
             return False
+        elif blockchain_name == "solana":
+            try:
+                decoded = base58.b58decode(address_to_validate)
+                # A Solana public key is 32 bytes long.
+                return len(decoded) == 32
+            except ValueError:
+                # This will catch errors if the address contains invalid Base58 characters
+                # or if the address is otherwise malformed for b58decode.
+                return False
+        elif blockchain_name == "tron":  # ADDED BLOCK FOR TRON
+            if not address_to_validate.startswith("T"):  # Basic structural check
+                return False
+            try:
+                # Tron addresses are Base58Check encoded.
+                # b58decode_check verifies the checksum and returns the payload.
+                # The payload for a mainnet Tron address is 21 bytes:
+                # 1 byte for address type (0x41 for 'T') + 20 bytes for the hash.
+                decoded_payload = base58.b58decode_check(address_to_validate)
+                # Check if the decoded payload is 21 bytes and the first byte matches the Tron prefix.
+                return len(decoded_payload) == 21 and decoded_payload[0] == 0x41
+            except ValueError:
+                # ValueError is raised for invalid Base58 characters or checksum failure.
+                return False
         elif blockchain_name == "ripple":
             try:
                 decoded = base58.b58decode_check(address_to_validate)

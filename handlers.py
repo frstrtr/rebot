@@ -121,8 +121,7 @@ async def _scan_message_for_addresses_action(message: Message, state: FSMContext
         addresses_for_memo_prompt_details = (
             []
         )  # Will store {'address': str, 'blockchain': str}
-        # to be processed by _prompt_for_next_memo later.
-        # save_crypto_address will happen inside _prompt_for_next_memo's setup.
+        unambiguous_tron_addresses_for_url_button = []  # NEW: For Tronscan URL buttons
 
         # This list will hold strings for the initial info message
         detected_address_info_blocks = []
@@ -193,6 +192,8 @@ async def _scan_message_for_addresses_action(message: Message, state: FSMContext
                         # db_message_id is already in FSM state.current_scan_db_message_id
                     }
                 )
+                if chosen_blockchain.lower() == "tron":  # NEW: Check if it's Tron
+                    unambiguous_tron_addresses_for_url_button.append(addr_str)
             else:
                 # Multiple specific chains, or only generic 'address', or ambiguous. Needs user clarification.
                 # detected_on_options will be used to generate inline keyboard buttons
@@ -214,6 +215,31 @@ async def _scan_message_for_addresses_action(message: Message, state: FSMContext
                 + "\n\n".join(detected_address_info_blocks),
                 parse_mode="HTML",
             )
+
+        # NEW: Send TronScan URL buttons if any unambiguous Tron addresses were found
+        if unambiguous_tron_addresses_for_url_button:
+            tron_url_buttons = []
+            for tron_addr in unambiguous_tron_addresses_for_url_button:
+                # Shorten address for button text if too long
+                button_text_addr = tron_addr
+                if len(tron_addr) > 20:  # Example length check for button text
+                    button_text_addr = f"{tron_addr[:6]}...{tron_addr[-4:]}"
+
+                tron_url_buttons.append(
+                    [
+                        InlineKeyboardButton(
+                            text=f"View {button_text_addr} on TronScan",
+                            url=f"https://tronscan.org/#/address/{tron_addr}",
+                        )
+                    ]
+                )
+
+            if tron_url_buttons:
+                keyboard = InlineKeyboardMarkup(inline_keyboard=tron_url_buttons)
+                await message.answer(
+                    "Direct links for detected Tron addresses:",
+                    reply_markup=keyboard,
+                )
 
         # Store lists in FSM state for the orchestrator
         await state.update_data(
@@ -684,6 +710,7 @@ async def checkmemo_handler(message: types.Message):
     Handles the /checkmemo command to retrieve memos for a given crypto address.
     Fetches records for the specified address across all its associated blockchains
     where a memo (notes) is present.
+    Adds a "View on TronScan" button if the address is a valid Tron address.
     """
     logging.info(
         f"checkmemo_handler received command from user. Text: '{message.text}'"
@@ -709,7 +736,24 @@ async def checkmemo_handler(message: types.Message):
         return
 
     db = SessionLocal()
+    reply_markup = None  # Initialize reply_markup
+
     try:
+        # Check if the address is a valid Tron address to potentially add a TronScan button
+        # We use the global crypto_finder instance
+        is_tron_address = crypto_finder.validate_checksum("tron", address_arg)
+
+        if is_tron_address:
+            button_text_addr = address_arg
+            if len(address_arg) > 20:  # Shorten for button text
+                button_text_addr = f"{address_arg[:6]}...{address_arg[-4:]}"
+            
+            tron_button = InlineKeyboardButton(
+                text=f"View {button_text_addr} on TronScan",
+                url=f"https://tronscan.org/#/address/{address_arg}"
+            )
+            reply_markup = InlineKeyboardMarkup(inline_keyboard=[[tron_button]])
+
         results = (
             db.query(CryptoAddress)
             .filter(
@@ -725,6 +769,7 @@ async def checkmemo_handler(message: types.Message):
             await message.reply(
                 f"No memos found for address: <code>{html.quote(address_arg)}</code>",
                 parse_mode="HTML",
+                reply_markup=reply_markup,  # Send button even if no memos, if it's a Tron address
             )
             return
 
@@ -749,16 +794,17 @@ async def checkmemo_handler(message: types.Message):
         full_response_text = response_header + response_body
 
         if len(full_response_text) > 4096:
+            # For very long messages, send the header and button first, then the note about truncation.
+            await message.reply(response_header, parse_mode="HTML", reply_markup=reply_markup)
             await message.reply(
-                response_header
-                + "The list of memos is too long to display in a single message. Please check logs or refine your search if possible.",
+                "The list of memos is too long to display in a single message. Please check logs or refine your search if possible.",
                 parse_mode="HTML",
             )
             logging.info(
                 f"Full memo list for {address_arg} was too long for Telegram. Full text: {full_response_text}"
             )
         else:
-            await message.reply(full_response_text, parse_mode="HTML")
+            await message.reply(full_response_text, parse_mode="HTML", reply_markup=reply_markup)
 
     except Exception as e:
         logging.exception(
@@ -768,4 +814,5 @@ async def checkmemo_handler(message: types.Message):
             "An error occurred while retrieving memos. Please check the bot logs."
         )
     finally:
-        db.close()
+        if db.is_active:  # Ensure db session is closed
+            db.close()

@@ -1,5 +1,6 @@
 import re
 import logging
+import base64  # Added import
 
 # import hashlib
 import base58
@@ -7,6 +8,24 @@ import bech32
 
 from utils import segwit_addr
 from Crypto.Hash import keccak  # Add this import at the top
+
+
+# Helper function for CRC16-CCITT (XModem variant)
+def crc16_ccitt_xmodem(data: bytes) -> int:
+    """
+    Calculates CRC16-CCITT (XModem) checksum.
+    Polynomial: 0x1021, Initial value: 0x0000.
+    """
+    crc = 0x0000
+    poly = 0x1021
+    for byte_val in data:
+        crc ^= (byte_val << 8)
+        for _ in range(8):
+            if crc & 0x8000:
+                crc = (crc << 1) ^ poly
+            else:
+                crc <<= 1
+    return crc & 0xFFFF
 
 
 class CryptoAddressFinder:
@@ -29,10 +48,10 @@ class CryptoAddressFinder:
             ),
             "ethereum": r"\b0x[a-fA-F0-9]{40}\b",  # Ethereum-compatible (Ethereum, BSC, Polygon, Avalanche, BASE)
             "solana": r"\b[A-HJ-NP-Za-km-z1-9]{32,44}\b",
-            "tron": r"\bT[a-zA-Z0-9]{33}\b",
+            "tron": r"\bT[1-9A-HJ-NP-Za-km-z]{33}\b",  # MODIFIED: Stricter Base58 character set
             "ripple": r"\br[a-zA-Z0-9]{24,34}\b",
             "stellar": r"\bG[A-Z2-7]{55}\b",
-            "ton": r"\b(EQ|Ef|kQ)[A-Za-z0-9_-]{46}\b",
+            "ton": r"\b(?:EQ|UQ|Ef|Uf|kQ|kf)[A-Za-z0-9_-]{46}\b",  # MODIFIED: Made prefix group non-capturing
             "tezos": r"\btz[1-3][a-zA-Z0-9]{33}\b",
             "cosmos": r"\bcosmos1[a-zA-Z0-9]{38,}\b",
             "polkadot": r"\b1[a-zA-Z0-9]{47}\b",
@@ -109,6 +128,42 @@ class CryptoAddressFinder:
                 return len(decoded_payload) == 21 and decoded_payload[0] == 0x41
             except ValueError:
                 # ValueError is raised for invalid Base58 characters or checksum failure.
+                return False
+        elif blockchain_name == "ton":
+            # TON addresses are Base64URL encoded, 48 characters long,
+            # and contain an internal CRC16 checksum.
+            # The regex r"\b(EQ|UQ|Ef|Uf|kQ|kf)[A-Za-z0-9_-]{46}\b" already ensures length and prefix.
+            if len(address_to_validate) != 48:  # Should be guaranteed by regex
+                return False
+            try:
+                # Base64URL decoding requires padding to be a multiple of 4.
+                # TON addresses are typically unpadded.
+                padded_address = address_to_validate + "=" * (-len(address_to_validate) % 4)
+                decoded_bytes = base64.urlsafe_b64decode(padded_address)
+
+                # Decoded TON address should be 36 bytes:
+                # 1 byte tag + 1 byte workchain_id + 32 bytes hash + 2 bytes CRC16
+                if len(decoded_bytes) != 36:
+                    logging.warning(
+                        f"TON address {address_to_validate} decoded to unexpected length: {len(decoded_bytes)} bytes (expected 36)"
+                    )
+                    return False
+
+                data_to_checksum = decoded_bytes[:34]  # Tag, workchain_id, hash
+                expected_checksum_bytes = decoded_bytes[34:]  # Last 2 bytes are CRC
+                expected_checksum = int.from_bytes(expected_checksum_bytes, "big")
+
+                calculated_checksum = crc16_ccitt_xmodem(data_to_checksum)
+
+                if calculated_checksum == expected_checksum:
+                    return True
+                else:
+                    logging.warning(
+                        f"TON address {address_to_validate} CRC16 mismatch. Expected: {expected_checksum:04X}, Calculated: {calculated_checksum:04X}"
+                    )
+                    return False
+            except Exception as e:
+                logging.error(f"Error validating TON address {address_to_validate}: {e}")
                 return False
         elif blockchain_name == "ripple":
             try:

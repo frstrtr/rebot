@@ -1,0 +1,4 @@
+Add new 'address to check' notifier group or message
+Add TON blockchain support
+Separate memos between users
+Add known scam description and links

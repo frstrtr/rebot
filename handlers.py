@@ -7,10 +7,10 @@ from aiogram.types import (
     Update,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
-)  # Ensure Update and InlineKeyboardMarkup, InlineKeyboardButton are imported
+)
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.filters import Command  # For /skip command
+from aiogram.filters import Command
 from sqlalchemy import func
 
 from synapsifier.crypto_address import CryptoAddressFinder
@@ -24,16 +24,54 @@ from database import (
 
 crypto_finder = CryptoAddressFinder()
 
+EXPLORER_CONFIG = {
+    "tron": {
+        "name": "TronScan",
+        "url_template": "https://tronscan.org/#/address/{address}",
+    },
+    "ton": {"name": "TONScan", "url_template": "https://tonscan.org/address/{address}"},
+    "bitcoin": {
+        "name": "Blockchair (Bitcoin)",  # Updated
+        "url_template": "https://blockchair.com/bitcoin/address/{address}",  # Updated
+    },
+    "ethereum": {
+        "name": "Etherscan",
+        "url_template": "https://etherscan.io/address/{address}",
+    },
+    "solana": {
+        "name": "Solscan",
+        "url_template": "https://solscan.io/account/{address}",
+    },
+    "ripple": {
+        "name": "XRPSscan",
+        "url_template": "https://xrpscan.com/account/{address}",
+    },
+    "stellar": {
+        "name": "Stellar.Expert",
+        "url_template": "https://stellar.expert/explorer/public/account/{address}",
+    },
+    "cosmos": {
+        "name": "Mintscan",
+        "url_template": "https://www.mintscan.io/cosmos/account/{address}",
+    },
+    "polkadot": {
+        "name": "Subscan",
+        "url_template": "https://polkadot.subscan.io/account/{address}",
+    },
+    "algorand": {
+        "name": "AlgoExplorer",
+        "url_template": "https://algoexplorer.io/address/{address}",
+    },
+}
+
 
 # Define FSM States for memo processing
 class AddressProcessingStates(StatesGroup):
-    awaiting_blockchain = State()  # New state for blockchain clarification
+    awaiting_blockchain = State()
     awaiting_memo = State()
 
 
-async def command_start_handler(
-    message: Message, state: FSMContext
-) -> None:  # MODIFIED: Added state: FSMContext
+async def command_start_handler(message: Message, state: FSMContext) -> None:
     """
     This handler receives messages with `/start` command
     """
@@ -45,10 +83,9 @@ async def command_start_handler(
         "You can also use /checkmemo to check existing memos for a crypto address.\n"
         "If you want to skip the memo process, just reply with /skip.\n"
     )
-    await state.clear()  # MODIFIED: Clear state to ensure fresh start for next message
+    await state.clear()
 
 
-# Main handler for messages, routes based on FSM state
 async def handle_message_with_potential_crypto_address(
     message: Message, state: FSMContext
 ):
@@ -65,17 +102,13 @@ async def handle_message_with_potential_crypto_address(
     if current_fsm_state == AddressProcessingStates.awaiting_memo:
         if message.text and message.text.lower() == "/skip":
             await _skip_memo_action(message, state)
-        elif message.text:  # Assuming memo is text
+        elif message.text:
             await _process_memo_action(message, state)
         else:
-            # Non-text message while awaiting memo
             await message.reply("Please provide a text memo or send /skip.")
-            # Stay in the awaiting_memo state
     elif current_fsm_state == AddressProcessingStates.awaiting_blockchain:
-        # User is replying with a blockchain choice (text-based for now)
         await _handle_blockchain_reply(message, state)
     else:
-        # Not in a memo state, so scan the message for addresses
         await _scan_message_for_addresses_action(message, state)
 
 
@@ -113,21 +146,15 @@ async def _scan_message_for_addresses_action(message: Message, state: FSMContext
             )
             return
 
-        # Store db_message.id in FSM for later use by blockchain/memo handlers
         await state.update_data(current_scan_db_message_id=db_message.id)
 
-        # Lists to hold addresses based on processing needs
         pending_blockchain_clarification = []
-        addresses_for_memo_prompt_details = (
-            []
-        )  # Will store {'address': str, 'blockchain': str}
-        unambiguous_tron_addresses_for_url_button = []  # NEW: For Tronscan URL buttons
+        addresses_for_memo_prompt_details = []
+        addresses_for_explorer_buttons = []
 
-        # This list will hold strings for the initial info message
         detected_address_info_blocks = []
 
-        # Aggregate detections by unique address string
-        aggregated_detections = {}  # addr_str -> {'chains': set()}
+        aggregated_detections = {}
         for bc, addr_list in detected_raw_addresses_map.items():
             for addr in addr_list:
                 if addr not in aggregated_detections:
@@ -138,7 +165,6 @@ async def _scan_message_for_addresses_action(message: Message, state: FSMContext
             detected_chains_set = data["chains"]
             current_address_block_parts = []
 
-            # Display detection and previous memos
             potential_chains_display = ", ".join(
                 sorted(list(chain.capitalize() for chain in detected_chains_set))
             )
@@ -177,38 +203,31 @@ async def _scan_message_for_addresses_action(message: Message, state: FSMContext
 
             detected_address_info_blocks.append("\n".join(current_address_block_parts))
 
-            # Decide if clarification is needed
             specific_chains = {
                 chain for chain in detected_chains_set if chain != "address"
             }
 
             if len(specific_chains) == 1:
-                # Exactly one specific blockchain identified by the finder
                 chosen_blockchain = list(specific_chains)[0]
                 addresses_for_memo_prompt_details.append(
                     {
                         "address": addr_str,
                         "blockchain": chosen_blockchain,
-                        # db_message_id is already in FSM state.current_scan_db_message_id
                     }
                 )
-                if chosen_blockchain.lower() == "tron":  # NEW: Check if it's Tron
-                    unambiguous_tron_addresses_for_url_button.append(addr_str)
+                if chosen_blockchain in EXPLORER_CONFIG:
+                    addresses_for_explorer_buttons.append(
+                        {"address": addr_str, "blockchain": chosen_blockchain}
+                    )
             else:
-                # Multiple specific chains, or only generic 'address', or ambiguous. Needs user clarification.
-                # detected_on_options will be used to generate inline keyboard buttons
-                options = (
-                    sorted(list(specific_chains)) if specific_chains else []
-                )  # If only 'address', options is empty
+                options = sorted(list(specific_chains)) if specific_chains else []
                 pending_blockchain_clarification.append(
                     {
                         "address": addr_str,
                         "detected_on_options": options,
-                        # db_message_id is in FSM state.current_scan_db_message_id
                     }
                 )
 
-        # Send the consolidated information message about detections and previous memos
         if detected_address_info_blocks:
             await message.answer(
                 "<b>Address Detections & History:</b>\n\n"
@@ -216,38 +235,44 @@ async def _scan_message_for_addresses_action(message: Message, state: FSMContext
                 parse_mode="HTML",
             )
 
-        # NEW: Send TronScan URL buttons if any unambiguous Tron addresses were found
-        if unambiguous_tron_addresses_for_url_button:
-            tron_url_buttons = []
-            for tron_addr in unambiguous_tron_addresses_for_url_button:
-                # Shorten address for button text if too long
-                button_text_addr = tron_addr
-                if len(tron_addr) > 20:  # Example length check for button text
-                    button_text_addr = f"{tron_addr[:6]}...{tron_addr[-4:]}"
+        if addresses_for_explorer_buttons:
+            explorer_url_buttons_list = []
+            for item in addresses_for_explorer_buttons:
+                addr = item["address"]
+                blockchain_key = item["blockchain"]
 
-                tron_url_buttons.append(
-                    [
-                        InlineKeyboardButton(
-                            text=f"View {button_text_addr} on TronScan",
-                            url=f"https://tronscan.org/#/address/{tron_addr}",
-                        )
-                    ]
+                if blockchain_key in EXPLORER_CONFIG:
+                    config = EXPLORER_CONFIG[blockchain_key]
+                    explorer_name = config["name"]
+                    url = config["url_template"].format(address=addr)
+
+                    button_text_addr = addr
+                    if len(addr) > 20:
+                        button_text_addr = f"{addr[:6]}...{addr[-4:]}"
+
+                    explorer_url_buttons_list.append(
+                        [
+                            InlineKeyboardButton(
+                                text=f"View {button_text_addr} on {explorer_name}",
+                                url=url,
+                            )
+                        ]
+                    )
+
+            if explorer_url_buttons_list:
+                keyboard = InlineKeyboardMarkup(
+                    inline_keyboard=explorer_url_buttons_list
                 )
-
-            if tron_url_buttons:
-                keyboard = InlineKeyboardMarkup(inline_keyboard=tron_url_buttons)
                 await message.answer(
-                    "Direct links for detected Tron addresses:",
+                    "Direct links to blockchain explorers:",
                     reply_markup=keyboard,
                 )
 
-        # Store lists in FSM state for the orchestrator
         await state.update_data(
             pending_blockchain_clarification=pending_blockchain_clarification,
             addresses_for_memo_prompt_details=addresses_for_memo_prompt_details,
-            # current_scan_db_message_id is already set
         )
-        db.close()  # Close session before calling next async step that might use new sessions
+        db.close()
         await _orchestrate_next_processing_step(message, state)
 
     except ValueError as ve:
@@ -277,7 +302,7 @@ async def _orchestrate_next_processing_step(
     pending_blockchain_clarification = data.get("pending_blockchain_clarification", [])
     addresses_for_memo_prompt_details = data.get(
         "addresses_for_memo_prompt_details", []
-    )  # [{'address': str, 'blockchain': str}]
+    )
     current_scan_db_message_id = data.get("current_scan_db_message_id")
 
     if not current_scan_db_message_id:
@@ -303,7 +328,6 @@ async def _orchestrate_next_processing_step(
             )
 
         elif addresses_for_memo_prompt_details:
-            # Convert details to items with IDs by saving them
             ready_for_memo_prompt_with_ids = []
             for detail in addresses_for_memo_prompt_details:
                 addr_str = detail["address"]
@@ -325,7 +349,6 @@ async def _orchestrate_next_processing_step(
                         f"Failed to save address {addr_str} on {blockchain} during orchestration for memo prompt."
                     )
 
-            # Clear the list from FSM as we've processed them for saving
             await state.update_data(addresses_for_memo_prompt_details=[])
 
             if ready_for_memo_prompt_with_ids:
@@ -333,15 +356,11 @@ async def _orchestrate_next_processing_step(
                     message_to_reply_to, state, ready_for_memo_prompt_with_ids
                 )
             else:
-                # All failed to save or list was empty after filtering
                 logging.info("No addresses successfully saved to prompt for memo.")
-                # Check if there are any more blockchain clarifications pending (should have been handled above)
-                # If truly nothing left, then finish.
                 remaining_clarifications = await state.get_data()
                 if not remaining_clarifications.get("pending_blockchain_clarification"):
                     await message_to_reply_to.answer("Finished processing addresses.")
                     await state.clear()
-                # else, the next interaction will trigger orchestration again.
 
         else:
             logging.info(
@@ -361,13 +380,11 @@ async def _ask_for_blockchain_clarification(
     Asks the user to specify the blockchain for a given address using inline buttons.
     """
     address = item_to_clarify["address"]
-    detected_options = item_to_clarify["detected_on_options"]  # list of strings
+    detected_options = item_to_clarify["detected_on_options"]
 
     keyboard_buttons = []
     if detected_options:
         for option in detected_options:
-            # Callback data format: "clarify_bc:chosen:<blockchain_name>"
-            # The address itself is already in FSM state (current_item_for_blockchain_clarification)
             keyboard_buttons.append(
                 [
                     InlineKeyboardButton(
@@ -377,8 +394,6 @@ async def _ask_for_blockchain_clarification(
                 ]
             )
 
-    # Add "Other" and "Skip" buttons
-    # Callback data format: "clarify_bc:other"
     keyboard_buttons.append(
         [
             InlineKeyboardButton(
@@ -386,7 +401,6 @@ async def _ask_for_blockchain_clarification(
             )
         ]
     )
-    # Callback data format: "clarify_bc:skip"
     keyboard_buttons.append(
         [
             InlineKeyboardButton(
@@ -417,7 +431,7 @@ async def handle_blockchain_clarification_callback(
     """
     Handles callback queries for blockchain clarification.
     """
-    await callback_query.answer()  # Acknowledge the callback query immediately
+    await callback_query.answer()
 
     data = await state.get_data()
     item_being_clarified = data.get("current_item_for_blockchain_clarification")
@@ -433,10 +447,6 @@ async def handle_blockchain_clarification_callback(
         return
 
     action, *params = callback_query.data.split(":")
-    # action will be "clarify_bc"
-    # params[0] will be "chosen", "other", or "skip"
-    # params[1] (if "chosen") will be the blockchain_name
-
     if params[0] == "chosen":
         chosen_blockchain = params[1]
         addresses_for_memo_prompt_details.append(
@@ -447,12 +457,12 @@ async def handle_blockchain_clarification_callback(
         )
         await state.update_data(
             addresses_for_memo_prompt_details=addresses_for_memo_prompt_details,
-            current_item_for_blockchain_clarification=None,  # Clear the item
+            current_item_for_blockchain_clarification=None,
         )
         await callback_query.message.edit_text(
             f"Noted: Address <code>{html.quote(item_being_clarified['address'])}</code> will be associated with <b>{html.quote(chosen_blockchain.capitalize())}</b>.",
             parse_mode="HTML",
-            reply_markup=None,  # Remove the inline keyboard
+            reply_markup=None,
         )
         await _orchestrate_next_processing_step(callback_query.message, state)
 
@@ -465,9 +475,7 @@ async def handle_blockchain_clarification_callback(
         )
 
     elif params[0] == "skip":
-        await state.update_data(
-            current_item_for_blockchain_clarification=None  # Clear the item
-        )
+        await state.update_data(current_item_for_blockchain_clarification=None)
         await callback_query.message.edit_text(
             f"Skipped blockchain clarification for address: <code>{html.quote(item_being_clarified['address'])}</code>.",
             parse_mode="HTML",
@@ -710,7 +718,7 @@ async def checkmemo_handler(message: types.Message):
     Handles the /checkmemo command to retrieve memos for a given crypto address.
     Fetches records for the specified address across all its associated blockchains
     where a memo (notes) is present.
-    Adds a "View on TronScan" button if the address is a valid Tron address.
+    Adds a "View on Explorer" button if the address is valid for a configured blockchain.
     """
     logging.info(
         f"checkmemo_handler received command from user. Text: '{message.text}'"
@@ -736,23 +744,25 @@ async def checkmemo_handler(message: types.Message):
         return
 
     db = SessionLocal()
-    reply_markup = None  # Initialize reply_markup
+    reply_markup = None
 
     try:
-        # Check if the address is a valid Tron address to potentially add a TronScan button
-        # We use the global crypto_finder instance
-        is_tron_address = crypto_finder.validate_checksum("tron", address_arg)
+        # Iterate through EXPLORER_CONFIG to find a suitable explorer for the address
+        for blockchain_key, config in EXPLORER_CONFIG.items():
+            if crypto_finder.validate_checksum(blockchain_key, address_arg):
+                explorer_name = config["name"]
+                url = config["url_template"].format(address=address_arg)
 
-        if is_tron_address:
-            button_text_addr = address_arg
-            if len(address_arg) > 20:  # Shorten for button text
-                button_text_addr = f"{address_arg[:6]}...{address_arg[-4:]}"
-            
-            tron_button = InlineKeyboardButton(
-                text=f"View {button_text_addr} on TronScan",
-                url=f"https://tronscan.org/#/address/{address_arg}"
-            )
-            reply_markup = InlineKeyboardMarkup(inline_keyboard=[[tron_button]])
+                button_text_addr = address_arg
+                if len(address_arg) > 20:  # Shorten address for button text
+                    button_text_addr = f"{address_arg[:6]}...{address_arg[-4:]}"
+
+                explorer_button = InlineKeyboardButton(
+                    text=f"View {button_text_addr} on {explorer_name}",
+                    url=url,
+                )
+                reply_markup = InlineKeyboardMarkup(inline_keyboard=[[explorer_button]])
+                break  # Found a valid explorer, no need to check further
 
         results = (
             db.query(CryptoAddress)
@@ -769,7 +779,7 @@ async def checkmemo_handler(message: types.Message):
             await message.reply(
                 f"No memos found for address: <code>{html.quote(address_arg)}</code>",
                 parse_mode="HTML",
-                reply_markup=reply_markup,  # Send button even if no memos, if it's a Tron address
+                reply_markup=reply_markup,  # Send button even if no memos
             )
             return
 
@@ -794,8 +804,9 @@ async def checkmemo_handler(message: types.Message):
         full_response_text = response_header + response_body
 
         if len(full_response_text) > 4096:
-            # For very long messages, send the header and button first, then the note about truncation.
-            await message.reply(response_header, parse_mode="HTML", reply_markup=reply_markup)
+            await message.reply(
+                response_header, parse_mode="HTML", reply_markup=reply_markup
+            )
             await message.reply(
                 "The list of memos is too long to display in a single message. Please check logs or refine your search if possible.",
                 parse_mode="HTML",
@@ -804,7 +815,9 @@ async def checkmemo_handler(message: types.Message):
                 f"Full memo list for {address_arg} was too long for Telegram. Full text: {full_response_text}"
             )
         else:
-            await message.reply(full_response_text, parse_mode="HTML", reply_markup=reply_markup)
+            await message.reply(
+                full_response_text, parse_mode="HTML", reply_markup=reply_markup
+            )
 
     except Exception as e:
         logging.exception(
@@ -814,5 +827,5 @@ async def checkmemo_handler(message: types.Message):
             "An error occurred while retrieving memos. Please check the bot logs."
         )
     finally:
-        if db.is_active:  # Ensure db session is closed
+        if db.is_active:
             db.close()

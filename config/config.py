@@ -1,10 +1,14 @@
 # config.py
 
 from aiogram.enums import ParseMode
+import os
+import logging  # Add this import
 
 class Config:
     PARSE_MODE = ParseMode.HTML
     MAX_TELEGRAM_MESSAGE_LENGTH = 4000  # Telegram's limit is 4096, using a buffer
+    LOG_FOLDER = "logs"  # Define the log folder name
+    LOG_LEVEL = logging.INFO  # Define the global log level
     EXPLORER_CONFIG = {
         "tron": {
             "name": "TronScan",
@@ -44,3 +48,10 @@ class Config:
             "url_template": "https://algoexplorer.io/address/{address}",
         },
     }
+
+    @staticmethod
+    def get_log_file_path(filename="bot.log"):
+        # Ensure the log folder exists
+        if not os.path.exists(Config.LOG_FOLDER):
+            os.makedirs(Config.LOG_FOLDER)
+        return os.path.join(Config.LOG_FOLDER, filename)

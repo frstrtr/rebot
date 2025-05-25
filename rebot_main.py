@@ -7,25 +7,27 @@ AIogram bot main module
 import asyncio
 import logging
 import sys
-import contextvars  # ADDED
+import contextvars
+import os  # Add this import
+from logging.handlers import TimedRotatingFileHandler  # Add this import
 
-from aiogram import Bot, Dispatcher, BaseMiddleware, F  # MODIFIED: Added F here
+from aiogram import Bot, Dispatcher, BaseMiddleware, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import CommandStart, StateFilter
-from aiogram.types import Update  # ADDED
+from aiogram.types import Update
 
 from config.credentials import Credentials
 from config.config import Config
-from database import create_tables  # Import database functionality
+from database import create_tables
 from handlers import (
     command_start_handler,
-    handle_message_with_potential_crypto_address,  # MODIFIED: Import the new handler name
+    handle_message_with_potential_crypto_address,
     handle_story,
     member_status_update_handler,
     unhandled_updates_handler,
-    checkmemo_handler,  # <-- Add this
-    handle_blockchain_clarification_callback,  # Add this
-    AddressProcessingStates,  # Ensure this is imported if not already
+    checkmemo_handler,
+    handle_blockchain_clarification_callback,
+    AddressProcessingStates,
 )
 
 # 1. Define Context Variable for user_id
@@ -37,7 +39,7 @@ class UserIdContextFilter(logging.Filter):
     def filter(self, record):
         record.user_id = (
             user_id_context.get()
-        )  # Directly set from context, which has a default "N/A"
+        )
         return True
 
 
@@ -81,7 +83,7 @@ class UserIdLoggingMiddleware(BaseMiddleware):
         elif event.chat_join_request and event.chat_join_request.from_user:
             user_id_to_log = event.chat_join_request.from_user.id
 
-        token = user_id_context.set(str(user_id_to_log))  # Ensure it's a string
+        token = user_id_context.set(str(user_id_to_log))
         try:
             return await handler(event, data)
         finally:
@@ -95,13 +97,12 @@ class Rebot:
         self.credentials = Credentials()
         self.parse_mode = Config.PARSE_MODE
         self.rebot_dp = Dispatcher()
-        # Register middleware for all updates
         self.rebot_dp.update.outer_middleware(
             UserIdLoggingMiddleware()
-        )  # ADDED MIDDLEWARE REGISTRATION
+        )
         self.bot = self.create_bot()
         self.setup_handlers()
-        self.init_database()  # Initialize the database
+        self.init_database()
 
     def create_bot(self):
         """Function to create the bot"""
@@ -123,7 +124,7 @@ class Rebot:
         except Exception as e:
             logging.error(
                 "Failed to initialize database: %s", e
-            )  # MODIFIED: Use %-style formatting
+            )
             raise
 
     def setup_handlers(self):
@@ -142,7 +143,6 @@ class Rebot:
         self.rebot_dp.chat_member.register(member_status_update_handler)
         self.rebot_dp.edited_message.register(unhandled_updates_handler)
 
-        # For blockchain clarification via inline buttons
         self.rebot_dp.callback_query.register(
             handle_blockchain_clarification_callback,
             AddressProcessingStates.awaiting_blockchain,
@@ -155,9 +155,8 @@ async def main():
     rebot = Rebot()
     logging.info(
         "Bot created successfully: %s", rebot
-    )  # MODIFIED: Use logging instead of print
+    )
 
-    # And the run events dispatching
     await rebot.rebot_dp.start_polling(rebot.bot)
 
 
@@ -170,18 +169,28 @@ if __name__ == "__main__":
 
     # 2. Configure the root logger
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)
-    # Clear existing handlers from root logger (important if basicConfig was called before or by libraries)
+    root_logger.setLevel(Config.LOG_LEVEL) # Use LOG_LEVEL from Config
     if root_logger.hasHandlers():
         root_logger.handlers.clear()
 
-    root_handler = logging.StreamHandler(sys.stdout)
-    root_handler.setFormatter(log_formatter)
-    root_handler.addFilter(custom_filter)
-    root_logger.addHandler(root_handler)
+    # Console Handler (optional, if you still want console output)
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(log_formatter)
+    console_handler.addFilter(custom_filter)
+    root_logger.addHandler(console_handler)
 
-    # 3. Configure Aiogram loggers similarly to ensure they use the new handler/formatter/filter
-    #    This is important if they have their own default handlers that might not include user_id
+    # File Handler with Timed Rotation
+    log_file_path = Config.get_log_file_path()  # Get path from Config
+    file_handler = TimedRotatingFileHandler(
+        log_file_path, when="midnight", interval=1, backupCount=7, encoding="utf-8"
+    )  # Rotates daily, keeps 7 old files
+    file_handler.setFormatter(log_formatter)
+    file_handler.addFilter(custom_filter)
+    root_logger.addHandler(file_handler)
+
+    logging.info("Logging configured to write to console and file: %s", log_file_path)
+
+    # 3. Configure Aiogram loggers
     aiogram_loggers_to_configure = [
         "aiogram.event",
         "aiogram.dispatcher",
@@ -189,12 +198,12 @@ if __name__ == "__main__":
     ]
     for logger_name in aiogram_loggers_to_configure:
         logger = logging.getLogger(logger_name)
-        logger.setLevel(logging.INFO)  # Or whatever level you prefer for these
-        if (
-            logger.hasHandlers()
-        ):  # Clear existing handlers to avoid duplicate messages or old formats
+        logger.setLevel(Config.LOG_LEVEL) # Use LOG_LEVEL from Config
+        if logger.hasHandlers():
             logger.handlers.clear()
-        logger.addHandler(root_handler)  # Add the same configured handler
-        logger.propagate = False  # Prevent aiogram logs from being handled again by root if you only want one output
+        # Add both console and file handlers to aiogram loggers
+        logger.addHandler(console_handler)
+        logger.addHandler(file_handler)
+        logger.propagate = False
 
     asyncio.run(main())

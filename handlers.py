@@ -192,15 +192,17 @@ async def handle_message_with_potential_crypto_address(
         await _scan_message_for_addresses_action(message, state)
 
 
-async def _scan_message_for_addresses_action(message: Message, state: FSMContext):
+async def _scan_message_for_addresses_action(message: Message, state: FSMContext, text_override: str = None):
     """
     Scans the message for crypto addresses, displays previous memos,
     and initiates blockchain clarification or memo prompting.
     If no addresses are found, informs the user.
+    Uses text_override for scanning if provided, otherwise message.text.
     """
     db = SessionLocal()
     try:
-        db_message = save_message(db, message)
+        # Save the original message context, regardless of text_override
+        db_message = save_message(db, message) 
         if db_message is None:
             logging.error("Failed to save message to database.")
             await message.reply(
@@ -208,13 +210,17 @@ async def _scan_message_for_addresses_action(message: Message, state: FSMContext
             )
             return
 
-        text_to_scan = (message.text or message.caption or "").strip()
+        # Use text_override if available, otherwise use message.text or caption
+        text_to_scan = (text_override or message.text or message.caption or "").strip()
         if not text_to_scan:
             logging.debug(
-                "Message ID %s has no text content to scan for addresses.",
+                "Message ID %s (or override) has no text content to scan for addresses.",
                 db_message.id,
             )
-            return
+            # If it was a /start with payload, we expect text_to_scan to be non-empty
+            if text_override and not text_to_scan:
+                 await message.reply("The address from the link appears to be empty. Please try again.")
+            return # No further action if no text to scan (e.g. empty message or empty override)
 
         detected_raw_addresses_map = crypto_finder.find_addresses(text_to_scan)
         logging.debug(f"Detected map from crypto_finder: {detected_raw_addresses_map}")

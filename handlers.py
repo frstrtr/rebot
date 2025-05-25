@@ -99,7 +99,7 @@ async def command_start_handler(message: Message, command: CommandObject, state:
         # This allows _scan_message_for_addresses_action to process it directly.
         # The save_message and _forward_to_audit_channel calls within
         # _scan_message_for_addresses_action will use this modified message.
-        message.text = address_from_payload 
+        # message.text = address_from_payload
         
         # Since state is clear, _forward_to_audit_channel will be called by _scan_message_for_addresses_action
         await _scan_message_for_addresses_action(message, state)

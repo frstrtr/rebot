@@ -39,22 +39,24 @@ class AddressProcessingStates(StatesGroup):
 
 async def command_start_handler(message: Message, state: FSMContext) -> None:
     """
-    This handler receives messages with `/start` command
+    This handler receives messages with `/start` command.
+    If a payload is provided with the /start command (deep link),
+    it processes the payload as a crypto address.
     """
-    logging.info(f"command_start_handler received /start from user.")
+    logging.info(f"command_start_handler received /start from user {message.from_user.id if message.from_user else 'unknown'}.")
+    await state.clear()  # Clear any previous state
 
-    user_full_name = message.from_user.full_name if message.from_user else "there"
-    await message.answer(
-        f"Hello, {html.bold(user_full_name)}!\n\n Please send me a message containing a crypto address, and I will help you with it.\n\n"
-        "You can also use /checkmemo to check existing memos for a crypto address.\n"
-        "If you want to skip the memo process, just reply with /skip.\n"
-    )
-    await state.clear()
+    user_full_name = message.from_user.full_name if message.from_user else "User"
+    payload = message.get_args()
 
-    # Send user details to audit channel
+    # Send user details to audit channel for the /start command
     if message.from_user:
         user = message.from_user
-        user_info_parts = ["Audit: User started the bot with /start command."]
+        audit_header = "Audit: User started the bot with /start command."
+        if payload:
+            audit_header = f"Audit: User started the bot with /start command and payload: <code>{html.quote(payload)}</code>"
+        
+        user_info_parts = [audit_header]
         user_info_parts.append(f"User ID: (<code>{user.id}</code>)")
 
         name_parts = []
@@ -77,12 +79,38 @@ async def command_start_handler(message: Message, state: FSMContext) -> None:
                 parse_mode="HTML",
             )
             logging.info(
-                f"/start command from user {user.id} logged to audit channel {TARGET_AUDIT_CHANNEL_ID}"
+                f"/start command from user {user.id} (payload: '{payload if payload else 'None'}') logged to audit channel {TARGET_AUDIT_CHANNEL_ID}"
             )
         except Exception as e:
             logging.error(
                 f"Failed to send /start audit info to audit channel {TARGET_AUDIT_CHANNEL_ID} for user {user.id}. Error: {e}"
             )
+
+    if payload:
+        address_from_payload = payload.strip()
+        logging.info(f"Start command with payload (deep link) detected. Address: {address_from_payload}")
+        
+        await message.answer(
+            f"Hello, {html.bold(user_full_name)}!\n"
+            f"Processing address from link: <code>{html.quote(address_from_payload)}</code>"
+        )
+        
+        # Modify message.text to contain only the address.
+        # This allows _scan_message_for_addresses_action to process it directly.
+        # The save_message and _forward_to_audit_channel calls within
+        # _scan_message_for_addresses_action will use this modified message.
+        message.text = address_from_payload 
+        
+        # Since state is clear, _forward_to_audit_channel will be called by _scan_message_for_addresses_action
+        await _scan_message_for_addresses_action(message, state)
+
+    else:
+        # Standard /start behavior without payload
+        await message.answer(
+            f"Hello, {html.bold(user_full_name)}!\n\n Please send me a message containing a crypto address, and I will help you with it.\n\n"
+            "You can also use /checkmemo to check existing memos for a crypto address.\n"
+            "If you want to skip the memo process, just reply with /skip.\n"
+        )
 
 
 async def _forward_to_audit_channel(message: Message):

@@ -10,7 +10,7 @@ from aiogram.types import (
 )
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject # MODIFIED: Added CommandObject
 from sqlalchemy import func
 
 from config.config import Config  # Ensure Config class is imported
@@ -37,7 +37,7 @@ class AddressProcessingStates(StatesGroup):
     awaiting_memo = State()
 
 
-async def command_start_handler(message: Message, state: FSMContext) -> None:
+async def command_start_handler(message: Message, command: CommandObject, state: FSMContext) -> None: # MODIFIED: Added command: CommandObject
     """
     This handler receives messages with `/start` command.
     If a payload is provided with the /start command (deep link),
@@ -47,7 +47,7 @@ async def command_start_handler(message: Message, state: FSMContext) -> None:
     await state.clear()  # Clear any previous state
 
     user_full_name = message.from_user.full_name if message.from_user else "User"
-    payload = message.get_args()
+    payload = command.args # MODIFIED: Changed from message.get_args() to command.args
 
     # Send user details to audit channel for the /start command
     if message.from_user:

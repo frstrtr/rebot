@@ -4,6 +4,7 @@ from aiogram.enums import ParseMode
 
 class Config:
     PARSE_MODE = ParseMode.HTML
+    MAX_TELEGRAM_MESSAGE_LENGTH = 4000  # Telegram's limit is 4096, using a buffer
     EXPLORER_CONFIG = {
         "tron": {
             "name": "TronScan",

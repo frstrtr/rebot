@@ -13,7 +13,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
 from sqlalchemy import func
 
-from config.config import Config  # Import Config class
+from config.config import Config  # Ensure Config class is imported
 from config.credentials import Credentials 
 from synapsifier.crypto_address import CryptoAddressFinder
 from database import (
@@ -348,11 +348,76 @@ async def _scan_message_for_addresses_action(message: Message, state: FSMContext
                 )
 
         if detected_address_info_blocks:
-            await message.answer(
-                "<b>Address Detections & History:</b>\n\n"
-                + "\n\n".join(detected_address_info_blocks),
-                parse_mode="HTML",
-            )
+            # MAX_TELEGRAM_MESSAGE_LENGTH = 4000  # Telegram's limit is 4096, using a buffer # This line is removed
+            initial_header_text = "<b>Address Detections & History:</b>\n\n"
+            
+            final_messages_to_send = []
+            
+            # Initialize the first message with the header
+            active_message_parts = [initial_header_text]
+            current_length = len(initial_header_text)
+
+            for block_text in detected_address_info_blocks:
+                needs_separator = False
+                # A separator is needed if active_message_parts is not empty AND
+                # it's not just the initial_header_text waiting for its first block.
+                if active_message_parts:
+                    if not (len(active_message_parts) == 1 and active_message_parts[0] == initial_header_text):
+                        needs_separator = True
+                
+                separator_len = 2 if needs_separator else 0 # for "\n\n"
+                block_len = len(block_text)
+
+                if current_length + separator_len + block_len > Config.MAX_TELEGRAM_MESSAGE_LENGTH: # MODIFIED
+                    # Current message is full, or adding this block makes it too full.
+                    # Finalize and store the current message.
+                    if "".join(active_message_parts).strip(): # Ensure it's not empty
+                        final_messages_to_send.append("".join(active_message_parts))
+                    
+                    # Start a new message. This new message does NOT get the primary header.
+                    # It starts directly with the current block_text.
+                    active_message_parts = [block_text]
+                    current_length = block_len
+
+                    # Handle if this single block_text itself is too long for a new message
+                    if current_length > Config.MAX_TELEGRAM_MESSAGE_LENGTH: # MODIFIED
+                        logging.warning(
+                            f"A single address info block is too long ({current_length} chars) and will be truncated."
+                        )
+                        # Truncate the block to fit, leaving space for ellipsis and " (truncated)"
+                        truncation_suffix = "... (truncated)"
+                        allowed_block_len = Config.MAX_TELEGRAM_MESSAGE_LENGTH - len(truncation_suffix) # MODIFIED
+                        truncated_block = block_text[:allowed_block_len] + truncation_suffix
+                        active_message_parts = [truncated_block]
+                        current_length = len(truncated_block)
+                        # If somehow still too long (e.g., MAX_TELEGRAM_MESSAGE_LENGTH is extremely small)
+                        if current_length > Config.MAX_TELEGRAM_MESSAGE_LENGTH: # MODIFIED
+                             active_message_parts = ["Error: Content block too large to display."]
+                             current_length = len(active_message_parts[0])
+                else:
+                    # It fits. Add separator if needed.
+                    if needs_separator:
+                        active_message_parts.append("\n\n")
+                        current_length += 2
+                    
+                    active_message_parts.append(block_text)
+                    current_length += block_len
+            
+            # Add the last composed message to the list, if it contains content.
+            if active_message_parts and "".join(active_message_parts).strip():
+                # Avoid adding an empty header if no blocks were actually processed with it.
+                # This check ensures we don't send a message that's only the initial_header_text
+                # if no blocks were appended to that initial header instance.
+                if not (len(active_message_parts) == 1 and active_message_parts[0] == initial_header_text):
+                    final_messages_to_send.append("".join(active_message_parts))
+                # If it is just the initial_header_text, it means no blocks were added to THIS header instance.
+                # This can happen if the first block was too long, causing the header to be sent alone,
+                # and then active_message_parts was reset.
+
+            # Send all prepared messages.
+            for text_to_send in final_messages_to_send:
+                if text_to_send.strip(): # Final check to not send empty strings
+                    await message.answer(text_to_send, parse_mode="HTML")
 
         if addresses_for_explorer_buttons:
             explorer_url_buttons_list = []

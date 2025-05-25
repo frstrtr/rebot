@@ -164,3 +164,4 @@ config/token.txt
 
 spammers.db
 rebot.db
+temp/

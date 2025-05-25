@@ -4,3 +4,5 @@ Separate memos between users
 ✅ blockchain explorer buttons for all blockchain types
 Add known scam description and links
 Add memo review and editor capabilities
+Add LLM pattern analyzer, when address submitted for Checks
+Add connected address seek for the given address recipients and senders

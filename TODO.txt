@@ -1,5 +1,6 @@
-Add new 'address to check' notifier group or message 2624042904 (test channel)
+✅ Add new 'address to check' notifier group or message 2624042904 (test channel)
 ✅ Add TON blockchain support
 Separate memos between users
 ✅ blockchain explorer buttons for all blockchain types
 Add known scam description and links
+Add memo review and editor capabilities

@@ -13,6 +13,8 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
 from sqlalchemy import func
 
+from config.config import Config  # Import Config class
+from config.credentials import Credentials 
 from synapsifier.crypto_address import CryptoAddressFinder
 from database import (
     SessionLocal,
@@ -22,47 +24,11 @@ from database import (
     CryptoAddressStatus,
 )
 
-crypto_finder = CryptoAddressFinder()
+# Instantiate Credentials
+credentials = Credentials()
+TARGET_AUDIT_CHANNEL_ID = credentials.get_target_audit_channel_id() 
 
-EXPLORER_CONFIG = {
-    "tron": {
-        "name": "TronScan",
-        "url_template": "https://tronscan.org/#/address/{address}",
-    },
-    "ton": {"name": "TONScan", "url_template": "https://tonscan.org/address/{address}"},
-    "bitcoin": {
-        "name": "Blockchair (Bitcoin)",  # Updated
-        "url_template": "https://blockchair.com/bitcoin/address/{address}",  # Updated
-    },
-    "ethereum": {
-        "name": "Etherscan",
-        "url_template": "https://etherscan.io/address/{address}",
-    },
-    "solana": {
-        "name": "Solscan",
-        "url_template": "https://solscan.io/account/{address}",
-    },
-    "ripple": {
-        "name": "XRPSscan",
-        "url_template": "https://xrpscan.com/account/{address}",
-    },
-    "stellar": {
-        "name": "Stellar.Expert",
-        "url_template": "https://stellar.expert/explorer/public/account/{address}",
-    },
-    "cosmos": {
-        "name": "Mintscan",
-        "url_template": "https://www.mintscan.io/cosmos/account/{address}",
-    },
-    "polkadot": {
-        "name": "Subscan",
-        "url_template": "https://polkadot.subscan.io/account/{address}",
-    },
-    "algorand": {
-        "name": "AlgoExplorer",
-        "url_template": "https://algoexplorer.io/address/{address}",
-    },
-}
+crypto_finder = CryptoAddressFinder()
 
 
 # Define FSM States for memo processing
@@ -85,8 +51,38 @@ async def command_start_handler(message: Message, state: FSMContext) -> None:
     )
     await state.clear()
 
+    # Send user details to audit channel
+    if message.from_user:
+        user = message.from_user
+        user_info_parts = ["Audit: User started the bot with /start command."]
+        user_info_parts.append(f"User ID: (<code>{user.id}</code>)")
 
-TARGET_AUDIT_CHANNEL_ID = -1002624042904  # Ensure it's an integer, typically negative for channels for bot API
+        name_parts = []
+        if user.first_name:
+            name_parts.append(html.quote(user.first_name))
+        if user.last_name:
+            name_parts.append(html.quote(user.last_name))
+        if name_parts:
+            user_info_parts.append(f"Name: {' '.join(name_parts)}")
+
+        if user.username:
+            user_info_parts.append(f"Username: @{html.quote(user.username)}")
+
+        audit_details_text = "\n".join(user_info_parts)
+
+        try:
+            await message.bot.send_message(
+                chat_id=TARGET_AUDIT_CHANNEL_ID,
+                text=audit_details_text,
+                parse_mode="HTML",
+            )
+            logging.info(
+                f"/start command from user {user.id} logged to audit channel {TARGET_AUDIT_CHANNEL_ID}"
+            )
+        except Exception as e:
+            logging.error(
+                f"Failed to send /start audit info to audit channel {TARGET_AUDIT_CHANNEL_ID} for user {user.id}. Error: {e}"
+            )
 
 
 async def _forward_to_audit_channel(message: Message):
@@ -111,7 +107,7 @@ async def _forward_to_audit_channel(message: Message):
 
     if user.username:
         user_info_parts.append(f"Username: @{html.quote(user.username)}")
-    
+
     user_details_text = "\n".join(user_info_parts)
 
     try:
@@ -120,9 +116,11 @@ async def _forward_to_audit_channel(message: Message):
             await message.bot.send_message(
                 chat_id=TARGET_AUDIT_CHANNEL_ID,
                 text=user_details_text,
-                parse_mode="HTML"
+                parse_mode="HTML",
             )
-            logging.info(f"Message from {user.id} forwarded to audit channel {TARGET_AUDIT_CHANNEL_ID}")
+            logging.info(
+                f"Message from {user.id} forwarded to audit channel {TARGET_AUDIT_CHANNEL_ID}"
+            )
         else:
             logging.info(f"Message from {user.id} was a /skip command, not forwarded.")
     except Exception as e:
@@ -195,55 +193,66 @@ async def _scan_message_for_addresses_action(message: Message, state: FSMContext
 
         if detected_raw_addresses_map:
             try:
-                audit_addresses_parts = ["<b>🔍 Detected Crypto Addresses in User Message:</b>"]
-                all_detected_pairs = [] # To collect all (blockchain, address) pairs
+                audit_addresses_parts = [
+                    "<b>🔍 Detected Crypto Addresses in User Message:</b>"
+                ]
+                all_detected_pairs = []  # To collect all (blockchain, address) pairs
 
                 for blockchain, addresses_list in detected_raw_addresses_map.items():
-                    if addresses_list: # Ensure there are addresses for this blockchain
+                    if addresses_list:  # Ensure there are addresses for this blockchain
                         formatted_addresses_list = []
                         for addr in addresses_list:
-                            formatted_addresses_list.append(f"  • <code>{html.quote(addr)}</code>")
-                            all_detected_pairs.append((blockchain, addr)) # Populate for button logic
-                        
+                            formatted_addresses_list.append(
+                                f"  • <code>{html.quote(addr)}</code>"
+                            )
+                            all_detected_pairs.append(
+                                (blockchain, addr)
+                            )  # Populate for button logic
+
                         formatted_addresses_text = "\n".join(formatted_addresses_list)
                         audit_addresses_parts.append(
                             f"<b>{html.quote(blockchain.capitalize())}:</b>\n{formatted_addresses_text}"
                         )
-                
+
                 audit_addresses_text = "\n\n".join(audit_addresses_parts)
-                
+
                 reply_markup_for_audit = None
-                audit_buttons_list = [] # To hold rows of buttons
+                audit_buttons_list = []  # To hold rows of buttons
 
                 # Create a button for each detected address that has a configured explorer
                 for blockchain_key, addr_str in all_detected_pairs:
-                    if blockchain_key in EXPLORER_CONFIG:
-                        config = EXPLORER_CONFIG[blockchain_key]
-                        explorer_name = config['name']
-                        url = config['url_template'].format(address=addr_str)
-                        
+                    if blockchain_key in Config.EXPLORER_CONFIG: # MODIFIED
+                        config = Config.EXPLORER_CONFIG[blockchain_key] # MODIFIED
+                        explorer_name = config["name"]
+                        url = config["url_template"].format(address=addr_str)
+
                         button_text_addr = addr_str
-                        if len(addr_str) > 20: # Shorten address for button text
+                        if len(addr_str) > 20:  # Shorten address for button text
                             button_text_addr = f"{addr_str[:6]}...{addr_str[-4:]}"
-                        
+
                         audit_button = InlineKeyboardButton(
-                            text=f"View {button_text_addr} on {explorer_name}",
-                            url=url
+                            text=f"View {button_text_addr} on {explorer_name}", url=url
                         )
-                        audit_buttons_list.append([audit_button]) # Add button as a new row
+                        audit_buttons_list.append(
+                            [audit_button]
+                        )  # Add button as a new row
 
                 if audit_buttons_list:
-                    reply_markup_for_audit = InlineKeyboardMarkup(inline_keyboard=audit_buttons_list)
+                    reply_markup_for_audit = InlineKeyboardMarkup(
+                        inline_keyboard=audit_buttons_list
+                    )
 
                 # Send if there are actual detected addresses listed (more than just the header)
-                if len(audit_addresses_parts) > 1: 
+                if len(audit_addresses_parts) > 1:
                     await message.bot.send_message(
                         chat_id=TARGET_AUDIT_CHANNEL_ID,
                         text=audit_addresses_text,
                         parse_mode="HTML",
-                        reply_markup=reply_markup_for_audit # Add the button if created
+                        reply_markup=reply_markup_for_audit,  # Add the button if created
                     )
-                    logging.info(f"Detected addresses forwarded to audit channel {TARGET_AUDIT_CHANNEL_ID}")
+                    logging.info(
+                        f"Detected addresses forwarded to audit channel {TARGET_AUDIT_CHANNEL_ID}"
+                    )
             except Exception as e:
                 logging.error(
                     f"Failed to forward detected addresses to audit channel {TARGET_AUDIT_CHANNEL_ID}. Error: {e}"
@@ -325,7 +334,7 @@ async def _scan_message_for_addresses_action(message: Message, state: FSMContext
                         "blockchain": chosen_blockchain,
                     }
                 )
-                if chosen_blockchain in EXPLORER_CONFIG:
+                if chosen_blockchain in Config.EXPLORER_CONFIG: # MODIFIED
                     addresses_for_explorer_buttons.append(
                         {"address": addr_str, "blockchain": chosen_blockchain}
                     )
@@ -351,8 +360,8 @@ async def _scan_message_for_addresses_action(message: Message, state: FSMContext
                 addr = item["address"]
                 blockchain_key = item["blockchain"]
 
-                if blockchain_key in EXPLORER_CONFIG:
-                    config = EXPLORER_CONFIG[blockchain_key]
+                if blockchain_key in Config.EXPLORER_CONFIG: # MODIFIED
+                    config = Config.EXPLORER_CONFIG[blockchain_key] # MODIFIED
                     explorer_name = config["name"]
                     url = config["url_template"].format(address=addr)
 
@@ -716,7 +725,7 @@ async def _process_memo_action(message: Message, state: FSMContext):
                 user = message.from_user
                 user_info_parts_audit = ["<b>👤 User Details:</b>"]
                 user_info_parts_audit.append(f"ID: <code>{user.id}</code>")
-                
+
                 name_parts_audit = []
                 if user.first_name:
                     name_parts_audit.append(html.quote(user.first_name))
@@ -724,10 +733,12 @@ async def _process_memo_action(message: Message, state: FSMContext):
                     name_parts_audit.append(html.quote(user.last_name))
                 if name_parts_audit:
                     user_info_parts_audit.append(f"Name: {' '.join(name_parts_audit)}")
-                
+
                 if user.username:
-                    user_info_parts_audit.append(f"Username: @{html.quote(user.username)}")
-                
+                    user_info_parts_audit.append(
+                        f"Username: @{html.quote(user.username)}"
+                    )
+
                 user_details_audit_text = "\n".join(user_info_parts_audit)
 
                 audit_message_text = (
@@ -742,13 +753,19 @@ async def _process_memo_action(message: Message, state: FSMContext):
                     await message.bot.send_message(
                         chat_id=TARGET_AUDIT_CHANNEL_ID,
                         text=audit_message_text,
-                        parse_mode="HTML"
+                        parse_mode="HTML",
                     )
-                    logging.info(f"New memo audit log sent to channel {TARGET_AUDIT_CHANNEL_ID} for address {address_text_for_display}")
+                    logging.info(
+                        f"New memo audit log sent to channel {TARGET_AUDIT_CHANNEL_ID} for address {address_text_for_display}"
+                    )
                 except Exception as e_audit:
-                    logging.error(f"Failed to send new memo audit log to channel {TARGET_AUDIT_CHANNEL_ID}. Error: {e_audit}")
+                    logging.error(
+                        f"Failed to send new memo audit log to channel {TARGET_AUDIT_CHANNEL_ID}. Error: {e_audit}"
+                    )
             else:
-                logging.warning("Could not send new memo audit log: no from_user info in message.")
+                logging.warning(
+                    "Could not send new memo audit log: no from_user info in message."
+                )
 
         else:
             logging.error(
@@ -899,7 +916,7 @@ async def checkmemo_handler(message: types.Message):
 
     try:
         # Iterate through EXPLORER_CONFIG to find a suitable explorer for the address
-        for blockchain_key, config in EXPLORER_CONFIG.items():
+        for blockchain_key, config in Config.EXPLORER_CONFIG.items(): # MODIFIED
             if crypto_finder.validate_checksum(blockchain_key, address_arg):
                 explorer_name = config["name"]
                 url = config["url_template"].format(address=address_arg)

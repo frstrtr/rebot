@@ -952,6 +952,7 @@ async def checkmemo_handler(message: types.Message):
     Fetches records for the specified address across all its associated blockchains
     where a memo (notes) is present.
     Adds a "View on Explorer" button if the address is valid for a configured blockchain.
+    Splits long messages into chunks.
     """
     logging.info(
         f"checkmemo_handler received command from user. Text: '{message.text}'"
@@ -977,14 +978,14 @@ async def checkmemo_handler(message: types.Message):
         return
 
     db = SessionLocal()
-    reply_markup = None
+    reply_markup_for_first_message = None
 
     try:
         # Iterate through EXPLORER_CONFIG to find a suitable explorer for the address
-        for blockchain_key, config in Config.EXPLORER_CONFIG.items(): # MODIFIED
+        for blockchain_key, config_data in Config.EXPLORER_CONFIG.items():
             if crypto_finder.validate_checksum(blockchain_key, address_arg):
-                explorer_name = config["name"]
-                url = config["url_template"].format(address=address_arg)
+                explorer_name = config_data["name"]
+                url = config_data["url_template"].format(address=address_arg)
 
                 button_text_addr = address_arg
                 if len(address_arg) > 20:  # Shorten address for button text
@@ -994,7 +995,7 @@ async def checkmemo_handler(message: types.Message):
                     text=f"View {button_text_addr} on {explorer_name}",
                     url=url,
                 )
-                reply_markup = InlineKeyboardMarkup(inline_keyboard=[[explorer_button]])
+                reply_markup_for_first_message = InlineKeyboardMarkup(inline_keyboard=[[explorer_button]])
                 break  # Found a valid explorer, no need to check further
 
         results = (
@@ -1012,11 +1013,15 @@ async def checkmemo_handler(message: types.Message):
             await message.reply(
                 f"No memos found for address: <code>{html.quote(address_arg)}</code>",
                 parse_mode="HTML",
-                reply_markup=reply_markup,  # Send button even if no memos
+                reply_markup=reply_markup_for_first_message,  # Send button even if no memos
             )
             return
 
-        memos_text_parts = []
+        response_header = (
+            f"<b>Memos for Address:</b> <code>{html.quote(address_arg)}</code>\n\n"
+        )
+        
+        memo_blocks = []
         for row in results:
             status_display = "N/A"
             if isinstance(row.status, CryptoAddressStatus):
@@ -1024,33 +1029,62 @@ async def checkmemo_handler(message: types.Message):
             elif row.status is not None:
                 status_display = str(row.status)
 
-            memos_text_parts.append(
-                f"<b>Blockchain:</b> {html.quote(row.blockchain)}\n"
+            memo_blocks.append(
+                f"<b>Blockchain:</b> {html.quote(row.blockchain.capitalize())}\n"
                 f"<b>Status:</b> {html.quote(status_display)}\n"
                 f"<b>Memo:</b> {html.quote(row.notes)}"
             )
 
-        response_header = (
-            f"<b>Memos for Address:</b> <code>{html.quote(address_arg)}</code>\n\n"
-        )
-        response_body = "\n\n".join(memos_text_parts)
-        full_response_text = response_header + response_body
+        final_messages_to_send = []
+        active_message_parts = [response_header]
+        current_length = len(response_header)
 
-        if len(full_response_text) > 4096:
-            await message.reply(
-                response_header, parse_mode="HTML", reply_markup=reply_markup
-            )
-            await message.reply(
-                "The list of memos is too long to display in a single message. Please check logs or refine your search if possible.",
-                parse_mode="HTML",
-            )
-            logging.info(
-                f"Full memo list for {address_arg} was too long for Telegram. Full text: {full_response_text}"
-            )
-        else:
-            await message.reply(
-                full_response_text, parse_mode="HTML", reply_markup=reply_markup
-            )
+        for block_text in memo_blocks:
+            needs_separator = (len(active_message_parts) > 1) or \
+                              (len(active_message_parts) == 1 and active_message_parts[0] != response_header)
+            
+            separator_len = 2 if needs_separator else 0 # for "\n\n"
+            block_len = len(block_text)
+
+            if current_length + separator_len + block_len > Config.MAX_TELEGRAM_MESSAGE_LENGTH:
+                if "".join(active_message_parts).strip():
+                    final_messages_to_send.append("".join(active_message_parts))
+                
+                active_message_parts = [block_text] # New message starts with the block
+                current_length = block_len
+
+                if current_length > Config.MAX_TELEGRAM_MESSAGE_LENGTH:
+                    logging.warning(
+                        f"A single memo block for /checkmemo is too long ({current_length} chars) and will be truncated."
+                    )
+                    truncation_suffix = "... (truncated)"
+                    allowed_block_len = Config.MAX_TELEGRAM_MESSAGE_LENGTH - len(truncation_suffix)
+                    truncated_block = block_text[:allowed_block_len] + truncation_suffix
+                    active_message_parts = [truncated_block]
+                    current_length = len(truncated_block)
+                    if current_length > Config.MAX_TELEGRAM_MESSAGE_LENGTH:
+                         active_message_parts = ["Error: Memo content block too large to display."]
+                         current_length = len(active_message_parts[0])
+            else:
+                if needs_separator:
+                    active_message_parts.append("\n\n")
+                    current_length += 2
+                active_message_parts.append(block_text)
+                current_length += block_len
+        
+        if active_message_parts and "".join(active_message_parts).strip():
+            if not (len(active_message_parts) == 1 and active_message_parts[0] == response_header and not memo_blocks):
+                 final_messages_to_send.append("".join(active_message_parts))
+
+        # Send all prepared messages
+        for i, text_to_send in enumerate(final_messages_to_send):
+            if text_to_send.strip():
+                current_reply_markup = reply_markup_for_first_message if i == 0 else None
+                await message.reply(
+                    text_to_send, 
+                    parse_mode="HTML", 
+                    reply_markup=current_reply_markup
+                )
 
     except Exception as e:
         logging.exception(

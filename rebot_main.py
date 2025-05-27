@@ -8,7 +8,7 @@ import asyncio
 import logging
 import sys
 import contextvars
-import os  # Add this import
+# import os  # Add this import
 from logging.handlers import TimedRotatingFileHandler  # Add this import
 
 from aiogram import Bot, Dispatcher, BaseMiddleware, F

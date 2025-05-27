@@ -352,7 +352,7 @@ async def _scan_message_for_addresses_action(message: Message, state: FSMContext
                         if len(addr_str) > 20:
                             button_text_addr = f"{addr_str[:6]}...{addr_str[-4:]}"
                         audit_button = InlineKeyboardButton(
-                            text=f"View {button_text_addr} on {explorer_name}", url=url
+                            text=f"🔎 View {button_text_addr} on {explorer_name}", url=url
                         )
                         audit_buttons_list.append([audit_button])
 
@@ -550,7 +550,7 @@ async def _scan_message_for_addresses_action(message: Message, state: FSMContext
                     explorer_url_buttons_list.append(
                         [
                             InlineKeyboardButton(
-                                text=f"View {button_text_addr} on {explorer_name}",
+                                text=f"🔎 View {button_text_addr} on {explorer_name}",
                                 url=url,
                             )
                         ]
@@ -673,16 +673,18 @@ async def _ask_for_blockchain_clarification(
 ):
     """
     Asks the user to specify the blockchain for a given address using inline buttons.
-    Each button for a detected option will show the count of existing memos for that address on that chain.
+    Buttons are arranged in two columns.
+    Each button for a detected option will show the count of existing memos and token type if available.
     """
     address = item_to_clarify["address"]
     detected_options = item_to_clarify["detected_on_options"]
 
-    keyboard_buttons = []
+    keyboard_buttons_rows = []
     db = SessionLocal()
     try:
         if detected_options:
-            for option in detected_options:
+            current_row = []
+            for i, option in enumerate(detected_options):
                 # Query for existing memos for this address on this specific blockchain
                 memo_count = (
                     db.query(func.count(CryptoAddress.id))  # type: ignore[operator]
@@ -695,53 +697,56 @@ async def _ask_for_blockchain_clarification(
                     .scalar()
                 )
 
-                button_text = option.capitalize()
-                if memo_count > 0:
-                    button_text += f" ({memo_count} memo{'s' if memo_count > 1 else ''})"
+                button_text_parts = [option.capitalize()]
+                
+                # Add token standard if available in config
+                if option.lower() in Config.EXPLORER_CONFIG:
+                    chain_config = Config.EXPLORER_CONFIG[option.lower()]
+                    token_standard = chain_config.get("token_standard_display")
+                    if token_standard:
+                        button_text_parts.append(f"({token_standard})")
 
-                keyboard_buttons.append(
-                    [
-                        InlineKeyboardButton(
-                            text=button_text,
-                            callback_data=f"clarify_bc:chosen:{option.lower()}",
-                        )
-                    ]
+                if memo_count > 0:
+                    button_text_parts.append(f"[{memo_count} memo{'s' if memo_count > 1 else ''}]")
+                
+                final_button_text = " ".join(button_text_parts)
+
+                button = InlineKeyboardButton(
+                    text=f"⛓️ {final_button_text}",
+                    callback_data=f"clarify_bc:chosen:{option.lower()}",
                 )
+                current_row.append(button)
+
+                if len(current_row) == 2 or i == len(detected_options) - 1:
+                    keyboard_buttons_rows.append(current_row)
+                    current_row = []
+            
     finally:
         if db.is_active:
             db.close()
 
-    # Removed "Other (Type manually)" button
-    # keyboard_buttons.append(
-    #     [
-    #         InlineKeyboardButton(
-    #             text="Other (Type manually)", callback_data="clarify_bc:other"
-    #         )
-    #     ]
-    # )
-    keyboard_buttons.append(
+    keyboard_buttons_rows.append(
         [
             InlineKeyboardButton(
-                text="Skip this address", callback_data="clarify_bc:skip"
+                text="⏭️ Skip this address", callback_data="clarify_bc:skip"
             )
         ]
     )
 
-    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons_rows)
 
     prompt_text = (
         f"For address: <code>{html.quote(address)}</code>\n"
         f"Which blockchain network does this address belong to?\n"
         "Please select from the options below."
     )
-    if not detected_options: # This condition might need adjustment if "Other" is removed and no options are detected
+    if not detected_options:
         prompt_text = (
             f"For address: <code>{html.quote(address)}</code>\n"
             "I couldn't auto-detect specific blockchain networks for this address. "
             "If you know the network, you might need to send the address again, perhaps with more context. "
             "For now, you can choose to skip processing this address."
         )
-
 
     await message_to_reply_to.answer(
         prompt_text, reply_markup=keyboard, parse_mode="HTML"
@@ -1173,7 +1178,7 @@ async def checkmemo_handler(message: types.Message):
                     button_text_addr = f"{address_arg[:6]}...{address_arg[-4:]}"
 
                 explorer_button = InlineKeyboardButton(
-                    text=f"View {button_text_addr} on {explorer_name}",
+                    text=f"🔎 View {button_text_addr} on {explorer_name}",
                     url=url,
                 )
                 reply_markup_for_first_message = InlineKeyboardMarkup(inline_keyboard=[[explorer_button]])

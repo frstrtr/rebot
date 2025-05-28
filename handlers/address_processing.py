@@ -207,7 +207,7 @@ async def _scan_message_for_addresses_action(
                     TARGET_AUDIT_CHANNEL_ID,
                     e,
                 )
-            except Exception as e: # Catch other unexpected errors
+            except Exception as e:  # Catch other unexpected errors
                 logging.error(
                     "An unexpected error occurred while trying to forward to audit channel %s. Error: %s",
                     TARGET_AUDIT_CHANNEL_ID,
@@ -512,8 +512,8 @@ async def _ask_for_blockchain_clarification(
             for i, option in enumerate(detected_options):
                 memo_count = (
                     db.query(
-                        func.count(CryptoAddress.id) # pylint: disable=not-callable
-                    )  
+                        func.count(CryptoAddress.id)  # pylint: disable=not-callable
+                    )
                     .filter(
                         func.lower(CryptoAddress.address) == address.lower(),
                         func.lower(CryptoAddress.blockchain) == option.lower(),
@@ -656,7 +656,7 @@ async def _process_memo_action(message: Message, state: FSMContext):
             )
             if message.from_user:  # Audit log
                 user = message.from_user
-                user_info_parts_audit = [
+                user_info_parts_list = [  # Renamed to avoid confusion
                     "<b>👤 User Details:</b>",
                     f"ID: <code>{user.id}</code>",
                 ]
@@ -664,16 +664,28 @@ async def _process_memo_action(message: Message, state: FSMContext):
                     html.quote(n) for n in [user.first_name, user.last_name] if n
                 ]
                 if name_parts_audit:
-                    user_info_parts_audit.append(f"Name: {' '.join(name_parts_audit)}")
+                    user_info_parts_list.append(f"Name: {' '.join(name_parts_audit)}")
                 if user.username:
-                    user_info_parts_audit.append(
+                    user_info_parts_list.append(
                         f"Username: @{html.quote(user.username)}"
                     )
-                audit_message_text = (
-                    f"<b>📝 New Memo Added to Audit Log</b>\n\n{'\n'.join(user_info_parts_audit)}\n\n"
-                    f"<b>Address Details:</b>\nAddress: <code>{html.quote(address_text_for_display)}</code>\nBlockchain: {html.quote(blockchain_for_display.capitalize())}\n\n"
-                    f"<b>Memo Text:</b>\n{html.quote(memo_text)}"
-                )
+
+                user_info_audit_str = "\n".join(
+                    user_info_parts_list
+                )  # Pre-join the user details
+
+                # Refactored audit_message_text using a triple-quoted f-string
+                audit_message_text = f"""<b>📝 New Memo Added to Audit Log</b>
+
+{user_info_audit_str}
+
+<b>Address Details:</b>
+Address: <code>{html.quote(address_text_for_display)}</code>
+Blockchain: {html.quote(blockchain_for_display.capitalize())}
+
+<b>Memo Text:</b>
+{html.quote(memo_text)}"""
+
                 try:
                     await message.bot.send_message(
                         chat_id=TARGET_AUDIT_CHANNEL_ID,

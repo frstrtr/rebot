@@ -8,12 +8,12 @@ import asyncio
 import logging
 import sys
 import contextvars
-import os  # Add this import
-from logging.handlers import TimedRotatingFileHandler  # Add this import
+import os
+from logging.handlers import TimedRotatingFileHandler
 
 from aiogram import Bot, Dispatcher, BaseMiddleware, F
 from aiogram.client.default import DefaultBotProperties
-from aiogram.filters import CommandStart, StateFilter
+from aiogram.filters import Command, StateFilter  # MODIFIED: Imported Command
 from aiogram.types import Update
 
 from config.credentials import Credentials
@@ -27,7 +27,7 @@ from handlers import (
     unhandled_updates_handler,
     checkmemo_handler,
     handle_blockchain_clarification_callback,
-    AddressProcessingStates,
+    # AddressProcessingStates,
 )
 
 # 1. Define Context Variable for user_id
@@ -36,15 +36,20 @@ user_id_context = contextvars.ContextVar("user_id_context", default="N/A")
 
 # 2. Custom Logging Filter to add user_id to log records
 class UserIdContextFilter(logging.Filter):
+    """class UserIdContextFilter(logging.Filter):
+    A custom logging filter that adds user_id to log records.
+    This filter retrieves the user_id from the context variable and adds it to the log record.
+    """
+
     def filter(self, record):
-        record.user_id = (
-            user_id_context.get()
-        )
+        record.user_id = user_id_context.get()
         return True
 
 
 # 3. Aiogram Middleware to extract and set user_id in context
 class UserIdLoggingMiddleware(BaseMiddleware):
+    """Middleware to extract user_id from the event and set it in context variable."""
+
     async def __call__(self, handler, event: Update, data: dict):
         user_id_to_log = "N/A"
 
@@ -97,9 +102,7 @@ class Rebot:
         self.credentials = Credentials()
         self.parse_mode = Config.PARSE_MODE
         self.rebot_dp = Dispatcher()
-        self.rebot_dp.update.outer_middleware(
-            UserIdLoggingMiddleware()
-        )
+        self.rebot_dp.update.outer_middleware(UserIdLoggingMiddleware())
         self.bot = self.create_bot()
         self.setup_handlers()
         self.init_database()
@@ -122,30 +125,37 @@ class Rebot:
             create_tables()
             logging.info("Database initialized successfully")
         except Exception as e:
-            logging.error(
-                "Failed to initialize database: %s", e
-            )
+            logging.error("Failed to initialize database: %s", e)
             raise
 
     def setup_handlers(self):
         """Function to setup all the handlers for the bot"""
 
-        self.rebot_dp.message.register(command_start_handler, CommandStart())
+        # Use Command filter to pass CommandObject to command_start_handler
+        self.rebot_dp.message.register(
+            command_start_handler, Command(commands=["start"])
+        )
         self.rebot_dp.message.register(
             checkmemo_handler,
-            lambda m: m.text and m.text.startswith("/checkmemo"),
+            Command(commands=["checkmemo"]),  # Using Command filter is often cleaner
+            # lambda m: m.text and m.text.startswith("/checkmemo"), # Your original lambda is also fine
         )
         self.rebot_dp.message.register(
             handle_message_with_potential_crypto_address,
-            StateFilter("*"),
+            F.text | F.caption,  # Handles messages with text or caption in any state
+            StateFilter("*"),  # Explicitly allowing any state
         )
-        self.rebot_dp.message.register(handle_story)
+        # self.rebot_dp.message.register(handle_story) # This was for F.story, if you still need it
+        self.rebot_dp.message.register(
+            handle_story, F.story
+        )  # Registering for story content
+
         self.rebot_dp.chat_member.register(member_status_update_handler)
         self.rebot_dp.edited_message.register(unhandled_updates_handler)
 
         self.rebot_dp.callback_query.register(
             handle_blockchain_clarification_callback,
-            AddressProcessingStates.awaiting_blockchain,
+            # AddressProcessingStates.awaiting_blockchain, # State filter is applied if this handler is only for this state
             F.data.startswith("clarify_bc:"),
         )
 
@@ -154,7 +164,8 @@ async def main():
     """Main function"""
     rebot = Rebot()
     logging.info(
-        "Bot created successfully: %s", rebot
+        "Bot created successfully: %s",
+        rebot.bot.id,  # Logging bot ID or username can be useful
     )
 
     await rebot.rebot_dp.start_polling(rebot.bot)
@@ -169,21 +180,26 @@ if __name__ == "__main__":
 
     # 2. Configure the root logger
     root_logger = logging.getLogger()
-    root_logger.setLevel(Config.LOG_LEVEL) # Use LOG_LEVEL from Config
+    root_logger.setLevel(Config.LOG_LEVEL)
     if root_logger.hasHandlers():
         root_logger.handlers.clear()
 
-    # Console Handler (optional, if you still want console output)
+    # Console Handler
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(log_formatter)
     console_handler.addFilter(custom_filter)
     root_logger.addHandler(console_handler)
 
     # File Handler with Timed Rotation
-    log_file_path = Config.get_log_file_path()  # Get path from Config
+    log_dir = os.path.join(
+        os.path.dirname(__file__), "logs"
+    )  # Ensure logs directory exists
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+    log_file_path = Config.get_log_file_path()
     file_handler = TimedRotatingFileHandler(
         log_file_path, when="midnight", interval=1, backupCount=7, encoding="utf-8"
-    )  # Rotates daily, keeps 7 old files
+    )
     file_handler.setFormatter(log_formatter)
     file_handler.addFilter(custom_filter)
     root_logger.addHandler(file_handler)
@@ -198,10 +214,9 @@ if __name__ == "__main__":
     ]
     for logger_name in aiogram_loggers_to_configure:
         logger = logging.getLogger(logger_name)
-        logger.setLevel(Config.LOG_LEVEL) # Use LOG_LEVEL from Config
+        logger.setLevel(Config.LOG_LEVEL)
         if logger.hasHandlers():
             logger.handlers.clear()
-        # Add both console and file handlers to aiogram loggers
         logger.addHandler(console_handler)
         logger.addHandler(file_handler)
         logger.propagate = False

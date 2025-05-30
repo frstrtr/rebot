@@ -121,6 +121,85 @@ async def _display_memos_for_address_blockchain(
             await message_target.answer(text_to_send, parse_mode="HTML")
 
 
+async def _send_action_prompt(
+    target_message: Message, 
+    address: str, 
+    blockchain: str, 
+    state: FSMContext, 
+    edit_message: bool = False
+):
+    """Sends a message with action buttons for an identified address."""
+    prompt_text = (
+        f"Address <code>{html.quote(address)}</code> identified for <b>{html.quote(blockchain.capitalize())}</b>.\n"
+        "What would you like to do?"
+    )
+    
+    action_buttons_row1 = []
+    action_buttons_row2 = []
+
+    # Explorer Button
+    if blockchain.lower() in EXPLORER_CONFIG:
+        config_data = EXPLORER_CONFIG[blockchain.lower()]
+        explorer_name = config_data["name"]
+        url = config_data["url_template"].format(address=address)
+        # button_text_addr_short = ( # This variable is not used for button text here
+        #     f"{address[:6]}...{address[-4:]}" if len(address) > 20 else address
+        # )
+        action_buttons_row1.append(
+            InlineKeyboardButton(
+                text=f"🔎 View on {explorer_name}",
+                url=url,
+            )
+        )
+    
+    # Show Previous Memos Button
+    action_buttons_row1.append(
+        InlineKeyboardButton(
+            text="📜 Show Memos", 
+            callback_data="show_prev_memos"  # MODIFIED: Removed address and blockchain
+        )
+    )
+    
+    # Add/Manage Memo Button
+    action_buttons_row2.append(
+        InlineKeyboardButton(
+            text="✍️ Add/Manage Memo", 
+            callback_data="proceed_to_memo_stage" 
+        )
+    )
+
+    # Skip This Address Button
+    action_buttons_row2.append(
+        InlineKeyboardButton(
+            text="⏭️ Skip Address", 
+            callback_data="skip_address_action_stage"  # MODIFIED: Removed address and blockchain
+        )
+    )
+
+    keyboard_layout = []
+    if action_buttons_row1:
+        keyboard_layout.append(action_buttons_row1)
+    if action_buttons_row2:
+        keyboard_layout.append(action_buttons_row2)
+
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard_layout)
+
+    if edit_message:
+        try:
+            await target_message.edit_text(
+                text=prompt_text, parse_mode="HTML", reply_markup=reply_markup
+            )
+        except TelegramAPIError as e:
+            logging.warning("Failed to edit message for action prompt, sending new: %s", e)
+            await target_message.answer(
+                text=prompt_text, parse_mode="HTML", reply_markup=reply_markup
+            )
+    else:
+        await target_message.answer(
+            text=prompt_text, parse_mode="HTML", reply_markup=reply_markup
+        )
+
+
 async def _scan_message_for_addresses_action(
     message: Message, state: FSMContext, text_override: str = None
 ):
@@ -198,8 +277,8 @@ async def _scan_message_for_addresses_action(
                         parse_mode="HTML",
                         reply_markup=reply_markup_for_audit,
                     )
-                    logging.info(
-                        TARGET_AUDIT_CHANNEL_ID,
+                    logging.info( # Corrected logging
+                        "Audit log for detected addresses sent to channel ID: %s", TARGET_AUDIT_CHANNEL_ID
                     )
             except TelegramAPIError as e:
                 logging.error(
@@ -252,7 +331,7 @@ async def _scan_message_for_addresses_action(
 
         (
             pending_blockchain_clarification,
-            addresses_for_memo_prompt_details,
+            addresses_for_memo_prompt_details_fsm, # Use a distinct name for FSM update
             addresses_for_explorer_buttons,
             detected_address_info_blocks,
         ) = ([], [], [], [])
@@ -300,25 +379,46 @@ async def _scan_message_for_addresses_action(
                     "detected_on_options": forced_clarification_options,
                 }
             )
+            # Update FSM with pending clarification. Orchestrator will handle it.
+            await state.update_data(
+                pending_blockchain_clarification=pending_blockchain_clarification,
+                # addresses_for_memo_prompt_details will be populated by clarification handler
+            )
+
         elif len(specific_chains) == 1 and not forced_clarification_options:
             chosen_blockchain = list(specific_chains)[0]
-            await _display_memos_for_address_blockchain(
-                message, addr_str_to_process, chosen_blockchain, db
+            
+            # Prepare data for FSM: this address is now the one to be actioned upon if user proceeds to memo.
+            addresses_for_memo_prompt_details_fsm = [{"address": addr_str_to_process, "blockchain": chosen_blockchain}]
+            await state.update_data(
+                addresses_for_memo_prompt_details=addresses_for_memo_prompt_details_fsm,
+                pending_blockchain_clarification=[] 
             )
-            addresses_for_memo_prompt_details.append(
-                {"address": addr_str_to_process, "blockchain": chosen_blockchain}
-            )
+
+            # Send the new action prompt
+            await _send_action_prompt(message, addr_str_to_process, chosen_blockchain, state)
+            
+            # The initial summary explorer buttons can still be sent if desired
             if chosen_blockchain in EXPLORER_CONFIG:
-                addresses_for_explorer_buttons.append(
+                addresses_for_explorer_buttons.append( # This list is for the separate summary message
                     {"address": addr_str_to_process, "blockchain": chosen_blockchain}
                 )
-        else:
-            options = sorted(list(specific_chains))
+            # No direct orchestration here for unambiguous case; user interaction drives it.
+            # The return below is removed as the final orchestration call should happen.
+
+        else: # Multiple specific chains detected, or only generic "address" type
+            options = sorted(list(specific_chains)) if specific_chains else ["Unknown"]
             pending_blockchain_clarification.append(
                 {"address": addr_str_to_process, "detected_on_options": options}
             )
-
-        if detected_address_info_blocks:
+            await state.update_data(
+                pending_blockchain_clarification=pending_blockchain_clarification,
+                # addresses_for_memo_prompt_details will be populated by clarification handler
+            )
+        
+        # This initial summary message with explorer buttons can still be sent
+        # It's separate from the action prompt for the first address.
+        if detected_address_info_blocks: # Send the summary of what was detected
             initial_header_text = "<b>Address Detection:</b>\n\n"
             final_messages_to_send, active_message_parts, current_length = (
                 [],
@@ -377,7 +477,7 @@ async def _scan_message_for_addresses_action(
                 if text_to_send.strip():
                     await message.answer(text_to_send, parse_mode="HTML")
 
-        if addresses_for_explorer_buttons:
+        if addresses_for_explorer_buttons: # Send the summary explorer buttons message
             explorer_url_buttons_list = []
             for item in addresses_for_explorer_buttons:
                 addr, blockchain_key = item["address"], item["blockchain"]
@@ -405,11 +505,17 @@ async def _scan_message_for_addresses_action(
                     ),
                 )
 
-        await state.update_data(
-            pending_blockchain_clarification=pending_blockchain_clarification,
-            addresses_for_memo_prompt_details=addresses_for_memo_prompt_details,
-        )
-        await _orchestrate_next_processing_step(message, state)
+        # If no action prompt was sent (i.e. clarification is needed), orchestrate.
+        # If an action prompt WAS sent for an unambiguous address, this orchestrator call
+        # will effectively do nothing immediately, as addresses_for_memo_prompt_details
+        # is set, but no callback has triggered its processing yet.
+        # And pending_blockchain_clarification would be empty for that unambiguous case.
+        # This is fine, the state is set for the user's next action.
+        if pending_blockchain_clarification: # Only orchestrate if clarification is the next step
+             await _orchestrate_next_processing_step(message, state)
+        # If it was an unambiguous case, the action prompt is shown, and we wait for user.
+        # If it was ambiguous, _orchestrate_next_processing_step will trigger _ask_for_blockchain_clarification.
+
     except ValueError as ve:
         logging.error("ValueError in address scanning: %s", ve)
         await message.reply("An error occurred while processing your message.")

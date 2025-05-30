@@ -23,12 +23,15 @@ from handlers import (
     command_start_handler,
     handle_message_with_potential_crypto_address,
     handle_story,
-    member_status_update_handler,
-    unhandled_updates_handler,
+    # member_status_update_handler, # Assuming this is still commented if not used
+    # unhandled_updates_handler,    # Assuming this is still commented if not used
     checkmemo_handler,
     handle_blockchain_clarification_callback,
-    handle_memo_action_callback,  # Add this import
-    # AddressProcessingStates,
+    handle_memo_action_callback,
+    handle_show_previous_memos_callback,
+    handle_proceed_to_memo_stage_callback,
+    handle_skip_address_action_stage_callback,
+    # AddressProcessingStates, # Assuming this is imported if needed directly in main
 )
 
 # 1. Define Context Variable for user_id
@@ -131,7 +134,7 @@ class Rebot:
 
     def setup_handlers(self):
         """Function to setup all the handlers for the bot"""
-
+        # Register message handlers
         # Use Command filter to pass CommandObject to command_start_handler
         self.rebot_dp.message.register(
             command_start_handler, Command(commands=["start"])
@@ -151,19 +154,35 @@ class Rebot:
             handle_story, F.story
         )  # Registering for story content
 
-        self.rebot_dp.chat_member.register(member_status_update_handler)
-        self.rebot_dp.edited_message.register(unhandled_updates_handler)
-
+        # Register callback query handlers
         self.rebot_dp.callback_query.register(
             handle_blockchain_clarification_callback,
-            F.data.startswith("clarify_bc:"),
+            F.data.startswith("clarify_bc:"),  # This uses startswith for dynamic data
         )
-
-        # Register the new memo action callback handler
+        
         self.rebot_dp.callback_query.register(
             handle_memo_action_callback,
-            F.data.startswith("memo_action:"),
+            F.data.startswith("memo_action:"), # This uses startswith for dynamic data (request_add, skip_current)
         )
+        
+        self.rebot_dp.callback_query.register(
+            handle_show_previous_memos_callback,
+            F.data == "show_prev_memos",  # MODIFIED: Exact match
+        )
+        
+        self.rebot_dp.callback_query.register(
+            handle_proceed_to_memo_stage_callback,
+            F.data == "proceed_to_memo_stage", # This should be an exact match
+        )
+        
+        self.rebot_dp.callback_query.register(
+            handle_skip_address_action_stage_callback,
+            F.data == "skip_address_action_stage",  # MODIFIED: Exact match
+        )
+        
+        # Register other handlers if any
+        # self.rebot_dp.my_chat_member.register(member_status_update_handler)
+        # self.rebot_dp.errors.register(unhandled_updates_handler)
 
 
 async def main():

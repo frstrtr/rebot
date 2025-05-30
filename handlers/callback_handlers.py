@@ -6,15 +6,17 @@ import logging
 from aiogram import html, types
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
+from aiogram.exceptions import TelegramAPIError
 
 from database import SessionLocal
 from .address_processing import (
     _display_memos_for_address_blockchain,
     _orchestrate_next_processing_step,
-    _prompt_for_next_memo,  # Import this
+    _prompt_for_next_memo,
+    _send_action_prompt,  # Import the new helper
 )
 from .common import EXPLORER_CONFIG
-from .states import AddressProcessingStates  # Import this
+from .states import AddressProcessingStates
 
 
 async def handle_blockchain_clarification_callback(
@@ -63,66 +65,122 @@ async def handle_blockchain_clarification_callback(
         ]  # This is the blockchain key (e.g., 'ethereum', 'tron')
         address_str = item_being_clarified["address"]
 
-        db_session_callback = SessionLocal()
-        try:
-            await _display_memos_for_address_blockchain(
-                callback_query.message,
-                address_str,
-                chosen_blockchain,
-                db_session_callback,
-            )
-        finally:
-            if db_session_callback.is_active:
-                db_session_callback.close()
-
-        addresses_for_memo_prompt_details.append(
-            {"address": address_str, "blockchain": chosen_blockchain}
-        )
+        # This address is now the one to be actioned upon if user proceeds to memo.
+        addresses_for_memo_fsm = [{"address": address_str, "blockchain": chosen_blockchain}]
         await state.update_data(
-            addresses_for_memo_prompt_details=addresses_for_memo_prompt_details,
+            addresses_for_memo_prompt_details=addresses_for_memo_fsm,
             current_item_for_blockchain_clarification=None,
         )
 
-        confirmation_text = f"Noted: Address <code>{html.quote(address_str)}</code> will be associated with <b>{html.quote(chosen_blockchain.capitalize())}</b>."
-
-        reply_markup_for_confirmation = None
-        if chosen_blockchain.lower() in EXPLORER_CONFIG:
-            config_data = EXPLORER_CONFIG[chosen_blockchain.lower()]
-            explorer_name = config_data["name"]
-            url = config_data["url_template"].format(address=address_str)
-            button_text_addr = (
-                f"{address_str[:6]}...{address_str[-4:]}"
-                if len(address_str) > 20
-                else address_str
-            )
-            explorer_button = InlineKeyboardButton(
-                text=f"🔎 View {button_text_addr} on {explorer_name}",
-                url=url,
-            )
-            reply_markup_for_confirmation = InlineKeyboardMarkup(
-                inline_keyboard=[[explorer_button]]
-            )
-
-        await callback_query.message.edit_text(
-            text=confirmation_text,
-            parse_mode="HTML",
-            reply_markup=reply_markup_for_confirmation,  # Add the button here
+        # Send the new action prompt, editing the previous message
+        await _send_action_prompt(
+            callback_query.message, address_str, chosen_blockchain, state, edit_message=True
         )
-        await _orchestrate_next_processing_step(callback_query.message, state)
+        # No direct orchestration here; user interaction drives it.
 
-    elif param_one == "skip":
+    elif param_one == "skip":  # Skips blockchain clarification for this item
         await state.update_data(current_item_for_blockchain_clarification=None)
         await callback_query.message.edit_text(
-            f"Skipped clarification for: <code>{html.quote(item_being_clarified['address'])}</code>.",
+            f"Skipped blockchain clarification for: <code>{html.quote(item_being_clarified['address'])}</code>.",
             parse_mode="HTML",
             reply_markup=None,
         )
-        await _orchestrate_next_processing_step(callback_query.message, state)
+        await _orchestrate_next_processing_step(callback_query.message, state)  # Check if other items need clarification
     else:
         logging.warning(
             "Unknown callback for blockchain clarification: %s", callback_query.data
         )
         await callback_query.message.answer("Unexpected selection error.")
+
+
+async def handle_show_previous_memos_callback(callback_query: types.CallbackQuery, state: FSMContext):
+    """Handles the 'Show Previous Memos' button click."""
+    await callback_query.answer()
+    
+    data = await state.get_data()
+    # Retrieve address and blockchain from FSM state
+    # This data should have been set by _scan_message_for_addresses_action or handle_blockchain_clarification_callback
+    # and stored in 'addresses_for_memo_prompt_details' before _send_action_prompt was called.
+    action_details_list = data.get("addresses_for_memo_prompt_details")
+
+    if not action_details_list or not isinstance(action_details_list, list) or not action_details_list[0]:
+        logging.warning("Could not retrieve address/blockchain from state for show_prev_memos. State: %s", data)
+        await callback_query.message.answer("Error: Context lost. Please try scanning the address again.")
+        return
+
+    current_action_info = action_details_list[0]
+    address = current_action_info.get("address")
+    blockchain = current_action_info.get("blockchain")
+
+    if not address or not blockchain:
+        logging.warning("Missing address or blockchain in state for show_prev_memos. Info: %s", current_action_info)
+        await callback_query.message.answer("Error: Could not retrieve full address details. Please try again.")
+        return
+
+    db_session = SessionLocal()
+    try:
+        await _display_memos_for_address_blockchain(
+            callback_query.message, address, blockchain, db_session
+        )
+    finally:
+        if db_session.is_active:
+            db_session.close()
+    # The original action prompt message remains, allowing other actions.
+
+async def handle_proceed_to_memo_stage_callback(callback_query: types.CallbackQuery, state: FSMContext):
+    """Handles the 'Add/Manage Memo' button click from the action prompt."""
+    await callback_query.answer("Loading memo options...")
+    
+    # The FSM state 'addresses_for_memo_prompt_details' should have been set
+    # before _send_action_prompt was called.
+    # _orchestrate_next_processing_step will pick it up.
+    try:
+        # Optionally edit the message to indicate loading, or remove buttons
+        await callback_query.message.edit_reply_markup(reply_markup=None)
+        # Or edit text:
+        # await callback_query.message.edit_text(
+        #     text=f"{callback_query.message.text}\n\nProceeding to memo options...",
+        #     parse_mode="HTML",
+        #     reply_markup=None 
+        # )
+    except TelegramAPIError as e:
+        logging.warning("Could not edit message reply_markup on proceed_to_memo_stage: %s", e)
+
+    await _orchestrate_next_processing_step(callback_query.message, state)
+
+async def handle_skip_address_action_stage_callback(callback_query: types.CallbackQuery, state: FSMContext):
+    """Handles skipping the entire address processing at the action prompt stage."""
+    await callback_query.answer()
+    
+    try:
+        _prefix, address_skipped, blockchain_skipped = callback_query.data.split(":", 2)
+    except ValueError:
+        address_skipped = "the address" 
+        blockchain_skipped = "N/A"
+        logging.warning("Invalid callback data for skip_address_action_stage: %s", callback_query.data)
+
+    logging.info(f"User chose to skip further processing for address: {address_skipped} on {blockchain_skipped}")
+    
+    # Clear this address from being prompted for a memo.
+    await state.update_data(addresses_for_memo_prompt_details=[]) 
+    
+    try:
+        await callback_query.message.edit_text(
+            text=f"Skipped further actions for address: <code>{html.quote(address_skipped)}</code>.",
+            parse_mode="HTML",
+            reply_markup=None 
+        )
+    except TelegramAPIError as e:
+        logging.warning("Could not edit message on skip_address_action_stage: %s", e)
+        # Fallback if edit fails
+        await callback_query.message.answer(
+             f"Skipped further actions for address: <code>{html.quote(address_skipped)}</code>.",
+            parse_mode="HTML"
+        )
+
+    # Call orchestrator to see if other items (e.g., other pending clarifications) exist
+    # or if the initial scan had more addresses (though current logic focuses on one at a time post-scan).
+    await _orchestrate_next_processing_step(callback_query.message, state)
 
 
 async def handle_memo_action_callback(callback_query: types.CallbackQuery, state: FSMContext):

@@ -600,21 +600,47 @@ async def _prompt_for_next_memo(
     message_to_reply_to: Message, state: FSMContext, pending_list: list
 ):
     if not pending_list:
-        # await message_to_reply_to.answer("All memos processed. You can send new messages with addresses.") # This message is better sent by orchestrator
+        # Orchestrator or final skip action will handle the "all processed" message.
         await state.clear()
         return
+
     next_address_info = pending_list.pop(0)
+    address_text = next_address_info['address']
+    blockchain_text = next_address_info['blockchain'].capitalize()
+
     await state.update_data(
         current_address_for_memo_id=next_address_info["id"],
-        current_address_for_memo_text=next_address_info["address"],
-        current_address_for_memo_blockchain=next_address_info["blockchain"],
+        current_address_for_memo_text=address_text,
+        current_address_for_memo_blockchain=next_address_info["blockchain"], # Store original case for consistency if needed
         pending_addresses_for_memo=pending_list,
     )
+
+    prompt_text = (
+        f"Processing address: <code>{html.quote(address_text)}</code> ({html.quote(blockchain_text)}).\n"
+        "What would you like to do?"
+    )
+    
+    keyboard_buttons = [
+        [
+            InlineKeyboardButton(
+                text="✍️ Add Memo", 
+                callback_data=f"memo_action:request_add" # No ID needed, relies on FSM state
+            ),
+            InlineKeyboardButton(
+                text="⏭️ Skip This Address",
+                callback_data=f"memo_action:skip_current" # No ID needed
+            ),
+        ]
+    ]
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+
     await message_to_reply_to.answer(
-        f"Next, provide a memo for: <code>{next_address_info['address']}</code> ({next_address_info['blockchain'].capitalize()}).\nPlease reply with your memo, or send /skip.",
+        prompt_text,
+        reply_markup=keyboard,
         parse_mode="HTML",
     )
-    await state.set_state(AddressProcessingStates.awaiting_memo)
+    # DO NOT set AddressProcessingStates.awaiting_memo here.
+    # That will be set by the callback handler for "Add Memo".
 
 
 async def _process_memo_action(message: Message, state: FSMContext):

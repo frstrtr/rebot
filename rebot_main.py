@@ -27,6 +27,7 @@ from handlers import (
     unhandled_updates_handler,
     checkmemo_handler,
     handle_blockchain_clarification_callback,
+    handle_memo_action_callback,  # Add this import
     # AddressProcessingStates,
 )
 
@@ -155,8 +156,13 @@ class Rebot:
 
         self.rebot_dp.callback_query.register(
             handle_blockchain_clarification_callback,
-            # AddressProcessingStates.awaiting_blockchain, # State filter is applied if this handler is only for this state
             F.data.startswith("clarify_bc:"),
+        )
+
+        # Register the new memo action callback handler
+        self.rebot_dp.callback_query.register(
+            handle_memo_action_callback,
+            F.data.startswith("memo_action:"),
         )
 
 

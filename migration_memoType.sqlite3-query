@@ -1,0 +1,5 @@
+-- database: ./rebot.db
+
+ALTER TABLE crypto_addresses ADD COLUMN memo_type VARCHAR(20);
+ALTER TABLE crypto_addresses ADD COLUMN memo_added_by_user_id INTEGER;
+ALTER TABLE crypto_addresses ADD COLUMN memo_updated_at DATETIME;

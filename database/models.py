@@ -21,6 +21,14 @@ try:
 except ImportError:
     JsonType = JSON
 
+class MemoType(enum.Enum):
+    """Type of memo for a crypto address"""
+    PUBLIC = "public"        # Visible to all users who can see the address
+    PRIVATE = "private"      # Visible only to the user who added it (requires user tracking for memos)
+    ENCRYPTED = "encrypted"  # Content is encrypted, accessible with a key (key management not included here)
+    ADMIN = "admin"          # Visible only to administrators
+    OTHER = "other"          # A generic type if none of the above fit
+
 class CryptoAddressStatus(enum.Enum):
     """Status of a crypto address"""
     UNKNOWN = "unknown"
@@ -118,11 +126,19 @@ class CryptoAddress(Base):
     message = relationship("Message", back_populates="crypto_addresses")
     events = relationship("Event", back_populates="crypto_address")
     
+    # Memo fields
+    notes = Column(Text, nullable=True) # Stores the actual memo content
+    memo_type = Column(String(20), nullable=True) # Stores the type of the memo, maps to MemoType enum
+    memo_added_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True) # Optional: track who added/updated the memo
+    memo_updated_at = Column(DateTime, nullable=True) # Optional: track when the memo was last updated
+
     # Reserved fields for future use
-    notes = Column(Text, nullable=True)
     risk_score = Column(Float, nullable=True)
     investigation_data = Column(Text, nullable=True)  # Stores JSON as text in SQLite
     reserved_data = Column(Text, nullable=True)  # Stores JSON as text in SQLite
+
+    # Optional: Relationship for memo_added_by_user_id
+    memo_added_by = relationship("User", foreign_keys=[memo_added_by_user_id])
 
 class Event(Base):
     """Event information"""

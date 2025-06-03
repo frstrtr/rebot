@@ -6,12 +6,12 @@ import logging
 from database.connection import Base, engine
 from database.models import (
     User, Chat, Message, CryptoAddress, Event, ReservedField,
-    CryptoAddressStatus, EventType
+    CryptoAddressStatus, EventType, MemoType # Added MemoType
 )
 
 def serialize_enum(obj):
     """Helper to serialize enum values for JSON storage"""
-    if isinstance(obj, (CryptoAddressStatus, EventType)):
+    if isinstance(obj, (CryptoAddressStatus, EventType, MemoType)): # Added MemoType
         return obj.value
     raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
 

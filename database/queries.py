@@ -20,11 +20,12 @@ from database.models import (
     Message,
     Chat,
     CryptoAddress,
-    Event, # ReservedField was unused
+    Event, 
     CryptoAddressStatus,
     EventType,
+    MemoType, # Added MemoType
 )
-from database.schema import json_dumps # json_loads was unused
+from database.schema import json_dumps
 
 # User operations
 def get_or_create_user(db: Session, telegram_user: TelegramUser) -> User:
@@ -134,11 +135,13 @@ def save_crypto_address(
         logging.debug(f"CryptoAddress {address} on {blockchain} for message_id {message_id} already exists with id {existing.id}.")
         return existing
 
+    # Default memo_type can be None or a specific default if desired
     crypto_address = CryptoAddress(
         address=address,
         blockchain=blockchain,
         status=CryptoAddressStatus.TO_CHECK.value,
         message_id=message_id,
+        memo_type=None, # Initialize memo_type
     )
     db.add(crypto_address)
     db.commit()
@@ -152,6 +155,46 @@ def save_crypto_address(
         crypto_address_id=crypto_address.id,
         data=data,
     )
+
+    return crypto_address
+
+
+def update_crypto_address_memo(
+    db: Session,
+    address_id: int,
+    notes: Optional[str],
+    memo_type: Optional[str], # Expects a string value from MemoType enum, e.g., "public"
+    user_id: Optional[int] = None # Optional: ID of the user updating the memo
+) -> Optional[CryptoAddress]:
+    """Update the notes and memo_type of a crypto address."""
+    crypto_address = (
+        db.query(CryptoAddress).filter(CryptoAddress.id == address_id).first()
+    )
+    if crypto_address:
+        crypto_address.notes = notes
+        if memo_type:
+            try:
+                # Validate if memo_type is a valid member of MemoType enum
+                valid_memo_type = MemoType(memo_type).value
+                crypto_address.memo_type = valid_memo_type
+            except ValueError:
+                logging.error(f"Invalid memo_type: {memo_type}. Not updating memo_type.")
+                # Optionally, you could raise an error or handle it differently
+        else:
+            crypto_address.memo_type = None # Clear memo_type if None is passed
+
+        if user_id:
+            crypto_address.memo_added_by_user_id = user_id
+        
+        crypto_address.memo_updated_at = datetime.now(timezone.utc)
+        crypto_address.updated_at = datetime.now(timezone.utc) # Also update the general updated_at
+        
+        db.commit()
+        db.refresh(crypto_address)
+        
+        # Log memo update event (optional)
+        # event_data = json_dumps({"address_id": address_id, "memo_type": crypto_address.memo_type, "updated_by": user_id})
+        # create_event(db, "MEMO_UPDATED", data=event_data, crypto_address_id=address_id, user_id=user_id)
 
     return crypto_address
 

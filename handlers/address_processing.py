@@ -129,7 +129,8 @@ async def _send_action_prompt(
     target_message: Message, 
     address: str, 
     blockchain: str, 
-    state: FSMContext, 
+    state: FSMContext, # Keep state for other potential uses or if other buttons need it
+    db: Session, # Added db session
     edit_message: bool = False
 ):
     """Sends a message with action buttons for an identified address."""
@@ -146,9 +147,6 @@ async def _send_action_prompt(
         config_data = EXPLORER_CONFIG[blockchain.lower()]
         explorer_name = config_data["name"]
         url = config_data["url_template"].format(address=address)
-        # button_text_addr_short = ( # This variable is not used for button text here
-        #     f"{address[:6]}...{address[-4:]}" if len(address) > 20 else address
-        # )
         action_buttons_row1.append(
             InlineKeyboardButton(
                 text=f"🔎 View on {explorer_name}",
@@ -156,11 +154,32 @@ async def _send_action_prompt(
             )
         )
     
+    # Count existing memos for the button
+    memo_count = 0
+    try:
+        memo_count = (
+            db.query(func.count(CryptoAddress.id)) # pylint: disable=not-callable
+            .filter(
+                func.lower(CryptoAddress.address) == address.lower(),
+                func.lower(CryptoAddress.blockchain) == blockchain.lower(),
+                CryptoAddress.notes.isnot(None),
+                CryptoAddress.notes != "",
+            )
+            .scalar()
+        ) or 0
+    except Exception as e:
+        logging.error(f"Error counting memos for action prompt button: {e}") # pylint: disable=logging-fstring-interpolation
+        # memo_count remains 0
+
     # Show Previous Memos Button
+    show_memos_button_text = "📜 Show Memos"
+    if memo_count > 0:
+        show_memos_button_text += f" ({memo_count})"
+
     action_buttons_row1.append(
         InlineKeyboardButton(
-            text="📜 Show Memos", 
-            callback_data="show_prev_memos"  # MODIFIED: Removed address and blockchain
+            text=show_memos_button_text, 
+            callback_data="show_prev_memos"
         )
     )
     
@@ -413,7 +432,7 @@ async def _scan_message_for_addresses_action(
             )
 
             # Send the new action prompt
-            await _send_action_prompt(message, addr_str_to_process, chosen_blockchain, state)
+            await _send_action_prompt(message, addr_str_to_process, chosen_blockchain, state, db) # Pass db session
             
             # The initial summary explorer buttons can still be sent if desired
             if chosen_blockchain in EXPLORER_CONFIG:

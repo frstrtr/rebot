@@ -8,7 +8,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardBut
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramAPIError
 
-from database import SessionLocal
+from database import SessionLocal, CryptoAddress
 from .address_processing import (
     _display_memos_for_address_blockchain,
     _orchestrate_next_processing_step,
@@ -22,13 +22,7 @@ from .states import AddressProcessingStates  # Ensure this is imported if not al
 async def handle_blockchain_clarification_callback(
     callback_query: types.CallbackQuery, state: FSMContext
 ):
-    """Handles callbacks from inline buttons related to blockchain clarifications.
-    This function processes the callback data to either confirm a blockchain choice
-    or skip the clarification for a specific address.
-    It updates the state with the chosen blockchain or skips the clarification,
-    and orchestrates the next processing step based on the user's choice.
-    """
-
+    """Handles blockchain clarification button presses."""
     await callback_query.answer()
     data = await state.get_data()
     item_being_clarified = data.get("current_item_for_blockchain_clarification")
@@ -37,61 +31,75 @@ async def handle_blockchain_clarification_callback(
     )
 
     if not item_being_clarified:
+        logging.warning(
+            "Blockchain clarification callback received but no item_being_clarified in state."
+        )
         await callback_query.message.answer(
-            "Error: Could not determine which address this choice is for. Please try scanning again."
+            "Error: Could not determine which address to clarify. Please try scanning again."
         )
         await state.clear()
         return
-    if callback_query.data is None:
-        logging.warning("Callback with None data in blockchain clarification.")
-        await callback_query.message.answer("An error occurred (no data).")
-        return
 
-    action_parts = callback_query.data.split(":")
-    if len(action_parts) < 2:
-        logging.warning("Invalid callback data: %s", callback_query.data)
-        await callback_query.message.answer("An error occurred (invalid format).")
-        return
+    action = callback_query.data.split(":")[1]
+    address_str = item_being_clarified["address"]
+    db = SessionLocal() # Create a new session
 
-    param_one = action_parts[1]
-    if param_one == "chosen":
-        if len(action_parts) < 3:
-            logging.warning("Invalid 'chosen' callback: %s", callback_query.data)
-            await callback_query.message.answer("Error (missing choice).")
-            return
+    try:
+        if action == "chosen":
+            chosen_blockchain = callback_query.data.split(":")[2]
+            logging.info(
+                "User chose blockchain '%s' for address '%s'",
+                chosen_blockchain,
+                address_str,
+            )
 
-        chosen_blockchain = action_parts[
-            2
-        ]  # This is the blockchain key (e.g., 'ethereum', 'tron')
-        address_str = item_being_clarified["address"]
+            # Update FSM: this address is now the one to be actioned upon.
+            # The structure for addresses_for_memo_prompt_details should be a list of dicts.
+            # We are setting it directly for the current clarified address.
+            addresses_for_memo_prompt_details_fsm = [
+                {"address": address_str, "blockchain": chosen_blockchain}
+            ]
+            await state.update_data(
+                addresses_for_memo_prompt_details=addresses_for_memo_prompt_details_fsm,
+                current_item_for_blockchain_clarification=None,  # Clear the item being clarified
+                pending_blockchain_clarification=data.get("pending_blockchain_clarification", []), # Preserve pending
+            )
+            
+            # Edit the clarification message to show the choice and then send the action prompt.
+            await callback_query.message.edit_text(
+                f"✅ Blockchain for <code>{html.quote(address_str)}</code> set to <b>{html.quote(chosen_blockchain.capitalize())}</b>.",
+                parse_mode="HTML",
+                reply_markup=None, # Remove inline keyboard from clarification message
+            )
+            # Send the action prompt for this address
+            await _send_action_prompt(
+                target_message=callback_query.message, # Send as a new message or edit an existing one
+                address=address_str,
+                blockchain=chosen_blockchain,
+                state=state,
+                db=db  # Pass the db session
+            )
+            # No need to call orchestrator here, user will interact with the new action prompt.
 
-        # This address is now the one to be actioned upon if user proceeds to memo.
-        addresses_for_memo_fsm = [{"address": address_str, "blockchain": chosen_blockchain}]
-        await state.update_data(
-            addresses_for_memo_prompt_details=addresses_for_memo_fsm,
-            current_item_for_blockchain_clarification=None,
-        )
-
-        # Send the new action prompt, editing the previous message
-        await _send_action_prompt(
-            callback_query.message, address_str, chosen_blockchain, state, edit_message=True
-        )
-        # No direct orchestration here; user interaction drives it.
-
-    elif param_one == "skip":  # Skips blockchain clarification for this item
-        await state.update_data(current_item_for_blockchain_clarification=None)
-        await callback_query.message.edit_text(
-            f"Skipped blockchain clarification for: <code>{html.quote(item_being_clarified['address'])}</code>.",
-            parse_mode="HTML",
-            reply_markup=None,
-        )
-        await _orchestrate_next_processing_step(callback_query.message, state)  # Check if other items need clarification
-    else:
-        logging.warning(
-            "Unknown callback for blockchain clarification: %s", callback_query.data
-        )
-        await callback_query.message.answer("Unexpected selection error.")
-
+        elif action == "skip":
+            logging.info("User skipped blockchain clarification for address %s", address_str)
+            await callback_query.message.edit_text(
+                f"⏭️ Skipped blockchain clarification for <code>{html.quote(address_str)}</code>.",
+                parse_mode="HTML",
+                reply_markup=None,
+            )
+            await state.update_data(current_item_for_blockchain_clarification=None)
+            # Orchestrate to process next if any, or finish.
+            # Need to pass the original message that triggered the scan for reply context if orchestrator needs it.
+            # This might require storing the original message_id or chat_id in FSM if not already.
+            # For now, assuming callback_query.message can be used as a reply target.
+            await _orchestrate_next_processing_step(callback_query.message, state)
+        else:
+            logging.warning("Unknown action in blockchain clarification: %s", action)
+            await callback_query.message.answer("Invalid action. Please try again.")
+    finally:
+        if db.is_active:
+            db.close() # Close the session
 
 async def handle_show_previous_memos_callback(callback_query: types.CallbackQuery, state: FSMContext):
     """Handles the 'Show Previous Memos' button click."""

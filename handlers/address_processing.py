@@ -32,6 +32,8 @@ from .common import (
 )
 from .states import AddressProcessingStates
 from .helpers import get_ambiguity_group_members
+from utils.colors import Colors # Adjust relative import based on your structure
+
 
 
 async def _display_memos_for_address_blockchain(
@@ -292,9 +294,9 @@ async def _scan_message_for_addresses_action(
     message: Message, state: FSMContext, text_override: str = None
 ):
     db = SessionLocal()
-    saved_db_message_id = None # To store the ID safely
+    saved_db_message_id = None 
     try:
-        db_message_instance = save_message(db, message) # Renamed to avoid confusion with aiogram.types.Message
+        db_message_instance = save_message(db, message) 
 
         if db_message_instance is None:
             logging.error("Failed to save message to database.")
@@ -303,12 +305,10 @@ async def _scan_message_for_addresses_action(
             )
             return
 
-        # Immediately access and store the ID after the object is saved.
-        # This assumes save_message commits or flushes, populating the ID.
         saved_db_message_id = db_message_instance.id
         
         if saved_db_message_id is None:
-            logging.error("Failed to retrieve ID from saved message object. save_message might not be committing/flushing correctly.")
+            logging.error("Failed to retrieve ID from saved message object.")
             await message.reply(
                 "[_scan_message_for_addresses_action] An error occurred while processing your message (DB ID assignment failed)."
             )
@@ -318,14 +318,21 @@ async def _scan_message_for_addresses_action(
         if not text_to_scan:
             logging.debug(
                 "Message ID %s (or override) has no text content to scan for addresses.",
-                saved_db_message_id, # USE THE STORED ID
+                saved_db_message_id, 
             )
-            if text_override and not text_to_scan:
+            if text_override and not text_to_scan: # If it was an override that was empty
                 await message.reply(
                     "[_scan_message_for_addresses_action] The address from the link appears to be empty. Please try again."
                 )
-            return
+            return # No further processing if no text
 
+        # Color the text_to_scan green for this specific log message
+        logging.info(
+            f"[_scan_message_for_addresses_action] Scanning for addresses in message ID %s. Text: '{Colors.GREEN}%s{Colors.RESET}'",
+            saved_db_message_id,
+            text_to_scan,
+        )
+        
         detected_raw_addresses_map = crypto_finder.find_addresses(text_to_scan)
         logging.debug("Detected map from crypto_finder: %s", detected_raw_addresses_map)
 

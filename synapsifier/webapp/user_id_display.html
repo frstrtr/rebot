@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User ID Info</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        body {
+            font-family: sans-serif;
+            padding: 15px;
+            color: var(--tg-theme-text-color);
+            background-color: var(--tg-theme-bg-color);
+        }
+        .container {
+            background-color: var(--tg-theme-secondary-bg-color);
+            padding: 20px;
+            border-radius: 8px;
+        }
+        h1 {
+            color: var(--tg-theme-text-color);
+            text-align: center;
+        }
+        p {
+            margin: 8px 0;
+        }
+        strong {
+            color: var(--tg-theme-hint-color);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Your Telegram Info</h1>
+        <div id="userInfo">
+            <p>Loading your info...</p>
+        </div>
+    </div>
+
+    <script>
+        // Initialize the Telegram Web App
+        Telegram.WebApp.ready();
+
+        // Access user data
+        const initData = Telegram.WebApp.initDataUnsafe;
+        const user = initData.user;
+
+        const userInfoDiv = document.getElementById('userInfo');
+
+        if (user) {
+            let html = `<p><strong>User ID:</strong> ${user.id}</p>`;
+            if (user.first_name) {
+                html += `<p><strong>First Name:</strong> ${escapeHtml(user.first_name)}</p>`;
+            }
+            if (user.last_name) {
+                html += `<p><strong>Last Name:</strong> ${escapeHtml(user.last_name)}</p>`;
+            }
+            if (user.username) {
+                html += `<p><strong>Username:</strong> @${escapeHtml(user.username)}</p>`;
+            }
+            if (user.language_code) {
+                html += `<p><strong>Language Code:</strong> ${escapeHtml(user.language_code)}</p>`;
+            }
+            html += `<p><strong>Is Premium:</strong> ${user.is_premium ? 'Yes' : 'No'}</p>`;
+            
+            userInfoDiv.innerHTML = html;
+        } else {
+            userInfoDiv.innerHTML = "<p>Could not retrieve user information. Make sure you're opening this from a Telegram bot's Web App button.</p>";
+        }
+
+        // Basic HTML escaping function
+        function escapeHtml(unsafe) {
+            if (typeof unsafe !== 'string') return '';
+            return unsafe
+                 .replace(/&/g, "&amp;")
+                 .replace(/</g, "&lt;")
+                 .replace(/>/g, "&gt;")
+                 .replace(/"/g, "&quot;")
+                 .replace(/'/g, "&#039;");
+        }
+
+        // Optional: Close button (if you want the web app to be able to close itself)
+        // Telegram.WebApp.MainButton.setText("Close");
+        // Telegram.WebApp.MainButton.show();
+        // Telegram.WebApp.MainButton.onClick(function(){
+        //     Telegram.WebApp.close();
+        // });
+
+    </script>
+</body>
+</html>

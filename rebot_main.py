@@ -36,6 +36,11 @@ from handlers import (
 # 1. Define Context Variable for user_id
 user_id_context = contextvars.ContextVar("user_id_context", default="N/A")
 
+# ANSI escape codes for colors
+class Colors:
+    YELLOW = '\033[93m'
+    GREEN = '\033[92m'  # Added Green
+    RESET = '\033[0m'
 
 # 2. Custom Logging Filter to add user_id to log records
 class UserIdContextFilter(logging.Filter):
@@ -206,9 +211,16 @@ async def main():
 
 
 if __name__ == "__main__":
-    # 1. Create the filter and formatter
+    # 1. Create the filter and formatters
     custom_filter = UserIdContextFilter()
-    log_formatter = logging.Formatter(
+    
+    # Formatter for console with color
+    console_log_formatter = logging.Formatter(
+        f"%(asctime)s - %(levelname)s - %(name)s - UserID: {Colors.YELLOW}%(user_id)s{Colors.RESET} - %(message)s"
+    )
+    
+    # Formatter for file (no color)
+    file_log_formatter = logging.Formatter(
         "%(asctime)s - %(levelname)s - %(name)s - UserID: %(user_id)s - %(message)s"
     )
 
@@ -220,7 +232,7 @@ if __name__ == "__main__":
 
     # Console Handler
     console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(log_formatter)
+    console_handler.setFormatter(console_log_formatter) # Use colored formatter
     console_handler.addFilter(custom_filter)
     root_logger.addHandler(console_handler)
 
@@ -234,7 +246,7 @@ if __name__ == "__main__":
     file_handler = TimedRotatingFileHandler(
         log_file_path, when="midnight", interval=1, backupCount=7, encoding="utf-8"
     )
-    file_handler.setFormatter(log_formatter)
+    file_handler.setFormatter(file_log_formatter) # Use non-colored formatter for file
     file_handler.addFilter(custom_filter)
     root_logger.addHandler(file_handler)
 

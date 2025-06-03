@@ -47,12 +47,12 @@ async def _display_memos_for_address_blockchain(
 
     if not existing_memos_specific:
         await message_target.answer(
-            f"ℹ️ No previous memos found for <code>{html.quote(address)}</code> on {html.quote(blockchain.capitalize())}.",
+            f"[_display_memos_for_address_blockchain] ℹ️ No previous memos found for <code>{html.quote(address)}</code> on {html.quote(blockchain.capitalize())}.",
             parse_mode="HTML",
         )
         return
 
-    list_header = f"📜 <b>Previous Memos for <code>{html.quote(address)}</code> on {html.quote(blockchain.capitalize())}:</b>"
+    list_header = f"[_display_memos_for_address_blockchain] 📜 <b>Previous Memos for <code>{html.quote(address)}</code> on {html.quote(blockchain.capitalize())}:</b>"
 
     memo_item_lines = []
     for memo_item in existing_memos_specific:
@@ -118,6 +118,10 @@ async def _display_memos_for_address_blockchain(
 
     for text_to_send in final_messages_to_send:
         if text_to_send.strip():
+            # Prepending here might be tricky if text_to_send already has the header.
+            # For simplicity, we'll assume the core message content is what we want to augment.
+            # However, list_header is already prepended. So this loop's messages are continuations or the main block.
+            # Let's adjust list_header and then send parts as they are.
             await message_target.answer(text_to_send, parse_mode="HTML")
 
 
@@ -130,7 +134,7 @@ async def _send_action_prompt(
 ):
     """Sends a message with action buttons for an identified address."""
     prompt_text = (
-        f"Address <code>{html.quote(address)}</code> identified for <b>{html.quote(blockchain.capitalize())}</b>.\n"
+        f"[_send_action_prompt] Address <code>{html.quote(address)}</code> identified for <b>{html.quote(blockchain.capitalize())}</b>.\n"
         "What would you like to do?"
     )
     
@@ -192,7 +196,7 @@ async def _send_action_prompt(
         except TelegramAPIError as e:
             logging.warning("Failed to edit message for action prompt, sending new: %s", e)
             await target_message.answer(
-                text=prompt_text, parse_mode="HTML", reply_markup=reply_markup
+                text=f"[_send_action_prompt] (fallback) {prompt_text}", parse_mode="HTML", reply_markup=reply_markup
             )
     else:
         await target_message.answer(
@@ -209,7 +213,7 @@ async def _scan_message_for_addresses_action(
         if db_message is None:
             logging.error("Failed to save message to database.")
             await message.reply(
-                "An error occurred while processing your message (DB save failed)."
+                "[_scan_message_for_addresses_action] An error occurred while processing your message (DB save failed)."
             )
             return
 
@@ -221,7 +225,7 @@ async def _scan_message_for_addresses_action(
             )
             if text_override and not text_to_scan:
                 await message.reply(
-                    "The address from the link appears to be empty. Please try again."
+                    "[_scan_message_for_addresses_action] The address from the link appears to be empty. Please try again."
                 )
             return
 
@@ -296,7 +300,7 @@ async def _scan_message_for_addresses_action(
         if not detected_raw_addresses_map:
             logging.debug("No crypto addresses found in message ID %s.", db_message.id)
             await message.reply(
-                "No crypto addresses found in your message. Please send a message containing a crypto address."
+                "[_scan_message_for_addresses_action] No crypto addresses found in your message. Please send a message containing a crypto address."
             )
             return
 
@@ -315,7 +319,7 @@ async def _scan_message_for_addresses_action(
                 db_message.id,
             )
             await message.reply(
-                "No processable crypto addresses found in your message."
+                "[_scan_message_for_addresses_action] No processable crypto addresses found in your message."
             )
             return
 
@@ -324,7 +328,7 @@ async def _scan_message_for_addresses_action(
 
         if len(ordered_addr_keys) > 1:
             await message.reply(
-                f"I found {len(ordered_addr_keys)} unique address strings in your message. "
+                f"[_scan_message_for_addresses_action] I found {len(ordered_addr_keys)} unique address strings in your message. "
                 f"I will process the first one: <code>{html.quote(addr_str_to_process)}</code>.\n"
                 "Please send other addresses in separate messages if needed."
             )
@@ -419,7 +423,7 @@ async def _scan_message_for_addresses_action(
         # This initial summary message with explorer buttons can still be sent
         # It's separate from the action prompt for the first address.
         if detected_address_info_blocks: # Send the summary of what was detected
-            initial_header_text = "<b>Address Detection:</b>\n\n"
+            initial_header_text = "<b>[_scan_message_for_addresses_action] Address Detection:</b>\n\n"
             final_messages_to_send, active_message_parts, current_length = (
                 [],
                 [initial_header_text],
@@ -475,6 +479,8 @@ async def _scan_message_for_addresses_action(
                 final_messages_to_send.append("".join(active_message_parts))
             for text_to_send in final_messages_to_send:
                 if text_to_send.strip():
+                    # If text_to_send starts with the original header, it will be prepended twice.
+                    # This is a simple prepend, adjust if more nuanced prefixing is needed.
                     await message.answer(text_to_send, parse_mode="HTML")
 
         if addresses_for_explorer_buttons: # Send the summary explorer buttons message
@@ -499,7 +505,7 @@ async def _scan_message_for_addresses_action(
                     )
             if explorer_url_buttons_list:
                 await message.answer(
-                    "Direct links to blockchain explorers:",
+                    "[_scan_message_for_addresses_action] Direct links to blockchain explorers:",
                     reply_markup=InlineKeyboardMarkup(
                         inline_keyboard=explorer_url_buttons_list
                     ),
@@ -518,12 +524,12 @@ async def _scan_message_for_addresses_action(
 
     except ValueError as ve:
         logging.error("ValueError in address scanning: %s", ve)
-        await message.reply("An error occurred while processing your message.")
+        await message.reply("[_scan_message_for_addresses_action] An error occurred while processing your message.")
     except Exception as e:
         logging.exception(
             "Unexpected error in _scan_message_for_addresses_action: %s", e
         )
-        await message.reply("An unexpected error occurred.")
+        await message.reply("[_scan_message_for_addresses_action] An unexpected error occurred.")
     finally:
         if db.is_active:
             db.close()
@@ -544,7 +550,7 @@ async def _orchestrate_next_processing_step(
             "Cannot orchestrate: current_scan_db_message_id not found in FSM state."
         )
         await message_to_reply_to.answer(
-            "An internal error occurred (missing message context). Please try scanning again."
+            "[_orchestrate_next_processing_step] An internal error occurred (missing message context). Please try scanning again."
         )
         await state.clear()
         return
@@ -592,13 +598,13 @@ async def _orchestrate_next_processing_step(
                 if not remaining_clarifications.get(
                     "pending_blockchain_clarification"
                 ):  # Check if any clarifications were re-added or still pending
-                    await message_to_reply_to.answer("Finished processing addresses.")
+                    await message_to_reply_to.answer("[_orchestrate_next_processing_step] Finished processing addresses.")
                     await state.clear()
         else:
             logging.info(
                 "Orchestration complete: No pending clarifications or memo prompts."
             )
-            await message_to_reply_to.answer("All detected addresses processed.")
+            await message_to_reply_to.answer("[_orchestrate_next_processing_step] All detected addresses processed.")
             await state.clear()
     finally:
         if db.is_active:
@@ -660,9 +666,9 @@ async def _ask_for_blockchain_clarification(
     )
     keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons_rows)
     prompt_text = (
-        f"For address: <code>{html.quote(address)}</code>\nWhich blockchain network does this address belong to?\nPlease select from the options below."
+        f"[_ask_for_blockchain_clarification] For address: <code>{html.quote(address)}</code>\nWhich blockchain network does this address belong to?\nPlease select from the options below."
         if detected_options
-        else f"For address: <code>{html.quote(address)}</code>\nI couldn't auto-detect specific blockchain networks for this address. If you know the network, you might need to send the address again, perhaps with more context. For now, you can choose to skip processing this address."
+        else f"[_ask_for_blockchain_clarification] For address: <code>{html.quote(address)}</code>\nI couldn't auto-detect specific blockchain networks for this address. If you know the network, you might need to send the address again, perhaps with more context. For now, you can choose to skip processing this address."
     )
     await message_to_reply_to.answer(
         prompt_text, reply_markup=keyboard, parse_mode="HTML"
@@ -685,7 +691,7 @@ async def _handle_blockchain_reply(message: Message, state: FSMContext):
     chosen_blockchain = (message.text or "").strip().lower()
     if not chosen_blockchain:
         await message.reply(
-            "Blockchain name cannot be empty. Please try again, or use /skip."
+            "[_handle_blockchain_reply] Blockchain name cannot be empty. Please try again, or use /skip."
         )  # Adjusted skip command
         return
     addresses_for_memo_prompt_details.append(
@@ -696,7 +702,7 @@ async def _handle_blockchain_reply(message: Message, state: FSMContext):
         current_item_for_blockchain_clarification=None,
     )
     await message.reply(
-        f"Noted: Address <code>{html.quote(item_being_clarified['address'])}</code> will be associated with <b>{html.quote(chosen_blockchain.capitalize())}</b>.",
+        f"[_handle_blockchain_reply] Noted: Address <code>{html.quote(item_being_clarified['address'])}</code> will be associated with <b>{html.quote(chosen_blockchain.capitalize())}</b>.",
         parse_mode="HTML",
     )
     await _orchestrate_next_processing_step(message, state)
@@ -722,7 +728,7 @@ async def _prompt_for_next_memo(
     )
 
     prompt_text = (
-        f"Processing address: <code>{html.quote(address_text)}</code> ({html.quote(blockchain_text)}).\n"
+        f"[_prompt_for_next_memo] Processing address: <code>{html.quote(address_text)}</code> ({html.quote(blockchain_text)}).\n"
         "What would you like to do?"
     )
     
@@ -763,14 +769,14 @@ async def _process_memo_action(message: Message, state: FSMContext):
         if not address_id_to_update:
             logging.warning("Attempted to process memo without address_id in state.")
             await message.answer(
-                "Error: Could not determine which address to update. Please try scanning again."
+                "[_process_memo_action] Error: Could not determine which address to update. Please try scanning again."
             )
             await state.clear()
             return
         memo_text = message.text.strip()
         if not memo_text:
             await message.reply(
-                "Memo cannot be empty. Please provide a memo or send /skip."
+                "[_process_memo_action] Memo cannot be empty. Please provide a memo or send /skip."
             )
             return
 
@@ -783,7 +789,7 @@ async def _process_memo_action(message: Message, state: FSMContext):
             addr_record.notes = memo_text
             db.commit()
             await message.answer(
-                f"📝 Memo saved for <code>{html.quote(address_text_for_display)}</code> ({html.quote(blockchain_for_display.capitalize())}).",
+                f"[_process_memo_action] 📝 Memo saved for <code>{html.quote(address_text_for_display)}</code> ({html.quote(blockchain_for_display.capitalize())}).",
                 parse_mode="HTML",
             )
             if message.from_user:  # Audit log
@@ -839,19 +845,19 @@ Blockchain: {html.quote(blockchain_for_display.capitalize())}
                 "Could not find CryptoAddress with id %s to save memo.",
                 address_id_to_update,
             )
-            await message.answer("Error: Could not find the address to save the memo.")
+            await message.answer("[_process_memo_action] Error: Could not find the address to save the memo.")
             await state.clear()
             return
         if pending_addresses:
             await _prompt_for_next_memo(message, state, pending_addresses)
         else:
             await message.answer(
-                "All memos processed. You can send new messages with addresses."
+                "[_process_memo_action] All memos processed. You can send new messages with addresses."
             )
             await state.clear()
     except Exception as e:
         logging.exception("Error in _process_memo_action: %s", e)
-        await message.reply("An error occurred while saving the memo.")
+        await message.reply("[_process_memo_action] An error occurred while saving the memo.")
         await state.clear()
     finally:
         if db.is_active:
@@ -865,12 +871,12 @@ async def _skip_memo_action(message: Message, state: FSMContext):
     )
     pending_addresses = data.get("pending_addresses_for_memo", [])
     await message.answer(
-        f"Skipped memo for <code>{address_text_for_display}</code>.", parse_mode="HTML"
+        f"[_skip_memo_action] Skipped memo for <code>{address_text_for_display}</code>.", parse_mode="HTML"
     )
     if pending_addresses:
         await _prompt_for_next_memo(message, state, pending_addresses)
     else:
         await message.answer(
-            "All memos processed. You can send new messages with addresses."
+            "[_skip_memo_action] All memos processed. You can send new messages with addresses."
         )
         await state.clear()

@@ -16,7 +16,7 @@ from .address_processing import (
     _send_action_prompt,  # Import the new helper
 )
 from .common import EXPLORER_CONFIG
-from .states import AddressProcessingStates
+from .states import AddressProcessingStates  # Ensure this is imported if not already
 
 
 async def handle_blockchain_clarification_callback(
@@ -98,14 +98,13 @@ async def handle_show_previous_memos_callback(callback_query: types.CallbackQuer
     await callback_query.answer()
     
     data = await state.get_data()
-    # Retrieve address and blockchain from FSM state
-    # This data should have been set by _scan_message_for_addresses_action or handle_blockchain_clarification_callback
-    # and stored in 'addresses_for_memo_prompt_details' before _send_action_prompt was called.
     action_details_list = data.get("addresses_for_memo_prompt_details")
 
     if not action_details_list or not isinstance(action_details_list, list) or not action_details_list[0]:
         logging.warning("Could not retrieve address/blockchain from state for show_prev_memos. State: %s", data)
         await callback_query.message.answer("Error: Context lost. Please try scanning the address again.")
+        # Optionally, clear state fully if context is truly lost for subsequent actions
+        # await state.clear() 
         return
 
     current_action_info = action_details_list[0]
@@ -125,7 +124,17 @@ async def handle_show_previous_memos_callback(callback_query: types.CallbackQuer
     finally:
         if db_session.is_active:
             db_session.close()
-    # The original action prompt message remains, allowing other actions.
+    
+    # After displaying memos, set the FSM state to None.
+    # This ensures the bot is not stuck in a previous state like 'awaiting_blockchain'.
+    # FSM data (like addresses_for_memo_prompt_details) will be preserved.
+    current_fsm_state = await state.get_state()
+    if current_fsm_state is not None:
+        logging.debug(f"Clearing FSM state from {current_fsm_state} after showing memos.")
+        await state.set_state(None)
+    
+    # The original action prompt message (if any) remains, allowing other actions.
+    # No further orchestration is typically needed here as this is a display action.
 
 async def handle_proceed_to_memo_stage_callback(callback_query: types.CallbackQuery, state: FSMContext):
     """Handles the 'Add/Manage Memo' button click from the action prompt."""

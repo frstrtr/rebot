@@ -208,12 +208,25 @@ async def _scan_message_for_addresses_action(
     message: Message, state: FSMContext, text_override: str = None
 ):
     db = SessionLocal()
+    saved_db_message_id = None # To store the ID safely
     try:
-        db_message = save_message(db, message)
-        if db_message is None:
+        db_message_instance = save_message(db, message) # Renamed to avoid confusion with aiogram.types.Message
+
+        if db_message_instance is None:
             logging.error("Failed to save message to database.")
             await message.reply(
                 "[_scan_message_for_addresses_action] An error occurred while processing your message (DB save failed)."
+            )
+            return
+
+        # Immediately access and store the ID after the object is saved.
+        # This assumes save_message commits or flushes, populating the ID.
+        saved_db_message_id = db_message_instance.id
+        
+        if saved_db_message_id is None:
+            logging.error("Failed to retrieve ID from saved message object. save_message might not be committing/flushing correctly.")
+            await message.reply(
+                "[_scan_message_for_addresses_action] An error occurred while processing your message (DB ID assignment failed)."
             )
             return
 
@@ -221,7 +234,7 @@ async def _scan_message_for_addresses_action(
         if not text_to_scan:
             logging.debug(
                 "Message ID %s (or override) has no text content to scan for addresses.",
-                db_message.id,
+                saved_db_message_id, # USE THE STORED ID
             )
             if text_override and not text_to_scan:
                 await message.reply(
@@ -298,13 +311,13 @@ async def _scan_message_for_addresses_action(
                 )
 
         if not detected_raw_addresses_map:
-            logging.debug("No crypto addresses found in message ID %s.", db_message.id)
+            logging.debug("No crypto addresses found in message ID %s.", saved_db_message_id) # USE THE STORED ID
             await message.reply(
                 "[_scan_message_for_addresses_action] No crypto addresses found in your message. Please send a message containing a crypto address."
             )
             return
 
-        await state.update_data(current_scan_db_message_id=db_message.id)
+        await state.update_data(current_scan_db_message_id=saved_db_message_id) # USE THE STORED ID
         aggregated_detections = {}
         for bc, addr_list in detected_raw_addresses_map.items():
             for addr in addr_list:
@@ -316,7 +329,7 @@ async def _scan_message_for_addresses_action(
         if not ordered_addr_keys:
             logging.info(
                 "No processable addresses after aggregation in message ID %s.",
-                db_message.id,
+                saved_db_message_id, # USE THE STORED ID
             )
             await message.reply(
                 "[_scan_message_for_addresses_action] No processable crypto addresses found in your message."

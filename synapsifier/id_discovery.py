@@ -47,12 +47,28 @@ dp = Dispatcher()
 # --- Handlers ---
 @dp.message(CommandStart(deep_link=True))
 async def cmd_start_deep_link(message: types.Message, command: CommandObject):
-    if command.args is None:
-        await message.answer("Hello! I'm your ID Finder bot.")
+    # command.args is the raw string after /start
+    # If the link was https://t.me/YOURBOT?startattach= (note the equals sign),
+    # command.args will be an empty string.
+    payload = decode_payload(command.args) # decode_payload("") results in ""
+
+    if command.args == "": # This will be true if the link was ?startattach=
+        logging.info(f"Bot started with an empty deep link payload (potentially from ?startattach=). User: {message.from_user.id}")
+        await message.answer(
+            "Hello! I'm your ID Finder bot, ready for use.\n"
+            "If you launched me to add to your attachment menu, I should now be available there to share an info card.\n"
+            "You can also use the /myid command to open the Web App directly to see your own info.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                # Also offer the direct Web App button
+                [InlineKeyboardButton(text="🔍 Show My Info (Web App)", web_app=WebAppInfo(url=WEBAPP_URL))]
+            ]) if WEBAPP_URL else None # Only show button if WEBAPP_URL is valid
+        )
         return
-    payload = decode_payload(command.args)
+
+    # For other non-empty payloads
+    logging.info(f"Bot started with deep link payload: '{payload}'. User: {message.from_user.id}")
     await message.answer(
-        f"Hello! Started with payload: {payload}. I'm your ID Finder bot.\n"
+        f"Hello! Started with payload: '{payload}'. I'm your ID Finder bot.\n"
         "Use /myid to see your info via a Web App, or use me inline (e.g., from the attach menu) to share an info card."
     )
 

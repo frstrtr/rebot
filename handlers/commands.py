@@ -210,16 +210,16 @@ async def checkmemo_handler(message: types.Message):
         for i, text_to_send in enumerate(final_messages_to_send):
             if text_to_send.strip():
                 await message.reply(
+                    text=text_to_send,  # Added text argument
                     reply_markup=(reply_markup_for_first_message if i == 0 else None),
                 )
     except (SQLAlchemyError, TelegramAPIError) as e:
         logging.exception(
             "Database or Telegram API error in checkmemo_handler for address %s: %s", html.quote(address_arg), e
         )
+        # Removed the first erroneous reply, the second one is sufficient for an error message.
         await message.reply(
-        )
-        await message.reply(
-            "An error occurred while retrieving memos. Please check the bot logs."
+            text="An error occurred while retrieving memos. Please check the bot logs." # Added text argument
         )
     finally:
         if db.is_active:

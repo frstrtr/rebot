@@ -5,21 +5,25 @@ including scanning messages for addresses, handling blockchain clarifications,
 and prompting for memos.
 """
 
-import logging
+import logging # Ensure logging is imported
+from typing import Optional # Import Optional for type hinting
 from aiogram import html, types
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramAPIError
-from sqlalchemy import func
+from sqlalchemy import func, or_ # Add this import for OR conditions in SQLAlchemy
 from sqlalchemy.orm import Session
 
 from database import (
     SessionLocal,
     save_message,
     save_crypto_address,
+    get_or_create_user, # Import get_or_create_user
     CryptoAddress,
     CryptoAddressStatus,
+    # MemoType, # Import MemoType # No longer imported directly from 'database'
 )
+from database.models import MemoType # Assuming MemoType is in database.models
 from .common import (
     crypto_finder,
     TARGET_AUDIT_CHANNEL_ID,
@@ -31,28 +35,51 @@ from .helpers import get_ambiguity_group_members
 
 
 async def _display_memos_for_address_blockchain(
-    message_target: types.Message, address: str, blockchain: str, db: Session
+    message_target: types.Message,
+    address: str,
+    blockchain: str,
+    db: Session,
+    memo_scope: str = "public",  # "public" or "private_own"
+    requesting_user_db_id: Optional[int] = None,
 ):
-    existing_memos_specific = (
-        db.query(CryptoAddress)
-        .filter(
-            func.lower(CryptoAddress.address) == address.lower(),
-            func.lower(CryptoAddress.blockchain) == blockchain.lower(),
-            CryptoAddress.notes.isnot(None),
-            CryptoAddress.notes != "",
-        )
-        .order_by(CryptoAddress.id)
-        .all()
+    query = db.query(CryptoAddress).filter(
+        func.lower(CryptoAddress.address) == address.lower(),
+        func.lower(CryptoAddress.blockchain) == blockchain.lower(),
+        CryptoAddress.notes.isnot(None),
+        CryptoAddress.notes != "",
     )
 
-    if not existing_memos_specific:
-        await message_target.answer(
-            f"[_display_memos_for_address_blockchain] ℹ️ No previous memos found for <code>{html.quote(address)}</code> on {html.quote(blockchain.capitalize())}.",
-            parse_mode="HTML",
+    header_scope_text = "Previous Public Memos"
+    if memo_scope == "private_own":
+        if not requesting_user_db_id:
+            await message_target.answer(
+                "[_display_memos_for_address_blockchain] Error: User ID not provided for private memos.",
+                parse_mode="HTML",
+            )
+            return
+        query = query.filter(
+            CryptoAddress.memo_type == MemoType.PRIVATE.value,
+            CryptoAddress.memo_added_by_user_id == requesting_user_db_id,
         )
+        header_scope_text = "Your Private Memos"
+    else:  # Default to public
+        query = query.filter(
+            or_(
+                CryptoAddress.memo_type == MemoType.PUBLIC.value,
+                CryptoAddress.memo_type.is_(None),  # Include old memos without a type as public
+            )
+        )
+
+    existing_memos_specific = query.order_by(CryptoAddress.id).all()
+
+    if not existing_memos_specific:
+        no_memos_message = f"[_display_memos_for_address_blockchain] ℹ️ No {header_scope_text.lower()} found for <code>{html.quote(address)}</code> on {html.quote(blockchain.capitalize())}."
+        if memo_scope == "private_own":
+            no_memos_message = f"[_display_memos_for_address_blockchain] ℹ️ You have no private memos for <code>{html.quote(address)}</code> on {html.quote(blockchain.capitalize())}."
+        await message_target.answer(no_memos_message, parse_mode="HTML")
         return
 
-    list_header = f"[_display_memos_for_address_blockchain] 📜 <b>Previous Memos for <code>{html.quote(address)}</code> on {html.quote(blockchain.capitalize())}:</b>"
+    list_header = f"[_display_memos_for_address_blockchain] 📜 <b>{header_scope_text} for <code>{html.quote(address)}</code> on {html.quote(blockchain.capitalize())}:</b>"
 
     memo_item_lines = []
     for memo_item in existing_memos_specific:
@@ -126,84 +153,122 @@ async def _display_memos_for_address_blockchain(
 
 
 async def _send_action_prompt(
-    target_message: Message, 
-    address: str, 
-    blockchain: str, 
-    state: FSMContext, # Keep state for other potential uses or if other buttons need it
-    db: Session, # Added db session
-    edit_message: bool = False
+    target_message: Message,
+    address: str,
+    blockchain: str,
+    state: FSMContext,
+    db: Session,
+    acting_telegram_user_id: int, # Telegram ID of the user interacting
+    edit_message: bool = False,
 ):
     """Sends a message with action buttons for an identified address."""
     prompt_text = (
         f"[_send_action_prompt] Address <code>{html.quote(address)}</code> identified for <b>{html.quote(blockchain.capitalize())}</b>.\n"
         "What would you like to do?"
     )
-    
-    action_buttons_row1 = []
-    action_buttons_row2 = []
 
-    # Explorer Button
+    # Define all buttons first
+    explorer_button = None
     if blockchain.lower() in EXPLORER_CONFIG:
         config_data = EXPLORER_CONFIG[blockchain.lower()]
         explorer_name = config_data["name"]
         url = config_data["url_template"].format(address=address)
-        action_buttons_row1.append(
-            InlineKeyboardButton(
-                text=f"🔎 View on {explorer_name}",
-                url=url,
-            )
+        explorer_button = InlineKeyboardButton(
+            text=f"🔎 View on {explorer_name}",
+            url=url,
         )
-    
-    # Count existing memos for the button
-    memo_count = 0
+
+    public_memo_count = 0
     try:
-        memo_count = (
+        public_memo_count = (
             db.query(func.count(CryptoAddress.id)) # pylint: disable=not-callable
             .filter(
                 func.lower(CryptoAddress.address) == address.lower(),
                 func.lower(CryptoAddress.blockchain) == blockchain.lower(),
                 CryptoAddress.notes.isnot(None),
                 CryptoAddress.notes != "",
+                or_(
+                    CryptoAddress.memo_type == MemoType.PUBLIC.value,
+                    CryptoAddress.memo_type.is_(None)
+                )
             )
             .scalar()
         ) or 0
     except Exception as e:
-        logging.error(f"Error counting memos for action prompt button: {e}") # pylint: disable=logging-fstring-interpolation
-        # memo_count remains 0
+        logging.error(f"Error counting public memos for action prompt button: {e}") # pylint: disable=logging-fstring-interpolation
 
-    # Show Previous Memos Button
-    show_memos_button_text = "📜 Show Memos"
-    if memo_count > 0:
-        show_memos_button_text += f" ({memo_count})"
-
-    action_buttons_row1.append(
-        InlineKeyboardButton(
-            text=show_memos_button_text, 
-            callback_data="show_prev_memos"
-        )
-    )
+    show_public_memos_button_text = "📜 Show Public Memos"
+    if public_memo_count > 0:
+        show_public_memos_button_text += f" ({public_memo_count})"
     
-    # Add/Manage Memo Button
-    action_buttons_row2.append(
-        InlineKeyboardButton(
-            text="✍️ Add/Manage Memo", 
-            callback_data="proceed_to_memo_stage" 
-        )
+    show_public_memos_button = InlineKeyboardButton(
+        text=show_public_memos_button_text,
+        callback_data="show_public_memos"
     )
 
-    # Skip This Address Button
-    action_buttons_row2.append(
-        InlineKeyboardButton(
-            text="⏭️ Skip Address", 
-            callback_data="skip_address_action_stage"  # MODIFIED: Removed address and blockchain
-        )
+    add_public_memo_button = InlineKeyboardButton(
+        text="✍️ Add Public Memo",
+        callback_data="request_memo:public"
     )
 
-    keyboard_layout = []
-    if action_buttons_row1:
-        keyboard_layout.append(action_buttons_row1)
-    if action_buttons_row2:
-        keyboard_layout.append(action_buttons_row2)
+    internal_user_db_id = None
+    if acting_telegram_user_id:
+        temp_user_for_id_lookup = types.User(id=acting_telegram_user_id, is_bot=False, first_name="Temp")
+        db_user = get_or_create_user(db, temp_user_for_id_lookup)
+        if db_user:
+            internal_user_db_id = db_user.id
+
+    private_memo_count = 0
+    if internal_user_db_id:
+        try:
+            private_memo_count = (
+                db.query(func.count(CryptoAddress.id)) # pylint: disable=not-callable
+                .filter(
+                    func.lower(CryptoAddress.address) == address.lower(),
+                    func.lower(CryptoAddress.blockchain) == blockchain.lower(),
+                    CryptoAddress.notes.isnot(None),
+                    CryptoAddress.notes != "",
+                    CryptoAddress.memo_type == MemoType.PRIVATE.value,
+                    CryptoAddress.memo_added_by_user_id == internal_user_db_id,
+                )
+                .scalar()
+            ) or 0
+        except Exception as e:
+            logging.error(f"Error counting private memos for action prompt button: {e}") # pylint: disable=logging-fstring-interpolation
+
+    show_private_memos_button_text = "🔒 Show My Private Memos"
+    if private_memo_count > 0:
+        show_private_memos_button_text += f" ({private_memo_count})"
+    
+    show_private_memos_button = InlineKeyboardButton(
+        text=show_private_memos_button_text,
+        callback_data="show_private_memos"
+    )
+
+    add_private_memo_button = InlineKeyboardButton(
+        text="✍️ Add Private Memo",
+        callback_data="request_memo:private"
+    )
+
+    skip_address_button = InlineKeyboardButton(
+        text="⏭️ Skip Address",
+        callback_data="skip_address_action_stage"
+    )
+
+    # Arrange buttons in the desired 2-column x 3-row layout
+    keyboard_layout = [
+        [show_public_memos_button, show_private_memos_button],
+        [add_public_memo_button, add_private_memo_button],
+    ]
+    
+    # Third row: Explorer button (if available) and Skip button
+    third_row = []
+    if explorer_button:
+        third_row.append(explorer_button)
+    third_row.append(skip_address_button)
+    
+    if third_row: # Only add if there's at least one button for the third row
+        keyboard_layout.append(third_row)
 
     reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard_layout)
 
@@ -432,7 +497,14 @@ async def _scan_message_for_addresses_action(
             )
 
             # Send the new action prompt
-            await _send_action_prompt(message, addr_str_to_process, chosen_blockchain, state, db) # Pass db session
+            await _send_action_prompt(
+                message, 
+                addr_str_to_process, 
+                chosen_blockchain, 
+                state, 
+                db,
+                acting_telegram_user_id=message.from_user.id # Pass the telegram ID
+            )
             
             # The initial summary explorer buttons can still be sent if desired
             if chosen_blockchain in EXPLORER_CONFIG:
@@ -767,12 +839,12 @@ async def _prompt_for_next_memo(
     keyboard_buttons = [
         [
             InlineKeyboardButton(
-                text="✍️ Add Memo", 
-                callback_data=f"memo_action:request_add" # No ID needed, relies on FSM state
+                text="✍️ Add Memo",
+                callback_data="memo_action:request_add" # No ID needed, relies on FSM state
             ),
             InlineKeyboardButton(
                 text="⏭️ Skip This Address",
-                callback_data=f"memo_action:skip_current" # No ID needed
+                callback_data="memo_action:skip_current" # No ID needed
             ),
         ]
     ]
@@ -797,6 +869,7 @@ async def _process_memo_action(message: Message, state: FSMContext):
         )
         blockchain_for_display = data.get("current_address_for_memo_blockchain", "N/A")
         pending_addresses = data.get("pending_addresses_for_memo", [])
+        intended_memo_type_str = data.get("intended_memo_type", MemoType.PUBLIC.value) # Default to public
 
         if not address_id_to_update:
             logging.warning("Attempted to process memo without address_id in state.")
@@ -818,34 +891,59 @@ async def _process_memo_action(message: Message, state: FSMContext):
             .first()
         )
         if addr_record:
-            addr_record.notes = memo_text
-            db.commit()
-            await message.answer(
-                f"[_process_memo_action] 📝 Memo saved for <code>{html.quote(address_text_for_display)}</code> ({html.quote(blockchain_for_display.capitalize())}).",
-                parse_mode="HTML",
+            # Get internal DB user ID for memo_added_by_user_id
+            memo_user_db_id = None
+            if intended_memo_type_str == MemoType.PRIVATE.value:
+                if message.from_user:
+                    db_user = get_or_create_user(db, message.from_user)
+                    if db_user:
+                        memo_user_db_id = db_user.id
+                else:
+                    logging.warning("Cannot save private memo: message.from_user is None.")
+                    await message.answer("Error: Could not identify user to save private memo. Memo not saved as private.")
+                    # Fallback to public or clear state? For now, let it proceed but it won't be private.
+                    # Or, more strictly:
+                    # await state.clear()
+                    # return
+
+            # Use the update_crypto_address_memo query function
+            from database.queries import update_crypto_address_memo # Local import if not at top
+            
+            updated_address = update_crypto_address_memo(
+                db=db,
+                address_id=addr_record.id,
+                notes=memo_text,
+                memo_type=intended_memo_type_str,
+                user_id=memo_user_db_id # This is memo_added_by_user_id
             )
-            if message.from_user:  # Audit log
-                user = message.from_user
-                user_info_parts_list = [  # Renamed to avoid confusion
-                    "<b>👤 User Details:</b>",
-                    f"ID: <code>{user.id}</code>",
-                ]
-                name_parts_audit = [
-                    html.quote(n) for n in [user.first_name, user.last_name] if n
-                ]
-                if name_parts_audit:
-                    user_info_parts_list.append(f"Name: {' '.join(name_parts_audit)}")
-                if user.username:
-                    user_info_parts_list.append(
-                        f"Username: @{html.quote(user.username)}"
-                    )
 
-                user_info_audit_str = "\n".join(
-                    user_info_parts_list
-                )  # Pre-join the user details
+            if updated_address:
+                await message.answer(
+                    f"[_process_memo_action] 📝 {intended_memo_type_str.capitalize()} memo saved for <code>{html.quote(address_text_for_display)}</code> ({html.quote(blockchain_for_display.capitalize())}).",
+                    parse_mode="HTML",
+                )
+                if message.from_user:  # Audit log
+                    user = message.from_user
+                    user_info_parts_list = [  # Renamed to avoid confusion
+                        "<b>👤 User Details:</b>",
+                        f"ID: <code>{user.id}</code>",
+                    ]
+                    name_parts_audit = [
+                        html.quote(n) for n in [user.first_name, user.last_name] if n
+                    ]
+                    if name_parts_audit:
+                        user_info_parts_list.append(f"Name: {' '.join(name_parts_audit)}")
+                    if user.username:
+                        user_info_parts_list.append(
+                            f"Username: @{html.quote(user.username)}"
+                        )
 
-                # Refactored audit_message_text using a triple-quoted f-string
-                audit_message_text = f"""<b>📝 New Memo Added to Audit Log</b>
+                    user_info_audit_str = "\n".join(
+                        user_info_parts_list
+                    )  # Pre-join the user details
+
+                    # Refactored audit_message_text using a triple-quoted f-string
+                    audit_message_text = f"""<b>📝 New Memo Added to Audit Log</b>
 
 {user_info_audit_str}
 
@@ -856,22 +954,25 @@ Blockchain: {html.quote(blockchain_for_display.capitalize())}
 <b>Memo Text:</b>
 {html.quote(memo_text)}"""
 
-                try:
-                    await message.bot.send_message(
-                        chat_id=TARGET_AUDIT_CHANNEL_ID,
-                        text=audit_message_text,
-                        parse_mode="HTML",
-                    )
-                    logging.info(
-                        "New memo audit log sent for address %s",
-                        address_text_for_display,
-                    )
-                except Exception as e_audit:
-                    logging.error(
-                        "Failed to send new memo audit log. Error: %s", e_audit
-                    )
+                    try:
+                        await message.bot.send_message(
+                            chat_id=TARGET_AUDIT_CHANNEL_ID,
+                            text=audit_message_text,
+                            parse_mode="HTML",
+                        )
+                        logging.info(
+                            "New memo audit log sent for address %s",
+                            address_text_for_display,
+                        )
+                    except Exception as e_audit:
+                        logging.error(
+                            "Failed to send new memo audit log. Error: %s", e_audit
+                        )
             else:
-                logging.warning("Could not send new memo audit log: no from_user info.")
+                logging.error(f"Failed to update memo for address ID {addr_record.id} using update_crypto_address_memo.") # pylint: disable=logging-fstring-interpolation
+                await message.answer("[_process_memo_action] Error: Could not save the memo details via query.")
+                # No db.commit() here as it's handled by update_crypto_address_memo
+
         else:
             logging.error(
                 "Could not find CryptoAddress with id %s to save memo.",

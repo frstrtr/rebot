@@ -132,7 +132,7 @@ def save_crypto_address(
 
     if existing:
         # Log or handle if you want to know it's a re-detection of the exact same entry
-        logging.debug(f"CryptoAddress {address} on {blockchain} for message_id {message_id} already exists with id {existing.id}.")
+        logging.debug(f"CryptoAddress {address} on {blockchain} for message_id {message_id} already exists with id {existing.id}.") # pylint: disable=logging-fstring-interpolation
         return existing
 
     # Default memo_type can be None or a specific default if desired
@@ -178,7 +178,7 @@ def update_crypto_address_memo(
                 valid_memo_type = MemoType(memo_type).value
                 crypto_address.memo_type = valid_memo_type
             except ValueError:
-                logging.error(f"Invalid memo_type: {memo_type}. Not updating memo_type.")
+                logging.error(f"Invalid memo_type: {memo_type}. Not updating memo_type.") # pylint: disable=logging-fstring-interpolation
                 # Optionally, you could raise an error or handle it differently
         else:
             crypto_address.memo_type = None # Clear memo_type if None is passed

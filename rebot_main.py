@@ -23,15 +23,14 @@ from handlers import (
     command_start_handler,
     handle_message_with_potential_crypto_address,
     handle_story,
-    # member_status_update_handler, # Assuming this is still commented if not used
-    # unhandled_updates_handler,    # Assuming this is still commented if not used
     checkmemo_handler,
     handle_blockchain_clarification_callback,
-    handle_memo_action_callback,
-    handle_show_previous_memos_callback,
-    handle_proceed_to_memo_stage_callback,
+    # handle_memo_action_callback, # Updated
+    handle_show_public_memos_callback, # Updated
+    handle_show_private_memos_callback, # New
+    handle_request_memo_callback, # New
+    # handle_proceed_to_memo_stage_callback, # Updated
     handle_skip_address_action_stage_callback,
-    # AddressProcessingStates, # Assuming this is imported if needed directly in main
 )
 
 # 1. Define Context Variable for user_id
@@ -157,27 +156,37 @@ class Rebot:
         # Register callback query handlers
         self.rebot_dp.callback_query.register(
             handle_blockchain_clarification_callback,
-            F.data.startswith("clarify_bc:"),  # This uses startswith for dynamic data
+            F.data.startswith("clarify_bc:"),
+        )
+        
+        # self.rebot_dp.callback_query.register(
+        #     handle_memo_action_callback, # This was for buttons from _prompt_for_next_memo
+        #     F.data.startswith("memo_action:"), 
+        # )
+        
+        self.rebot_dp.callback_query.register(
+            handle_show_public_memos_callback, # Changed from show_prev_memos
+            F.data == "show_public_memos",
         )
         
         self.rebot_dp.callback_query.register(
-            handle_memo_action_callback,
-            F.data.startswith("memo_action:"), # This uses startswith for dynamic data (request_add, skip_current)
+            handle_show_private_memos_callback,
+            F.data == "show_private_memos",
         )
         
+        # self.rebot_dp.callback_query.register(
+        #     handle_proceed_to_memo_stage_callback, # Replaced by request_memo:type
+        #     F.data == "proceed_to_memo_stage", 
+        # )
+
         self.rebot_dp.callback_query.register(
-            handle_show_previous_memos_callback,
-            F.data == "show_prev_memos",  # MODIFIED: Exact match
-        )
-        
-        self.rebot_dp.callback_query.register(
-            handle_proceed_to_memo_stage_callback,
-            F.data == "proceed_to_memo_stage", # This should be an exact match
+            handle_request_memo_callback, # Handles request_memo:public and request_memo:private
+            F.data.startswith("request_memo:"),
         )
         
         self.rebot_dp.callback_query.register(
             handle_skip_address_action_stage_callback,
-            F.data == "skip_address_action_stage",  # MODIFIED: Exact match
+            F.data == "skip_address_action_stage",
         )
         
         # Register other handlers if any

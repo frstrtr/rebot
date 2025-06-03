@@ -8,7 +8,8 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardBut
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramAPIError
 
-from database import SessionLocal, CryptoAddress
+from database import SessionLocal, get_or_create_user, save_crypto_address # Add get_or_create_user, MemoType
+from database.models import MemoType
 from .address_processing import (
     _display_memos_for_address_blockchain,
     _orchestrate_next_processing_step,
@@ -73,11 +74,12 @@ async def handle_blockchain_clarification_callback(
             )
             # Send the action prompt for this address
             await _send_action_prompt(
-                target_message=callback_query.message, # Send as a new message or edit an existing one
+                target_message=callback_query.message,
                 address=address_str,
                 blockchain=chosen_blockchain,
                 state=state,
-                db=db  # Pass the db session
+                db=db,
+                acting_telegram_user_id=callback_query.from_user.id # Pass acting user's telegram_id
             )
             # No need to call orchestrator here, user will interact with the new action prompt.
 
@@ -200,60 +202,210 @@ async def handle_skip_address_action_stage_callback(callback_query: types.Callba
     await _orchestrate_next_processing_step(callback_query.message, state)
 
 
-async def handle_memo_action_callback(callback_query: types.CallbackQuery, state: FSMContext):
-    """Handles callbacks from 'Add Memo' or 'Skip This Address' buttons."""
-    await callback_query.answer()  # Acknowledge the callback
-
-    callback_data_parts = callback_query.data.split(":")
-    action = callback_data_parts[1] if len(callback_data_parts) > 1 else None
-
+async def handle_show_public_memos_callback(callback_query: types.CallbackQuery, state: FSMContext):
+    """Handles the 'Show Public Memos' button click."""
+    await callback_query.answer()
     data = await state.get_data()
-    address_text = data.get("current_address_for_memo_text", "the address")
-    blockchain_text = data.get("current_address_for_memo_blockchain", "N/A").capitalize()
+    # Assuming 'addresses_for_memo_prompt_details' holds the current address context
+    # This might need adjustment if the FSM data structure for current address changes.
+    action_details_list = data.get("addresses_for_memo_prompt_details")
 
-    if not data.get("current_address_for_memo_id"):
-        logging.warning("Memo action callback received but no current_address_for_memo_id in state.")
-        await callback_query.message.edit_text("Error: Context for memo action lost. Please try scanning again.", reply_markup=None)
-        await state.clear()
+    if not action_details_list or not isinstance(action_details_list, list) or not action_details_list[0]:
+        logging.warning("Could not retrieve address/blockchain from state for show_public_memos. State: %s", data)
+        await callback_query.message.answer("Error: Context lost for showing memos. Please try scanning the address again.")
         return
 
-    if action == "request_add":
-        prompt_message = (
-            f"Please reply with your memo for: <code>{html.quote(address_text)}</code> ({html.quote(blockchain_text)}).\n"
-            "Or send /skip to cancel adding this memo."
+    current_action_info = action_details_list[0]
+    address = current_action_info.get("address")
+    blockchain = current_action_info.get("blockchain")
+
+    if not address or not blockchain:
+        logging.warning("Missing address or blockchain in state for show_public_memos. Info: %s", current_action_info)
+        await callback_query.message.answer("Error: Could not retrieve full address details for memos. Please try again.")
+        return
+
+    db_session = SessionLocal()
+    try:
+        await _display_memos_for_address_blockchain(
+            message_target=callback_query.message,
+            address=address,
+            blockchain=blockchain,
+            db=db_session,
+            memo_scope="public" # Explicitly public
         )
-        # Edit the existing message (where "Add Memo" button was) or send a new one.
-        # Editing is cleaner if the original message is suitable.
-        try:
-            await callback_query.message.edit_text(
-                text=prompt_message,
-                parse_mode="HTML",
-                reply_markup=None,  # Remove buttons
-            )
-        except Exception as e:  # Fallback if edit fails (e.g. message too old)
-            logging.warning(f"Failed to edit message for memo prompt, sending new: {e}")
-            await callback_query.message.answer(
-                text=prompt_message,
-                parse_mode="HTML",
-            )
-        await state.set_state(AddressProcessingStates.awaiting_memo)
+    finally:
+        if db_session.is_active:
+            db_session.close()
+    # No FSM state change needed here, user can still interact with the action prompt
 
-    elif action == "skip_current":
-        pending_addresses = data.get("pending_addresses_for_memo", [])
+async def handle_show_private_memos_callback(callback_query: types.CallbackQuery, state: FSMContext):
+    """Handles the 'Show My Private Memos' button click."""
+    await callback_query.answer()
+    data = await state.get_data()
+    action_details_list = data.get("addresses_for_memo_prompt_details")
 
+    if not action_details_list or not isinstance(action_details_list, list) or not action_details_list[0]:
+        logging.warning("Could not retrieve address/blockchain from state for show_private_memos. State: %s", data)
+        await callback_query.message.answer("Error: Context lost for showing private memos. Please try scanning the address again.")
+        return
+
+    current_action_info = action_details_list[0]
+    address = current_action_info.get("address")
+    blockchain = current_action_info.get("blockchain")
+    requesting_telegram_id = callback_query.from_user.id
+
+    if not address or not blockchain:
+        logging.warning("Missing address or blockchain in state for show_private_memos. Info: %s", current_action_info)
+        await callback_query.message.answer("Error: Could not retrieve full address details for private memos. Please try again.")
+        return
+
+    db_session = SessionLocal()
+    try:
+        # Get internal DB user ID
+        db_user = get_or_create_user(db_session, callback_query.from_user) # Use the callback_query.from_user
+        if not db_user:
+            await callback_query.message.answer("Error: Could not identify user for private memos.")
+            return
+        
+        await _display_memos_for_address_blockchain(
+            message_target=callback_query.message,
+            address=address,
+            blockchain=blockchain,
+            db=db_session,
+            memo_scope="private_own",
+            requesting_user_db_id=db_user.id
+        )
+    finally:
+        if db_session.is_active:
+            db_session.close()
+    # No FSM state change needed here
+
+async def handle_request_memo_callback(callback_query: types.CallbackQuery, state: FSMContext):
+    """Handles 'Add Public Memo' or 'Add Private Memo' button clicks.
+    Callback data format: "request_memo:public" or "request_memo:private"
+    """
+    await callback_query.answer()
+
+    try:
+        _prefix, memo_type_str = callback_query.data.split(":", 1)
+        if memo_type_str not in [MemoType.PUBLIC.value, MemoType.PRIVATE.value]:
+            raise ValueError("Invalid memo type")
+    except ValueError:
+        logging.warning(f"Invalid callback data for request_memo: {callback_query.data}")
+        await callback_query.message.answer("Error processing memo request. Please try again.")
+        return
+
+    data = await state.get_data()
+    # Ensure 'addresses_for_memo_prompt_details' is populated correctly before this stage
+    # This list should contain the single address/blockchain pair we are currently focused on.
+    current_address_details_list = data.get("addresses_for_memo_prompt_details")
+
+    if not current_address_details_list or not isinstance(current_address_details_list, list) or not current_address_details_list[0]:
+        logging.error("State 'addresses_for_memo_prompt_details' is not set correctly for memo request.")
+        await callback_query.message.answer("Error: Critical context missing for adding memo. Please restart the process.")
+        await state.clear()
+        return
+        
+    current_address_info = current_address_details_list[0]
+    address_text = current_address_info.get("address")
+    blockchain_text = current_address_info.get("blockchain", "N/A").capitalize()
+    
+    # We need to save the crypto_address to DB first to get its ID for FSM state,
+    # if it hasn't been saved yet (e.g. if user directly clicks "Add Memo" after clarification
+    # without going through an explicit save step in orchestrator for this specific purpose).
+    # The _orchestrate_next_processing_step usually handles saving.
+    # For now, let's assume current_scan_db_message_id is in state.
+    # And that the address is saved when _orchestrate_next_processing_step is called
+    # by handle_proceed_to_memo_stage_callback.
+    # The `_prompt_for_next_memo` function (called by orchestrator) sets:
+    # current_address_for_memo_id, current_address_for_memo_text, current_address_for_memo_blockchain
+
+    # The `proceed_to_memo_stage` callback should have called `_orchestrate_next_processing_step`,
+    # which in turn calls `_prompt_for_next_memo` if `addresses_for_memo_prompt_details` is set.
+    # `_prompt_for_next_memo` then sets `current_address_for_memo_id` etc. in FSM.
+    # This `handle_request_memo_callback` replaces the old `handle_memo_action_callback`'s "request_add" part.
+
+    # Let's retrieve the ID that _prompt_for_next_memo would have set.
+    # This means the user must have clicked "Add/Manage Memo" from _send_action_prompt,
+    # which calls `handle_proceed_to_memo_stage_callback`, then orchestrator, then `_prompt_for_next_memo`.
+    # The `_prompt_for_next_memo` shows "Add Memo" / "Skip" buttons which call `handle_memo_action_callback`.
+    # This new `request_memo:public/private` comes from `_send_action_prompt`.
+    # So, if user clicks "Add Public/Private Memo" from `_send_action_prompt`, we need to:
+    # 1. Save the address to DB to get an ID (if not already done for this specific intent).
+    # 2. Store this ID, address, blockchain, and intended_memo_type in FSM.
+    # 3. Set state to awaiting_memo.
+
+    db_session = SessionLocal()
+    try:
+        current_scan_db_message_id = data.get("current_scan_db_message_id")
+        if not current_scan_db_message_id:
+            logging.error("Cannot save address for memo: current_scan_db_message_id missing from FSM.")
+            await callback_query.message.answer("Error: Missing message context. Cannot proceed.")
+            await state.clear()
+            return
+
+        # Save (or get existing) CryptoAddress to ensure we have an ID
+        db_crypto_address = save_crypto_address(
+            db_session,
+            current_scan_db_message_id,
+            address_text,
+            current_address_info.get("blockchain")
+        )
+        if not db_crypto_address or not db_crypto_address.id:
+            logging.error(f"Failed to save/retrieve crypto address {address_text} for memo.")
+            await callback_query.message.answer("Error: Could not prepare address for memo. Please try again.")
+            return
+        
+        await state.update_data(
+            current_address_for_memo_id=db_crypto_address.id,
+            current_address_for_memo_text=address_text,
+            current_address_for_memo_blockchain=current_address_info.get("blockchain"),
+            intended_memo_type=memo_type_str,
+            pending_addresses_for_memo=[] # Clear any old pending list from other flows
+        )
+    finally:
+        if db_session.is_active:
+            db_session.close()
+
+    prompt_message_text = (
+        f"Please reply with your {memo_type_str} memo for: <code>{html.quote(address_text)}</code> ({html.quote(blockchain_text)}).\n"
+        "Or send /skip to cancel adding this memo."
+    )
+    try:
         await callback_query.message.edit_text(
-            f"Skipped adding memo for: <code>{html.quote(address_text)}</code> ({html.quote(blockchain_text)}).",
+            text=prompt_message_text,
             parse_mode="HTML",
             reply_markup=None,  # Remove buttons
         )
+    except Exception as e:
+        logging.warning(f"Failed to edit message for memo prompt, sending new: {e}")
+        await callback_query.message.answer(
+            text=prompt_message_text,
+            parse_mode="HTML",
+        )
+    await state.set_state(AddressProcessingStates.awaiting_memo)
 
-        if pending_addresses:
-            # Call _prompt_for_next_memo with the original message context (callback_query.message)
-            # and the remaining list.
-            await _prompt_for_next_memo(callback_query.message, state, pending_addresses)
-        else:
-            await callback_query.message.answer("All addresses processed. You can send new messages.")
-            await state.clear()
-    else:
-        logging.warning(f"Unknown memo_action callback: {callback_query.data}")
-        await callback_query.message.answer("Unexpected selection error.")
+
+# Remove or comment out handle_proceed_to_memo_stage_callback if "Add/Manage Memo" button is removed
+# Or repurpose it if "Add/Manage Memo" leads to a choice between public/private text input.
+# For now, direct "Add Public/Private Memo" buttons are simpler.
+# The old `handle_proceed_to_memo_stage_callback` called `_orchestrate_next_processing_step`.
+# The new `request_memo:type` callbacks now directly set up for `awaiting_memo`.
+
+# The `handle_memo_action_callback` (old one) was for buttons from `_prompt_for_next_memo`.
+# If `_prompt_for_next_memo` is still used, its buttons need to be distinct or this logic merged.
+# For now, assuming `_send_action_prompt` is the primary way to initiate adding a memo.
+# We can remove `handle_proceed_to_memo_stage_callback` and `handle_memo_action_callback`
+# if the new `handle_request_memo_callback` covers all "add memo" scenarios from the main action prompt.
+
+# Let's simplify: The "Add/Manage Memo" button from _send_action_prompt is now split into
+# "Add Public Memo" and "Add Private Memo". These will call `handle_request_memo_callback`.
+# The old `handle_proceed_to_memo_stage_callback` and `handle_memo_action_callback` might become obsolete
+# or need to be adapted if there's another flow that uses `_prompt_for_next_memo`.
+
+# For this iteration, let's assume `handle_request_memo_callback` is the new way.
+# We need to update `__init__.py` and `rebot_main.py` registrations.
+
+# Commenting out for now, review if these are still needed for other flows:
+# async def handle_proceed_to_memo_stage_callback(callback_query: types.CallbackQuery, state: FSMContext): ...
+# async def handle_memo_action_callback(callback_query: types.CallbackQuery, state: FSMContext): ...

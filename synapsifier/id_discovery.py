@@ -2,6 +2,7 @@ import asyncio
 import logging
 import sys
 import os # Added for file path operations
+import uuid # For unique IDs for inline query results
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, CommandObject, Command
@@ -11,7 +12,10 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.types import (
     InlineKeyboardMarkup,
     InlineKeyboardButton,
-    WebAppInfo
+    WebAppInfo,
+    InlineQuery, # Added for inline mode
+    InlineQueryResultArticle, # Added for inline mode
+    InputTextMessageContent # Added for inline mode
 )
 
 # --- Helper function to read from file ---
@@ -48,8 +52,8 @@ async def cmd_start_deep_link(message: types.Message, command: CommandObject):
         return
     payload = decode_payload(command.args)
     await message.answer(
-        f"Hello! Started with payload: {payload}. I'm your ID Finder bot. "
-        "Use /myid to see your info via a Web App."
+        f"Hello! Started with payload: {payload}. I'm your ID Finder bot.\n"
+        "Use /myid to see your info via a Web App, or use me inline (e.g., from the attach menu) to share an info card."
     )
 
 
@@ -58,19 +62,16 @@ async def cmd_start_no_deep_link(message: types.Message):
     await message.answer(
         "Hello! I'm the ID Finder bot.\n"
         "Use the /myid command to open a Web App and see your Telegram info.\n"
-        "You can also forward a message or share a contact to get ID info directly."
+        "You can also forward a message or share a contact to get ID info directly.\n"
+        "Try typing my username in another chat (or use the attach menu) to share an info card!"
     )
 
 @dp.message(Command("myid"))
 async def cmd_myid_webapp(message: types.Message):
-    if not WEBAPP_URL: # Check if WEBAPP_URL was successfully read
-        await message.answer("Web App URL is not configured. Please contact the bot admin.")
+    if not WEBAPP_URL or (isinstance(WEBAPP_URL, str) and "YOUR_NGROK_HTTPS_URL" in WEBAPP_URL):
+        logging.error(f"WEBAPP_URL is not configured correctly: {WEBAPP_URL}")
+        await message.answer("Web App URL is not configured correctly. Please contact the bot admin.")
         return
-    # The check for "YOUR_NGROK_HTTPS_URL" is less relevant if reading from file,
-    # but can be kept if you want a placeholder in the file.
-    if "YOUR_NGROK_HTTPS_URL" in WEBAPP_URL: # Example placeholder check
-         await message.answer("Web App URL placeholder detected. Please contact the bot admin.")
-         return
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -126,11 +127,58 @@ async def handle_direct_id_request(message: types.Message):
             "I can only extract IDs from forwarded messages or shared contacts."
         )
 
+# --- Inline Mode Handler for Attachment Menu ---
+@dp.inline_query()
+async def inline_share_webapp_card(inline_query: InlineQuery):
+    results = []
+
+    if not WEBAPP_URL or (isinstance(WEBAPP_URL, str) and "YOUR_NGROK_HTTPS_URL" in WEBAPP_URL):
+        logging.warning(f"WEBAPP_URL not configured for inline query. User: {inline_query.from_user.id}")
+        # Optionally answer with an error or empty result
+        # await inline_query.answer([], cache_time=1)
+        # return
+        # For now, let's allow it to proceed but the button won't work if URL is bad
+        pass
+
+
+    # Define the content of the message that will be sent when the user selects this inline result
+    # This message will contain the button to open the Web App
+    input_content = InputTextMessageContent(
+        message_text="Click the button to view Telegram User Info:",
+        parse_mode=ParseMode.HTML, # Or MARKDOWN, adjust message_text accordingly
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="👤 Show User Info",
+                        web_app=WebAppInfo(url=WEBAPP_URL if WEBAPP_URL else "https://example.com/error") # Fallback URL if not configured
+                    )
+                ]
+            ]
+        )
+    )
+
+    item = InlineQueryResultArticle(
+        id=str(uuid.uuid4()),  # Unique ID for the result
+        title="Share My Info Card",
+        description="Sends a card with a button to view user info via Web App.",
+        input_message_content=input_content,
+        # You can add a thumb_url for an icon if you have one:
+        # thumb_url="https://yourdomain.com/icon.png"
+    )
+    results.append(item)
+
+    try:
+        await inline_query.answer(results, cache_time=10, is_personal=True) # cache_time can be adjusted
+        logging.info(f"Answered inline query {inline_query.id} for user {inline_query.from_user.id}")
+    except Exception as e:
+        logging.error(f"Error answering inline query {inline_query.id}: {e}", exc_info=True)
+
 
 @dp.message() # Fallback
 async def handle_other_messages(message: types.Message):
     await message.answer(
-        "I'm the ID Finder bot. Use /myid to see your info, or forward a message/share a contact."
+        "I'm the ID Finder bot. Use /myid, or try typing my username in another chat to share an info card."
     )
 
 
@@ -138,8 +186,8 @@ async def main() -> None:
     if not BOT_TOKEN:
         logging.critical("BOT_TOKEN is not set. Please create 'bot_token.txt' with your bot token.")
         return
-    if not WEBAPP_URL:
-        logging.warning("WEBAPP_URL is not set. The /myid command might not work as expected. Please create 'webapp_url.txt'.")
+    if not WEBAPP_URL or (isinstance(WEBAPP_URL, str) and "YOUR_NGROK_HTTPS_URL" in WEBAPP_URL):
+        logging.warning("WEBAPP_URL is not set or is a placeholder. The Web App features might not work as expected. Please create/update 'webapp_url.txt'.")
         # Depending on your needs, you might want to exit if WEBAPP_URL is critical
         # return
 

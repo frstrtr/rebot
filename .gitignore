@@ -168,3 +168,4 @@ temp/
 logs/
 synapsifier/webapp_url.txt
 synapsifier/bot_token.txt
+config/admins.txt

@@ -2,13 +2,35 @@
 
 from aiogram.enums import ParseMode
 import os
-import logging  # Add this import
+import logging
 
 class Config:
     PARSE_MODE = ParseMode.HTML
     MAX_TELEGRAM_MESSAGE_LENGTH = 4000  # Telegram's limit is 4096, using a buffer
     LOG_FOLDER = "logs"  # Define the log folder name
     LOG_LEVEL = logging.INFO  # Define the global log level
+
+    @staticmethod
+    def _load_admins(filename="admins.txt"):
+        """Loads admin IDs from a file, one ID per line."""
+        admin_ids = []
+        script_dir = os.path.dirname(__file__)
+        file_path = os.path.join(script_dir, filename)
+        try:
+            with open(file_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line.isdigit():
+                        admin_ids.append(int(line))
+                    elif line: # If line is not empty and not a digit
+                        logging.warning(f"Invalid entry in '{filename}': '{line}' is not a valid integer ID. Skipping.")
+        except FileNotFoundError:
+            logging.warning(f"Admin file '{filename}' not found in {script_dir}. No admins will be loaded.")
+        except Exception as e:
+            logging.error(f"Error reading admin file '{filename}': {e}")
+        return admin_ids
+
+    ADMINS = _load_admins() # Load admin IDs when the class is defined
 
     # Groups of chains where addresses can have the same format,
     # potentially leading to ambiguity if the network isn't specified.
@@ -94,6 +116,7 @@ class Config:
     @staticmethod
     def get_log_file_path(filename="bot.log"):
         # Ensure the log folder exists
-        if not os.path.exists(Config.LOG_FOLDER):
-            os.makedirs(Config.LOG_FOLDER)
-        return os.path.join(Config.LOG_FOLDER, filename)
+        log_folder_path = os.path.join(os.path.dirname(__file__), Config.LOG_FOLDER) # Ensure log folder is relative to config.py
+        if not os.path.exists(log_folder_path):
+            os.makedirs(log_folder_path)
+        return os.path.join(log_folder_path, filename)

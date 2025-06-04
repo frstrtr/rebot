@@ -5,26 +5,6 @@ including scanning messages for addresses, handling blockchain clarifications,
 and prompting for memos.
 """
 
-# import logging  # Ensure logging is imported
-
-# from typing import Optional # Import Optional for type hinting
-# from aiogram import html, types
-# from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
-# from aiogram.fsm.context import FSMContext
-# from aiogram.exceptions import TelegramAPIError
-# from sqlalchemy import func, or_  # Add this import for OR conditions in SQLAlchemy
-# from sqlalchemy.orm import Session
-
-# from database import (
-#     SessionLocal,
-#     save_message,
-#     save_crypto_address,
-#     get_or_create_user,  # Import get_or_create_user
-#     CryptoAddress,
-#     CryptoAddressStatus,
-#     # MemoType, # Import MemoType # No longer imported directly from 'database'
-# )
-# from database.models import MemoType  # Assuming MemoType is in database.models
 from .common import (
     crypto_finder,
     TARGET_AUDIT_CHANNEL_ID,

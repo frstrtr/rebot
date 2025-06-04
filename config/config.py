@@ -1,8 +1,12 @@
 # config.py
+"""Loads configuration settings for the bot, including admin IDs, API tokens, and explorer configurations."""
+
 
 from aiogram.enums import ParseMode
 import os
 import logging
+from typing import Optional
+
 
 class Config:
     PARSE_MODE = ParseMode.HTML
@@ -17,20 +21,52 @@ class Config:
         script_dir = os.path.dirname(__file__)
         file_path = os.path.join(script_dir, filename)
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with open(file_path, "r", encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
                     if line.isdigit():
                         admin_ids.append(int(line))
-                    elif line: # If line is not empty and not a digit
-                        logging.warning(f"Invalid entry in '{filename}': '{line}' is not a valid integer ID. Skipping.") # pylint: disable=logging-fstring-interpolation
+                    elif line:  # If line is not empty and not a digit
+                        logging.warning(
+                            f"Invalid entry in '{filename}': '{line}' is not a valid integer ID. Skipping."
+                        )  # pylint: disable=logging-fstring-interpolation
         except FileNotFoundError:
-            logging.warning(f"Admin file '{filename}' not found in {script_dir}. No admins will be loaded.") # pylint: disable=logging-fstring-interpolation
+            logging.warning(
+                f"Admin file '{filename}' not found in {script_dir}. No admins will be loaded."
+            )  # pylint: disable=logging-fstring-interpolation
         except OSError as e:
-            logging.error(f"Error reading admin file '{filename}': {e}") # pylint: disable=logging-fstring-interpolation
+            logging.error(
+                f"Error reading admin file '{filename}': {e}"
+            )  # pylint: disable=logging-fstring-interpolation
         return admin_ids
 
-    ADMINS = _load_admins() # Load admin IDs when the class is defined
+    ADMINS = _load_admins()  # Load admin IDs when the class is defined
+
+    @staticmethod
+    def _load_api_token(filename="tronscan_api_token.txt") -> Optional[str]:
+        """Loads an API token from the first line of a file."""
+        token = None
+        script_dir = os.path.dirname(__file__)
+        file_path = os.path.join(script_dir, filename)
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                token = f.readline().strip()
+            if not token:
+                logging.warning(
+                    f"Token file '{filename}' found in {script_dir} but is empty."
+                )  # pylint: disable=logging-fstring-interpolation
+                return None
+        except FileNotFoundError:
+            logging.warning(
+                f"API token file '{filename}' not found in {script_dir}. Token not loaded."
+            )  # pylint: disable=logging-fstring-interpolation
+        except OSError as e:
+            logging.error(
+                f"Error reading API token file '{filename}': {e}"
+            )  # pylint: disable=logging-fstring-interpolation
+        return token
+
+    TRONSCAN_API_KEY = _load_api_token("tronscan_api_token.txt")
 
     # Groups of chains where addresses can have the same format,
     # potentially leading to ambiguity if the network isn't specified.
@@ -40,9 +76,9 @@ class Config:
     AMBIGUOUS_CHAIN_GROUPS = {
         "evm_compatible": {  # Ethereum Virtual Machine compatible chains
             "ethereum",
-            "bsc",       # BNB Smart Chain
+            "bsc",  # BNB Smart Chain
             "polygon",
-            "avalanche", # Avalanche C-Chain
+            "avalanche",  # Avalanche C-Chain
             "arbitrum",  # Arbitrum One
             "optimism",
             # Add other EVM-compatible chains here if their addresses are identical
@@ -57,36 +93,39 @@ class Config:
             "name": "TronScan",
             "url_template": "https://tronscan.org/#/address/{address}",
         },
-        "ton": {"name": "TONScan", "url_template": "https://tonscan.org/address/{address}"},
+        "ton": {
+            "name": "TONScan",
+            "url_template": "https://tonscan.org/address/{address}",
+        },
         "bitcoin": {
             "name": "Blockchair (Bitcoin)",
             "url_template": "https://blockchair.com/bitcoin/address/{address}",
         },
-        "ethereum": { # EVM
+        "ethereum": {  # EVM
             "name": "Etherscan",
             "url_template": "https://etherscan.io/address/{address}",
         },
-        "bsc": { # EVM - BNB Smart Chain (formerly Binance Smart Chain)
+        "bsc": {  # EVM - BNB Smart Chain (formerly Binance Smart Chain)
             "name": "BscScan",
             "url_template": "https://bscscan.com/address/{address}",
         },
-        "polygon": { # EVM
+        "polygon": {  # EVM
             "name": "PolygonScan",
             "url_template": "https://polygonscan.com/address/{address}",
         },
         "solana": {
             "name": "Solscan",
-            "url_template": "https://solscan.io/account/{address}", # Note: /account for Solscan
+            "url_template": "https://solscan.io/account/{address}",  # Note: /account for Solscan
         },
-        "avalanche": { # EVM - Avalanche C-Chain
+        "avalanche": {  # EVM - Avalanche C-Chain
             "name": "Snowtrace",
             "url_template": "https://snowtrace.io/address/{address}",
         },
-        "arbitrum": { # EVM - Arbitrum One
+        "arbitrum": {  # EVM - Arbitrum One
             "name": "Arbiscan",
             "url_template": "https://arbiscan.io/address/{address}",
         },
-        "optimism": { # EVM - Optimism
+        "optimism": {  # EVM - Optimism
             "name": "Optimistic Etherscan",
             "url_template": "https://optimistic.etherscan.io/address/{address}",
         },
@@ -116,7 +155,9 @@ class Config:
     @staticmethod
     def get_log_file_path(filename="bot.log"):
         # Ensure the log folder exists
-        log_folder_path = os.path.join(os.path.dirname(__file__), Config.LOG_FOLDER) # Ensure log folder is relative to config.py
+        log_folder_path = os.path.join(
+            os.path.dirname(__file__), Config.LOG_FOLDER
+        )  # Ensure log folder is relative to config.py
         if not os.path.exists(log_folder_path):
             os.makedirs(log_folder_path)
         return os.path.join(log_folder_path, filename)

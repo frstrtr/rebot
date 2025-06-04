@@ -17,17 +17,17 @@ class Config:
         script_dir = os.path.dirname(__file__)
         file_path = os.path.join(script_dir, filename)
         try:
-            with open(file_path, 'r') as f:
+            with open(file_path, 'r', encoding='utf-8') as f:
                 for line in f:
                     line = line.strip()
                     if line.isdigit():
                         admin_ids.append(int(line))
                     elif line: # If line is not empty and not a digit
-                        logging.warning(f"Invalid entry in '{filename}': '{line}' is not a valid integer ID. Skipping.")
+                        logging.warning(f"Invalid entry in '{filename}': '{line}' is not a valid integer ID. Skipping.") # pylint: disable=logging-fstring-interpolation
         except FileNotFoundError:
-            logging.warning(f"Admin file '{filename}' not found in {script_dir}. No admins will be loaded.")
-        except Exception as e:
-            logging.error(f"Error reading admin file '{filename}': {e}")
+            logging.warning(f"Admin file '{filename}' not found in {script_dir}. No admins will be loaded.") # pylint: disable=logging-fstring-interpolation
+        except OSError as e:
+            logging.error(f"Error reading admin file '{filename}': {e}") # pylint: disable=logging-fstring-interpolation
         return admin_ids
 
     ADMINS = _load_admins() # Load admin IDs when the class is defined

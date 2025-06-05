@@ -8,6 +8,7 @@ import bech32
 
 from utils import segwit_addr
 from Crypto.Hash import keccak  # Add this import at the top
+from config.config import Config # Ensure Config is imported
 
 
 # Helper function for CRC16-CCITT (XModem variant)
@@ -214,7 +215,7 @@ class CryptoAddressFinder:
                 for _address in matches:
                     if self.validate_checksum(_blockchain, _address):
                         logging.info(
-                            "[%s] Address passed checksum: %s", _blockchain, _address
+                            "[%s] Address passed checksum: %s%s%s", _blockchain, Config.PURPLE, _address, Config.RESET_COLOR
                         )
                         results[_blockchain].append(_address)
                     else:

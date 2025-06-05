@@ -17,7 +17,7 @@ from aiogram.filters import Command, StateFilter  # MODIFIED: Imported Command
 from aiogram.types import Update
 
 from config.credentials import Credentials
-from config.config import Config
+from config.config import Config # Config is already imported
 from database import create_tables
 from handlers import (
     command_start_handler,
@@ -36,11 +36,11 @@ from handlers import (
 # 1. Define Context Variable for user_id
 user_id_context = contextvars.ContextVar("user_id_context", default="N/A")
 
-# ANSI escape codes for colors
-class Colors:
-    YELLOW = '\033[93m'
-    GREEN = '\033[92m'  # Added Green
-    RESET = '\033[0m'
+# ANSI escape codes for colors are now in Config
+# class Colors:
+#     YELLOW = '\033[93m'
+#     GREEN = '\033[92m'  # Added Green
+#     RESET = '\033[0m'
 
 # 2. Custom Logging Filter to add user_id to log records
 class UserIdContextFilter(logging.Filter):
@@ -214,9 +214,9 @@ if __name__ == "__main__":
     # 1. Create the filter and formatters
     custom_filter = UserIdContextFilter()
     
-    # Formatter for console with color
+    # Formatter for console with color using Config
     console_log_formatter = logging.Formatter(
-        f"%(asctime)s - %(levelname)s - %(name)s - UserID: {Colors.YELLOW}%(user_id)s{Colors.RESET} - %(message)s"
+        f"%(asctime)s - %(levelname)s - %(name)s - UserID: {Config.YELLOW}%(user_id)s{Config.RESET_COLOR} - %(message)s"
     )
     
     # Formatter for file (no color)

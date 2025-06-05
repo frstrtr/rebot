@@ -14,6 +14,12 @@ class Config:
     LOG_FOLDER = "logs"  # Define the log folder name
     LOG_LEVEL = logging.INFO  # Define the global log level
 
+    # ANSI Color Codes
+    PURPLE = '\033[95m'
+    YELLOW = '\033[93m'
+    GREEN = '\033[92m'
+    RESET_COLOR = '\033[0m'  # Standardized name for reset
+
     @staticmethod
     def _load_admins(filename="admins.txt"):
         """Loads admin IDs from a file, one ID per line."""
@@ -27,17 +33,11 @@ class Config:
                     if line.isdigit():
                         admin_ids.append(int(line))
                     elif line:  # If line is not empty and not a digit
-                        logging.warning(
-                            f"Invalid entry in '{filename}': '{line}' is not a valid integer ID. Skipping."
-                        )  # pylint: disable=logging-fstring-interpolation
+                        logging.warning(f"Invalid entry in '{filename}': '{line}' is not a valid integer ID. Skipping.")  # pylint: disable=logging-fstring-interpolation
         except FileNotFoundError:
-            logging.warning(
-                f"Admin file '{filename}' not found in {script_dir}. No admins will be loaded."
-            )  # pylint: disable=logging-fstring-interpolation
+            logging.warning(f"Admin file '{filename}' not found in {script_dir}. No admins will be loaded.")  # pylint: disable=logging-fstring-interpolation
         except OSError as e:
-            logging.error(
-                f"Error reading admin file '{filename}': {e}"
-            )  # pylint: disable=logging-fstring-interpolation
+            logging.error(f"Error reading admin file '{filename}': {e}")  # pylint: disable=logging-fstring-interpolation
         return admin_ids
 
     ADMINS = _load_admins()  # Load admin IDs when the class is defined
@@ -52,18 +52,12 @@ class Config:
             with open(file_path, "r", encoding="utf-8") as f:
                 token = f.readline().strip()
             if not token:
-                logging.warning(
-                    f"Token file '{filename}' found in {script_dir} but is empty."
-                )  # pylint: disable=logging-fstring-interpolation
+                logging.warning(f"Token file '{filename}' found in {script_dir} but is empty.")  # pylint: disable=logging-fstring-interpolation
                 return None
         except FileNotFoundError:
-            logging.warning(
-                f"API token file '{filename}' not found in {script_dir}. Token not loaded."
-            )  # pylint: disable=logging-fstring-interpolation
+            logging.warning(f"API token file '{filename}' not found in {script_dir}. Token not loaded.")  # pylint: disable=logging-fstring-interpolation
         except OSError as e:
-            logging.error(
-                f"Error reading API token file '{filename}': {e}"
-            )  # pylint: disable=logging-fstring-interpolation
+            logging.error(f"Error reading API token file '{filename}': {e}")  # pylint: disable=logging-fstring-interpolation
         return token
 
     TRONSCAN_API_KEY = _load_api_token("tronscan_api_token.txt")

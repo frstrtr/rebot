@@ -12,6 +12,7 @@ import io # For sending text as a file
 
 from database import SessionLocal, get_or_create_user, save_crypto_address # Add get_or_create_user, MemoType
 from database.models import MemoType
+from database.queries import update_crypto_address_memo # For saving memos
 from extapi.tronscan.client import TronScanAPI
 from genai import VertexAIClient # Import VertexAIClient
 from .address_processing import (
@@ -20,7 +21,7 @@ from .address_processing import (
     _prompt_for_next_memo,
     _send_action_prompt,  # Import the new helper
 )
-from .common import EXPLORER_CONFIG
+from .common import EXPLORER_CONFIG, TARGET_AUDIT_CHANNEL_ID # Added TARGET_AUDIT_CHANNEL_ID
 from .states import AddressProcessingStates  # Ensure this is imported if not already
 
 
@@ -491,6 +492,7 @@ async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery
     await callback_query.answer("Performing AI Scam Check for TRC20 transactions...")
     user_data = await state.get_data()
     address = user_data.get("current_action_address")
+    blockchain = user_data.get("current_action_blockchain", "tron") # Should be set by _send_action_prompt
 
     if not address:
         logging.warning(f"Could not retrieve address from state for AI Scam Check. UserID: {callback_query.from_user.id}") # pylint:disable=logging-fstring-interpolation
@@ -498,15 +500,16 @@ async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery
         return
 
     tron_api_client = TronScanAPI()
-    vertex_ai_client = None # Initialize later to handle potential Vertex AI init errors
+    vertex_ai_client = None 
 
     raw_transactions_summary = f"TRC20 Transaction Data for Address: {address}\n"
     raw_transactions_summary += f"Report requested on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
-    fetch_limit = 50 # Fetch a reasonable number of recent transactions for AI analysis to avoid overly long prompts
-                     # For a more thorough check, this might need to be higher or paginated.
+    fetch_limit = 50 
+
+    ai_response_message = None # To store the message object for later editing
 
     try:
-        await callback_query.message.answer(f"Querying TronScan for recent TRC20 transfers of <code>{address}</code> (limit {fetch_limit})...", parse_mode="HTML")
+        await callback_query.message.answer(f"Querying TronScan for recent TRC20 transfers of <code>{html.quote(address)}</code> (limit {fetch_limit})...", parse_mode="HTML")
         
         history_data = await tron_api_client.get_trc20_transaction_history(
             address=address,
@@ -567,15 +570,14 @@ async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery
         else:
             raw_transactions_summary += "Failed to fetch TRC20 transaction history from TronScan.\n"
             await callback_query.message.answer("Could not fetch transaction data for AI analysis.")
-            return # Exit if no data to analyze
+            return 
 
-        # Now, send to Vertex AI
         await callback_query.message.answer("Sending transaction data to AI for analysis...")
         
         try:
-            vertex_ai_client = VertexAIClient() # Initialize VertexAIClient
+            vertex_ai_client = VertexAIClient() 
         except Exception as e:
-            logging.error(f"Failed to initialize VertexAIClient for AI Scam Check: {e}", exc_info=True) # pylint:disable=logging-fstring-interpolation
+            logging.error(f"Failed to initialize VertexAIClient for AI Scam Check: {e}", exc_info=True) 
             await callback_query.message.answer("Error: Could not initialize the AI service. Please try again later.")
             return
 
@@ -596,7 +598,7 @@ async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery
             f"{raw_transactions_summary}"
         )
 
-        ai_analysis_text = await vertex_ai_client.generate_text(prompt=ai_prompt, max_output_tokens=1024) # Adjusted token limit for direct message
+        ai_analysis_text = await vertex_ai_client.generate_text(prompt=ai_prompt, max_output_tokens=1024) 
 
         response_message_text = ""
         if ai_analysis_text:
@@ -612,22 +614,158 @@ async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery
                 "You can use the 'Get TRC20 Report' button to view raw transaction data."
             )
 
-        # Telegram Message Length Limit: 4096 characters.
-        # If response_message_text is longer, it needs to be split or truncated.
-        # For simplicity, this example sends it as one message.
-        # A more robust solution would handle splitting.
         if len(response_message_text) > 4096:
-            logging.warning(f"AI Scam Check report for {address} is too long ({len(response_message_text)} chars) for a single Telegram message. Truncating.") # pylint:disable=logging-fstring-interpolation
-            # Simple truncation, could be smarter (e.g. split into multiple messages)
+            logging.warning(f"AI Scam Check report for {address} is too long ({len(response_message_text)} chars) for a single Telegram message. Truncating.") 
             response_message_text = response_message_text[:4090] + "\n<b>[Report Truncated]</b>"
         
-        await callback_query.message.answer(response_message_text, parse_mode="HTML")
+        # Prepare buttons for saving memo
+        keyboard_buttons = [
+            [
+                InlineKeyboardButton(text="✍️ Save As Public Memo", callback_data="ai_memo_action:save_public"),
+                InlineKeyboardButton(text="✍️ Save As Private Memo", callback_data="ai_memo_action:save_private"),
+            ],
+            [
+                InlineKeyboardButton(text="⏭️ Skip Saving Memo", callback_data="ai_memo_action:skip"),
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+
+        ai_response_message = await callback_query.message.answer(response_message_text, parse_mode="HTML", reply_markup=reply_markup)
+        
+        # Store necessary info in FSM for the memo action handler
+        await state.update_data(
+            ai_response_text_for_memo=ai_analysis_text, # Store the actual AI analysis
+            ai_response_message_id=ai_response_message.message_id,
+            # current_action_address and current_action_blockchain are already in state
+            # current_scan_db_message_id should also be in state from earlier flow
+        )
 
     except Exception as e:
         logging.error(f"Error during AI Scam Check for {address}: {e}", exc_info=True) # pylint:disable=logging-fstring-interpolation
         await callback_query.message.answer(f"Sorry, an error occurred while performing the AI Scam Check for {address}.")
     finally:
         await tron_api_client.close_session()
-        # VertexAIClient does not have an explicit close_session method in the provided snippet,
-        # as it doesn't manage an ongoing session like aiohttp.ClientSession.
-        # If it did, it would be closed here.
+
+
+async def handle_ai_response_memo_action_callback(callback_query: types.CallbackQuery, state: FSMContext):
+    """Handles actions for saving AI response as memo or skipping."""
+    await callback_query.answer()
+    action = callback_query.data.split(":")[1] # save_public, save_private, skip
+
+    data = await state.get_data()
+    ai_response_text = data.get("ai_response_text_for_memo")
+    original_message_id = data.get("ai_response_message_id")
+    address_text = data.get("current_action_address")
+    blockchain_text = data.get("current_action_blockchain")
+    scan_message_id = data.get("current_scan_db_message_id") # Original message ID that triggered scan
+
+    if not original_message_id or not address_text or not blockchain_text:
+        logging.warning("Missing critical data in FSM for AI memo action.")
+        await callback_query.message.answer("Error: Context lost for saving AI memo. Please try again.")
+        return
+
+    db = SessionLocal()
+    try:
+        if action == "skip":
+            await callback_query.bot.edit_message_text(
+                chat_id=callback_query.message.chat.id,
+                message_id=original_message_id,
+                text=callback_query.message.text + "\n\n<i>Skipped saving this analysis as a memo.</i>",
+                parse_mode="HTML",
+                reply_markup=None
+            )
+            logging.info(f"User skipped saving AI analysis as memo for {address_text} on {blockchain_text}")
+        elif action in ["save_public", "save_private"]:
+            if not ai_response_text:
+                await callback_query.message.answer("Error: AI analysis text not found to save as memo.")
+                db.close()
+                return
+            if not scan_message_id:
+                logging.error(f"Cannot save memo for AI response: current_scan_db_message_id missing from FSM for {address_text}.")
+                await callback_query.message.answer("Error: Missing original message context. Cannot save memo.")
+                db.close()
+                return
+
+            memo_type = MemoType.PUBLIC if action == "save_public" else MemoType.PRIVATE
+            user_db_id = None
+            if memo_type == MemoType.PRIVATE:
+                if callback_query.from_user:
+                    db_user = get_or_create_user(db, callback_query.from_user)
+                    if db_user:
+                        user_db_id = db_user.id
+                if not user_db_id:
+                    logging.warning(f"Cannot save private AI memo for {address_text}: user identification failed.")
+                    await callback_query.message.answer("Error: Could not identify user to save private memo. Memo not saved.")
+                    db.close()
+                    return
+            
+            # Ensure CryptoAddress entry exists
+            crypto_address_entry = save_crypto_address(
+                db,
+                message_id=scan_message_id,
+                address=address_text,
+                blockchain=blockchain_text
+            )
+            if not crypto_address_entry or not crypto_address_entry.id:
+                logging.error(f"Failed to save/retrieve crypto address {address_text} for AI memo.")
+                await callback_query.message.answer("Error: Could not prepare address for saving AI memo.")
+                db.close()
+                return
+
+            updated_address = update_crypto_address_memo(
+                db=db,
+                address_id=crypto_address_entry.id,
+                notes=ai_response_text,
+                memo_type=memo_type.value,
+                user_id=user_db_id
+            )
+
+            if updated_address:
+                confirmation_text = f"✅ AI analysis saved as {memo_type.value} memo for <code>{html.quote(address_text)}</code>."
+                await callback_query.bot.edit_message_text(
+                    chat_id=callback_query.message.chat.id,
+                    message_id=original_message_id,
+                    text=callback_query.message.text + f"\n\n<i>{confirmation_text}</i>",
+                    parse_mode="HTML",
+                    reply_markup=None
+                )
+                logging.info(f"AI analysis saved as {memo_type.value} memo for {address_text} by user {callback_query.from_user.id}")
+
+                # Audit Log
+                if callback_query.from_user and TARGET_AUDIT_CHANNEL_ID:
+                    user = callback_query.from_user
+                    user_info_parts = [f"ID: <code>{user.id}</code>"]
+                    name_parts = [html.quote(n) for n in [user.first_name, user.last_name] if n]
+                    if name_parts: user_info_parts.append(f"Name: {' '.join(name_parts)}")
+                    if user.username: user_info_parts.append(f"Username: @{html.quote(user.username)}")
+                    user_info_audit_str = "\n".join(["<b>👤 User Details:</b>"] + user_info_parts)
+                    
+                    audit_message_text = f"""<b>📝 AI Analysis Saved as Memo</b>
+{user_info_audit_str}
+<b>Address:</b> <code>{html.quote(address_text)}</code>
+<b>Blockchain:</b> {html.quote(blockchain_text.capitalize())}
+<b>Memo Type:</b> {memo_type.value.capitalize()}
+<b>Memo (AI Analysis):</b> {html.quote(ai_response_text[:1000])}{'...' if len(ai_response_text) > 1000 else ''}"""
+                    try:
+                        await callback_query.bot.send_message(TARGET_AUDIT_CHANNEL_ID, audit_message_text, parse_mode="HTML")
+                    except Exception as e_audit:
+                        logging.error(f"Failed to send AI memo audit log: {e_audit}")
+            else:
+                logging.error(f"Failed to update memo with AI analysis for address ID {crypto_address_entry.id}")
+                await callback_query.message.answer("Error: Could not save the AI analysis as memo.")
+        
+        # Clear related FSM data
+        await state.update_data(
+            ai_response_text_for_memo=None,
+            ai_response_message_id=None
+        )
+
+    except TelegramAPIError as e:
+        logging.error(f"Telegram API error in handle_ai_response_memo_action_callback: {e}")
+        await callback_query.message.answer("An error occurred while processing your request. Buttons might still be visible.")
+    except Exception as e:
+        logging.exception(f"Error in handle_ai_response_memo_action_callback: {e}")
+        await callback_query.message.answer("An unexpected error occurred.")
+    finally:
+        if db.is_active:
+            db.close()

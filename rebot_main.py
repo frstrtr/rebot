@@ -33,6 +33,7 @@ from handlers import (
     handle_skip_address_action_stage_callback,
     handle_update_report_tronscan_callback,
     handle_ai_scam_check_tron_callback, # New handler import
+    handle_ai_response_memo_action_callback, # New handler import for AI memo actions
 )
 
 # 1. Define Context Variable for user_id
@@ -206,6 +207,11 @@ class Rebot:
         self.rebot_dp.callback_query.register(
             handle_ai_scam_check_tron_callback,  # New handler for AI scam check
             F.data == "ai_scam_check_tron",  # Callback data for the new handler
+        )
+        
+        self.rebot_dp.callback_query.register(
+            handle_ai_response_memo_action_callback, # Handler for AI response memo buttons
+            F.data.startswith("ai_memo_action:"),
         )
 
 

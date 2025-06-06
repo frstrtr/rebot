@@ -1,5 +1,27 @@
-# utils/colors.py
-class Colors:
-    YELLOW = '\033[93m'
-    GREEN = '\033[92m'
-    RESET = '\033[0m'
+# python 3.13.0
+aiogram>=3.20.0
+twisted>=24.7.0
+autobahn>=24.4.2
+zope.interface>=7.1.1
+setuptools>=75.2.0
+pyOpenSSL>=24.2.1
+service_identity>=24.2.0
+
+# crypto related
+base58>=2.1.1
+bech32>=1.2.0
+pycryptodome>=3.22.0
+
+# for testing
+websockets>=13.1.0
+
+# database
+sqlalchemy>=2.0.41
+greenlet>=3.2.2
+
+
+requests>=2.32.3
+
+# GenAI
+google_cloud_aiplatform>=1.96.0
+google-genai>=1.19.0

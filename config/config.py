@@ -149,6 +149,11 @@ class Config:
         # Add other explorers as needed
     }
 
+    # Vertex AI Configuration
+    VERTEX_AI_PROJECT_ID: Optional[str] = "multichat-bot-396516"  # Replace with your GCP Project ID
+    VERTEX_AI_LOCATION: Optional[str] = "us-central1"      # Replace with your GCP region
+    VERTEX_AI_MODEL_NAME: Optional[str] = "gemini-2.0-flash-lite-001" # Or other compatible model like gemini-1.5-flash-001
+
     @staticmethod
     def get_log_file_path(filename="bot.log"):
         # Ensure the log folder exists

@@ -117,7 +117,7 @@ async def handle_show_previous_memos_callback(callback_query: types.CallbackQuer
     action_details_list = data.get("addresses_for_memo_prompt_details")
 
     if not action_details_list or not isinstance(action_details_list, list) or not action_details_list[0]:
-        logging.warning("Could not retrieve address/blockchain from state for show_prev_memos. State: %s", data)
+        logging.warning("Could not retrieve address/blockchain from state for show_prev_memos. State: %s", data) # pylint:disable=logging-fstring-interpolation
         await callback_query.message.answer("Error: Context lost. Please try scanning the address again.")
         # Optionally, clear state fully if context is truly lost for subsequent actions
         # await state.clear() 
@@ -169,7 +169,7 @@ async def handle_proceed_to_memo_stage_callback(callback_query: types.CallbackQu
         #     reply_markup=None 
         # )
     except TelegramAPIError as e:
-        logging.warning("Could not edit message reply_markup on proceed_to_memo_stage: %s", e)
+        logging.warning("Could not edit message reply_markup on proceed_to_memo_stage: %s", e) # pylint:disable=logging-fstring-interpolation
 
     await _orchestrate_next_processing_step(callback_query.message, state)
 
@@ -184,7 +184,7 @@ async def handle_skip_address_action_stage_callback(callback_query: types.Callba
         blockchain_skipped = "N/A"
         logging.warning("Invalid callback data for skip_address_action_stage: %s", callback_query.data)
 
-    logging.info(f"User chose to skip further processing for address: {address_skipped} on {blockchain_skipped}")
+    logging.info(f"User chose to skip further processing for address: {address_skipped} on {blockchain_skipped}") # pylint:disable=logging-fstring-interpolation
     
     # Clear this address from being prompted for a memo.
     await state.update_data(addresses_for_memo_prompt_details=[]) 
@@ -297,7 +297,7 @@ async def handle_request_memo_callback(callback_query: types.CallbackQuery, stat
         if memo_type_str not in [MemoType.PUBLIC.value, MemoType.PRIVATE.value]:
             raise ValueError("Invalid memo type")
     except ValueError:
-        logging.warning(f"Invalid callback data for request_memo: {callback_query.data}")
+        logging.warning(f"Invalid callback data for request_memo: {callback_query.data}") # pylint:disable=logging-fstring-interpolation
         await callback_query.message.answer("Error processing memo request. Please try again.")
         return
 
@@ -352,7 +352,7 @@ async def handle_request_memo_callback(callback_query: types.CallbackQuery, stat
             current_address_info.get("blockchain")
         )
         if not db_crypto_address or not db_crypto_address.id:
-            logging.error(f"Failed to save/retrieve crypto address {address_text} for memo.")
+            logging.error(f"Failed to save/retrieve crypto address {address_text} for memo.") # pylint:disable=logging-fstring-interpolation
             await callback_query.message.answer("Error: Could not prepare address for memo. Please try again.")
             return
         
@@ -378,7 +378,7 @@ async def handle_request_memo_callback(callback_query: types.CallbackQuery, stat
             reply_markup=None,  # Remove buttons
         )
     except Exception as e:
-        logging.warning(f"Failed to edit message for memo prompt, sending new: {e}")
+        logging.warning(f"Failed to edit message for memo prompt, sending new: {e}") # pylint:disable=logging-fstring-interpolation
         await callback_query.message.answer(
             text=prompt_message_text,
             parse_mode="HTML",
@@ -394,7 +394,7 @@ async def handle_update_report_tronscan_callback(callback_query: types.CallbackQ
     # blockchain = user_data.get("current_action_blockchain") # This is implicitly TRON for this handler
 
     if not address:
-        logging.warning(f"Could not retrieve address from state for TronScan report. UserID: {callback_query.from_user.id}")
+        logging.warning(f"Could not retrieve address from state for TronScan report. UserID: {callback_query.from_user.id}") # pylint:disable=logging-fstring-interpolation
         await callback_query.message.answer("Error: Could not retrieve address for the report. Please try again.", show_alert=True)
         return
 
@@ -480,7 +480,7 @@ async def handle_update_report_tronscan_callback(callback_query: types.CallbackQ
         await callback_query.message.answer_document(report_file)
 
     except Exception as e:
-        logging.error(f"Error generating TronScan report for {address}: {e}", exc_info=True)
+        logging.error(f"Error generating TronScan report for {address}: {e}", exc_info=True) # pylint:disable=logging-fstring-interpolation
         await callback_query.message.answer(f"Sorry, an error occurred while generating the report for {address}.")
     finally:
         await api_client.close_session() # Ensure the session is closed
@@ -493,7 +493,7 @@ async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery
     address = user_data.get("current_action_address")
 
     if not address:
-        logging.warning(f"Could not retrieve address from state for AI Scam Check. UserID: {callback_query.from_user.id}")
+        logging.warning(f"Could not retrieve address from state for AI Scam Check. UserID: {callback_query.from_user.id}") # pylint:disable=logging-fstring-interpolation
         await callback_query.message.answer("Error: Could not retrieve address for the AI report. Please try again.", show_alert=True)
         return
 
@@ -575,7 +575,7 @@ async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery
         try:
             vertex_ai_client = VertexAIClient() # Initialize VertexAIClient
         except Exception as e:
-            logging.error(f"Failed to initialize VertexAIClient for AI Scam Check: {e}", exc_info=True)
+            logging.error(f"Failed to initialize VertexAIClient for AI Scam Check: {e}", exc_info=True) # pylint:disable=logging-fstring-interpolation
             await callback_query.message.answer("Error: Could not initialize the AI service. Please try again later.")
             return
 
@@ -584,34 +584,47 @@ async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery
             "Please analyze the following TRC20 transaction data for the address provided. "
             "Focus on patterns that might indicate scams, such as unusual token transfers, "
             "interactions with known scam contracts (if you have such knowledge, otherwise infer from patterns), "
+            "various known scam schemes (e.g., dusting attacks, Ponzi schemes, decimal point manipulation, "
+            "pig butchering, money laundering, Ponzi Schemes, Pump and Dump Schemes, Rug Pulls, Fake ICOs (Initial Coin Offerings), "
+            "Airdrop Scams, High-Yield Investment Programs (HYIPs), Phishing Scams, Impersonation Scams, Giveaway Scams, Romance Scams, "
+            "Pig Butchering Scams, Blackmail/Extortion Scams, Address Poisoning/Spoofing, Fake Exchanges/Platforms, Fake Wallets/Apps, "
+            "Cloud Mining Scams, Smurfing (Structuring), Mixing/Tumblers, Wash Trading), "
             "high frequency of small dusting transactions, or other red flags. "
-            "Provide a brief summary of your findings and a risk assessment (e.g., Low, Medium, High Risk) with justification.\n\n"
+            "Provide a brief summary of your findings and a risk assessment (e.g., Low, Medium, High Risk) with justification. "
+            "Report should not exceed 1000 symbols.\n\n"
             "Transaction Data:\n"
             f"{raw_transactions_summary}"
         )
 
-        ai_analysis_text = await vertex_ai_client.generate_text(prompt=ai_prompt, max_output_tokens=2048) # Increased token limit for analysis
+        ai_analysis_text = await vertex_ai_client.generate_text(prompt=ai_prompt, max_output_tokens=1024) # Adjusted token limit for direct message
 
+        response_message_text = ""
         if ai_analysis_text:
-            report_title = f"AI Scam Check Report for Address: {address}\n"
-            report_title += f"Analysis requested on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
-            final_report_content = report_title + "AI Analysis:\n" + ai_analysis_text
+            report_title = f"<b>AI Scam Check Report for Address:</b> <code>{html.quote(address)}</code>\n"
+            report_title += f"<i>Analysis requested on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}</i>\n\n"
+            response_message_text = report_title + "<b><u>AI Analysis:</u></b>\n" + html.quote(ai_analysis_text)
         else:
-            final_report_content = (
-                f"AI Scam Check Report for Address: {address}\n"
-                f"Analysis requested on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
-                "The AI service did not return an analysis. This could be due to content filters, an issue with the AI model, or no specific concerns found based on the provided data. "
-                "Please review the raw transaction data if needed."
+            response_message_text = (
+                f"<b>AI Scam Check Report for Address:</b> <code>{html.quote(address)}</code>\n"
+                f"<i>Analysis requested on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}</i>\n\n"
+                "The AI service did not return an analysis. This could be due to content filters, an issue with the AI model, "
+                "or no specific concerns found based on the provided data. "
+                "You can use the 'Get TRC20 Report' button to view raw transaction data."
             )
-            # Optionally, include the raw_transactions_summary in this fallback file too.
-            # final_report_content += "\n\n--- Raw Transaction Data Sent to AI ---\n" + raw_transactions_summary
 
-
-        report_file = BufferedInputFile(final_report_content.encode('utf-8'), filename=f"ai_scam_check_{address}.txt")
-        await callback_query.message.answer_document(report_file)
+        # Telegram Message Length Limit: 4096 characters.
+        # If response_message_text is longer, it needs to be split or truncated.
+        # For simplicity, this example sends it as one message.
+        # A more robust solution would handle splitting.
+        if len(response_message_text) > 4096:
+            logging.warning(f"AI Scam Check report for {address} is too long ({len(response_message_text)} chars) for a single Telegram message. Truncating.") # pylint:disable=logging-fstring-interpolation
+            # Simple truncation, could be smarter (e.g. split into multiple messages)
+            response_message_text = response_message_text[:4090] + "\n<b>[Report Truncated]</b>"
+        
+        await callback_query.message.answer(response_message_text, parse_mode="HTML")
 
     except Exception as e:
-        logging.error(f"Error during AI Scam Check for {address}: {e}", exc_info=True)
+        logging.error(f"Error during AI Scam Check for {address}: {e}", exc_info=True) # pylint:disable=logging-fstring-interpolation
         await callback_query.message.answer(f"Sorry, an error occurred while performing the AI Scam Check for {address}.")
     finally:
         await tron_api_client.close_session()

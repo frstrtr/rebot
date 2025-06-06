@@ -20,6 +20,9 @@ class Config:
     GREEN = '\033[92m'
     RESET_COLOR = '\033[0m'  # Standardized name for reset
 
+    # External API Configurations
+    TRONSCAN_API_BASE_URL = "https://apilist.tronscanapi.com/api/"
+
     @staticmethod
     def _load_admins(filename="admins.txt"):
         """Loads admin IDs from a file, one ID per line."""

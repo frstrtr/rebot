@@ -169,6 +169,101 @@ class TronScanAPI:
         )
         return await self._request("GET", endpoint, params=params)
 
+    async def get_account_related_accounts(self, address: str) -> Optional[Dict[str, Any]]:
+        """
+        Fetches account data with transaction records with the current account.
+        Endpoint: /api/deep/account/relatedAccount
+        """
+        if not address:
+            logging.warning("get_account_related_accounts called with empty address.")
+            return None
+        endpoint = "deep/account/relatedAccount"
+        params = {"address": address}
+        logging.info(f"Fetching related accounts for address: {address}")
+        return await self._request("GET", endpoint, params=params)
+
+    async def get_account_tags(self, address: str) -> Optional[Dict[str, Any]]:
+        """
+        Fetches all tags of an account.
+        Endpoint: /api/account/tag
+        Note: The actual structure of the response for tags should be verified.
+              Sometimes tags are part of the main account info response.
+        """
+        if not address:
+            logging.warning("get_account_tags called with empty address.")
+            return None
+        endpoint = "account/tag" # As specified by user
+        params = {"address": address}
+        logging.info(f"Fetching account tags for address: {address}")
+        # This might return a list of tags or a more complex object.
+        # Example: {"address":"TR...","tags":[{"tag":"Whale","tag_id":1}]}
+        return await self._request("GET", endpoint, params=params)
+
+    async def get_stablecoin_blacklist(self, limit: int = 50, start: int = 0) -> Optional[Dict[str, Any]]:
+        """
+        Fetches a list of all blacklist transactions/addresses for stablecoins.
+        Endpoint: /api/stableCoin/blackList
+        """
+        endpoint = "stableCoin/blackList"
+        params = {
+            "limit": limit,
+            "start": start
+        }
+        logging.info(f"Fetching stablecoin blacklist (limit: {limit}, start: {start})")
+        return await self._request("GET", endpoint, params=params)
+
+    async def get_account_transfer_amounts(self, address: str) -> Optional[Dict[str, Any]]:
+        """
+        Obtains account transfer-in and transfer-out fund distribution.
+        Endpoint: /api/deep/account/transferAmount
+        """
+        if not address:
+            logging.warning("get_account_transfer_amounts called with empty address.")
+            return None
+        endpoint = "deep/account/transferAmount"
+        params = {"address": address}
+        logging.info(f"Fetching account transfer amounts for address: {address}")
+        return await self._request("GET", endpoint, params=params)
+
+    async def get_account_token_big_amounts(
+        self,
+        address: str,
+        contract_address: Optional[str] = None,
+        limit: int = 10,
+        start: int = 0
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Fetches large token transactions for a given account.
+        Endpoint: /api/deep/account/token/bigAmount
+        """
+        if not address:
+            logging.warning("get_account_token_big_amounts called with empty address.")
+            return None
+        endpoint = "deep/account/token/bigAmount"
+        params = {
+            "address": address,
+            "limit": limit,
+            "start": start
+        }
+        if contract_address:
+            params["contractAddress"] = contract_address # API might use 'contract_address' or 'token_address'
+        
+        logging.info(f"Fetching big token amounts for address: {address}, contract: {contract_address} (limit: {limit})")
+        return await self._request("GET", endpoint, params=params)
+
+    async def get_stablecoin_key_events(self, limit: int = 50, start: int = 0) -> Optional[Dict[str, Any]]:
+        """
+        Fetches key events of TRON stablecoins (e.g., AddedBlackList, LogSetOwner).
+        Endpoint: /api/stableCoin/totalSupply/keyEvents
+        """
+        endpoint = "stableCoin/totalSupply/keyEvents"
+        params = {
+            "limit": limit,
+            "start": start
+        }
+        logging.info(f"Fetching stablecoin key events (limit: {limit}, start: {start})")
+        return await self._request("GET", endpoint, params=params)
+
 
 # Example usage (optional, for testing the module directly)
 if __name__ == "__main__":
@@ -290,6 +385,84 @@ if __name__ == "__main__":
             print(f"TRC20 History (USDT) response (structure might vary): {history_usdt}")
         else:
             print("Failed to get TRC20 transaction history (USDT).")
+
+        print(f"\n\033[93m--- Testing get_account_related_accounts for {test_user_address} ---\033[0m")
+        related_accounts = await api_client.get_account_related_accounts(test_user_address)
+        if related_accounts:
+            print(f"Related Accounts data received (first few entries if list):")
+            if isinstance(related_accounts.get('data'), list): # Assuming 'data' holds the list
+                for acc_data in related_accounts['data'][:3]:
+                    print(f"  Related Address: {acc_data.get('related_address')}, Tag: {acc_data.get('addressTag')}, In: {acc_data.get('inAmountUsd')}, Out: {acc_data.get('outAmountUsd')}")
+            else: # Print raw if structure is different
+                print(related_accounts)
+        else:
+            print(f"Failed to get related accounts for {test_user_address}.")
+
+        print(f"\n\033[93m--- Testing get_account_tags for {test_user_address} ---\033[0m")
+        account_tags = await api_client.get_account_tags(test_user_address)
+        if account_tags:
+            print(f"Account Tags received for {test_user_address}:")
+            # Assuming tags might be in a list under a 'tags' key or similar
+            if isinstance(account_tags.get('tags'), list):
+                 for tag_info in account_tags['tags']:
+                    print(f"  Tag: {tag_info.get('tag')}, Tag ID: {tag_info.get('tag_id')}")
+            elif isinstance(account_tags, list): # If the response itself is a list of tags
+                for tag_info in account_tags[:5]:
+                    print(f"  Tag: {tag_info}") # Adjust based on actual tag structure
+            else:
+                print(account_tags) # Print raw if structure is different
+        else:
+            print(f"Failed to get account tags for {test_user_address}.")
+
+        print(f"\n\033[93m--- Testing get_stablecoin_blacklist (first 5) ---\033[0m")
+        blacklist = await api_client.get_stablecoin_blacklist(limit=5)
+        if blacklist and blacklist.get('data'): # Assuming data is in 'data' key
+            print("Stablecoin Blacklist (first 5):")
+            for item in blacklist['data'][:5]: # Iterate through items in 'data'
+                print(f"  Address: {item.get('address')}, Token: {item.get('tokenSymbol')}, Reason: {item.get('reason')}")
+        elif blacklist:
+            print(f"Stablecoin Blacklist response (structure might vary): {blacklist}")
+        else:
+            print("Failed to get stablecoin blacklist.")
+
+        print(f"\n\033[93m--- Testing get_account_transfer_amounts for {test_user_address} ---\033[0m")
+        transfer_amounts = await api_client.get_account_transfer_amounts(test_user_address)
+        if transfer_amounts:
+            print(f"Account Transfer Amounts for {test_user_address}:")
+            # Example: print top 2 incoming and outgoing if available
+            if transfer_amounts.get('receiveList'):
+                print("  Top Incoming:")
+                for tx_info in transfer_amounts['receiveList'][:2]:
+                    print(f"    From: {tx_info.get('address')}, Amount USD: {tx_info.get('amountUsd')}, Tag: {tx_info.get('tag')}")
+            if transfer_amounts.get('sendList'):
+                print("  Top Outgoing:")
+                for tx_info in transfer_amounts['sendList'][:2]:
+                    print(f"    To: {tx_info.get('address')}, Amount USD: {tx_info.get('amountUsd')}, Tag: {tx_info.get('tag')}")
+            # print(transfer_amounts) # Or print raw for full details
+        else:
+            print(f"Failed to get account transfer amounts for {test_user_address}.")
+
+        print(f"\n\033[93m--- Testing get_account_token_big_amounts for {test_user_address} (USDT, limit 3) ---\033[0m")
+        big_amounts_usdt = await api_client.get_account_token_big_amounts(test_user_address, contract_address=usdt_trc20_contract_address, limit=3)
+        if big_amounts_usdt and big_amounts_usdt.get('data'):
+            print(f"Big USDT Token Amounts for {test_user_address} (first 3):")
+            for tx_info in big_amounts_usdt['data'][:3]:
+                print(f"  TxID: {tx_info.get('transaction_id')}, Amount: {tx_info.get('amount')}, To: {tx_info.get('to_address')}, From: {tx_info.get('from_address')}")
+        elif big_amounts_usdt:
+            print(f"Big USDT Token Amounts response (structure might vary): {big_amounts_usdt}")
+        else:
+            print(f"Failed to get big USDT token amounts for {test_user_address}.")
+
+        print(f"\n\033[93m--- Testing get_stablecoin_key_events (first 5) ---\033[0m")
+        key_events = await api_client.get_stablecoin_key_events(limit=5)
+        if key_events and key_events.get('data'):
+            print("Stablecoin Key Events (first 5):")
+            for event in key_events['data'][:5]:
+                print(f"  Event Type: {event.get('eventType')}, Token: {event.get('tokenSymbol')}, Address: {event.get('address')}, Timestamp: {event.get('block_ts')}")
+        elif key_events:
+            print(f"Stablecoin Key Events response (structure might vary): {key_events}")
+        else:
+            print("Failed to get stablecoin key events.")
 
 
         # Example with timestamp (transactions in the last 24 hours)

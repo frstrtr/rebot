@@ -169,7 +169,7 @@ class Rebot:
         # Register update report handler
         self.rebot_dp.callback_query.register(
             handle_update_report_tronscan_callback,
-            F.data == "update_report_tronscan", # Corrected: was F.data.startswith("update_report_tronscan:")
+            F.data.startswith("update_report_tronscan:"), # Corrected: was F.data.startswith("update_report_tronscan:")
         )
 
         # self.rebot_dp.callback_query.register(

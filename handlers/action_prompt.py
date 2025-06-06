@@ -18,12 +18,24 @@ async def _send_action_prompt(
     target_message: Message,
     address: str,
     blockchain: str,
-    state: FSMContext, # state is passed but not directly used in this version of the function
+    state: FSMContext, # state is passed and will now be used to set context
     db: Session,
     acting_telegram_user_id: int,
     edit_message: bool = False,
 ):
     """Sends a message with action buttons for an identified address."""
+    
+    # Ensure the FSM state has the current address and blockchain for the action prompt's context
+    await state.update_data(
+        current_action_address=address,
+        current_action_blockchain=blockchain,
+        # Preserve other relevant state data if necessary, for example:
+        # addresses_for_memo_prompt_details=data.get("addresses_for_memo_prompt_details", []), 
+        # current_scan_db_message_id=data.get("current_scan_db_message_id")
+        # Be careful not to overwrite essential data if this function is called in various contexts.
+        # For now, focusing on setting the action address/blockchain.
+    )
+    
     prompt_text = (
         f"[_send_action_prompt] Address <code>{html.quote(address)}</code> identified for <b>{html.quote(blockchain.capitalize())}</b>.\n"
         "What would you like to do?"
@@ -117,7 +129,7 @@ async def _send_action_prompt(
     if blockchain.lower() == "tron":
         update_report_button = InlineKeyboardButton(
             text="📊 Get TRC20 Report", # Changed text for clarity
-            callback_data="update_report_tronscan" # Only address needed if blockchain is implied
+            callback_data=f"update_report_tronscan:{address}" # Only address needed if blockchain is implied
         )
 
     skip_address_button = InlineKeyboardButton(

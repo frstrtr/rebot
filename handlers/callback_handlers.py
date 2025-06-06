@@ -67,6 +67,8 @@ async def handle_blockchain_clarification_callback(
                 addresses_for_memo_prompt_details=addresses_for_memo_prompt_details_fsm,
                 current_item_for_blockchain_clarification=None,  # Clear the item being clarified
                 pending_blockchain_clarification=data.get("pending_blockchain_clarification", []), # Preserve pending
+                current_action_address=address_str,  # <--- ADD THIS
+                current_action_blockchain=chosen_blockchain  # <--- ADD THIS
             )
             
             # Edit the clarification message to show the choice and then send the action prompt.

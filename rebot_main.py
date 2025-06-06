@@ -170,7 +170,7 @@ class Rebot:
         # Register update report handler
         self.rebot_dp.callback_query.register(
             handle_update_report_tronscan_callback,
-            F.data.startswith("update_report_tronscan:"), # Corrected: was F.data.startswith("update_report_tronscan:")
+            F.data.startswith("update_report_tronscan"),
         )
 
         # self.rebot_dp.callback_query.register(
@@ -208,7 +208,7 @@ class Rebot:
             F.data == "ai_scam_check_tron",  # Callback data for the new handler
         )
 
-        
+
         # Register other handlers if any
         # self.rebot_dp.my_chat_member.register(member_status_update_handler)
         # self.rebot_dp.errors.register(unhandled_updates_handler)

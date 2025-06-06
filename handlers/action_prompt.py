@@ -134,7 +134,7 @@ async def _send_action_prompt(
     if blockchain.lower() == "tron" and is_admin: # Show these buttons only for TRON and if user is admin
         update_report_button = InlineKeyboardButton(
             text="📊 Get TRC20 Report",
-            callback_data="update_report_tronscan" # No address needed, get from FSM
+            callback_data=f"update_report_tronscan" # No address needed, get from FSM
         )
         ai_scam_check_button = InlineKeyboardButton( # New button definition
             text="🤖 AI Scam Check (TRC20)",

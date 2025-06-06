@@ -12,7 +12,8 @@ import io # For sending text as a file
 
 from database import SessionLocal, get_or_create_user, save_crypto_address # Add get_or_create_user, MemoType
 from database.models import MemoType
-from extapi.tronscan.client import TronScanAPI # Import TronScanAPI client
+from extapi.tronscan.client import TronScanAPI
+from genai import VertexAIClient # Import VertexAIClient
 from .address_processing import (
     _display_memos_for_address_blockchain,
     _orchestrate_next_processing_step,
@@ -485,6 +486,135 @@ async def handle_update_report_tronscan_callback(callback_query: types.CallbackQ
         await api_client.close_session() # Ensure the session is closed
 
 
-# ... existing code ...
-# Make sure to register this new handler in your main bot file (e.g., rebot_main.py)
-# dp.callback_query.register(handle_update_report_tronscan_callback, F.data.startswith("update_report_tronscan:"))
+async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery, state: FSMContext):
+    """Handles the 'AI Scam Check (TRC20)' button click."""
+    await callback_query.answer("Performing AI Scam Check for TRC20 transactions...")
+    user_data = await state.get_data()
+    address = user_data.get("current_action_address")
+
+    if not address:
+        logging.warning(f"Could not retrieve address from state for AI Scam Check. UserID: {callback_query.from_user.id}")
+        await callback_query.message.answer("Error: Could not retrieve address for the AI report. Please try again.", show_alert=True)
+        return
+
+    tron_api_client = TronScanAPI()
+    vertex_ai_client = None # Initialize later to handle potential Vertex AI init errors
+
+    raw_transactions_summary = f"TRC20 Transaction Data for Address: {address}\n"
+    raw_transactions_summary += f"Report requested on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
+    fetch_limit = 50 # Fetch a reasonable number of recent transactions for AI analysis to avoid overly long prompts
+                     # For a more thorough check, this might need to be higher or paginated.
+
+    try:
+        await callback_query.message.answer(f"Querying TronScan for recent TRC20 transfers of <code>{address}</code> (limit {fetch_limit})...", parse_mode="HTML")
+        
+        history_data = await tron_api_client.get_trc20_transaction_history(
+            address=address,
+            limit=fetch_limit,
+            start=0
+        )
+
+        if history_data and history_data.get("token_transfers"):
+            transactions = history_data.get("token_transfers", [])
+            total_found_api = history_data.get("total", len(transactions))
+            
+            raw_transactions_summary += f"Found {len(transactions)} transactions in this batch (API reports total: {total_found_api}).\n"
+            if total_found_api > len(transactions) and len(transactions) == fetch_limit:
+                raw_transactions_summary += f"Note: Analyzing the latest {fetch_limit} transactions. More transactions might exist.\n"
+            raw_transactions_summary += "--------------------------------------------------\n"
+
+            for tx_idx, tx in enumerate(transactions):
+                raw_timestamp_ms = tx.get('block_ts')
+                human_readable_timestamp = "N/A"
+                if raw_timestamp_ms is not None:
+                    try:
+                        timestamp_seconds = float(raw_timestamp_ms) / 1000.0
+                        dt_object = datetime.fromtimestamp(timestamp_seconds)
+                        human_readable_timestamp = dt_object.strftime("%Y-%m-%d %H:%M:%S")
+                    except (ValueError, TypeError):
+                        human_readable_timestamp = "Invalid Timestamp"
+                
+                token_info = tx.get('tokenInfo', {})
+                token_abbr = token_info.get('tokenAbbr', 'N/A')
+                token_name = token_info.get('tokenName', 'Unknown Token')
+                token_decimals = int(token_info.get('tokenDecimal', 0))
+                
+                quant_raw = tx.get('quant')
+                amount_formatted = "N/A"
+                if quant_raw is not None:
+                    try:
+                        amount_formatted = str(int(quant_raw) / (10**token_decimals))
+                    except (ValueError, TypeError):
+                        amount_formatted = f"{quant_raw} (raw)"
+
+                raw_transactions_summary += (
+                    f"Transaction {tx_idx + 1}:\n"
+                    f"  Timestamp: {human_readable_timestamp}\n"
+                    f"  TxID: {tx.get('transaction_id', 'N/A')}\n"
+                    f"  From: {tx.get('from_address', 'N/A')}\n"
+                    f"  To: {tx.get('to_address', 'N/A')}\n"
+                    f"  Token: {token_name} ({token_abbr})\n"
+                    f"  Amount: {amount_formatted} {token_abbr}\n"
+                    f"  Confirmed: {tx.get('confirmed', 'N/A')}\n"
+                    f"--------------------------------------------------\n"
+                )
+            
+            if not transactions:
+                 raw_transactions_summary += "No TRC20 transactions found in the fetched batch.\n"
+        
+        elif history_data:
+            raw_transactions_summary += "No TRC20 transactions found or response format unexpected.\n"
+        else:
+            raw_transactions_summary += "Failed to fetch TRC20 transaction history from TronScan.\n"
+            await callback_query.message.answer("Could not fetch transaction data for AI analysis.")
+            return # Exit if no data to analyze
+
+        # Now, send to Vertex AI
+        await callback_query.message.answer("Sending transaction data to AI for analysis...")
+        
+        try:
+            vertex_ai_client = VertexAIClient() # Initialize VertexAIClient
+        except Exception as e:
+            logging.error(f"Failed to initialize VertexAIClient for AI Scam Check: {e}", exc_info=True)
+            await callback_query.message.answer("Error: Could not initialize the AI service. Please try again later.")
+            return
+
+        ai_prompt = (
+            "You are a cryptocurrency transaction analyst specializing in identifying suspicious or potentially scam-related activities. "
+            "Please analyze the following TRC20 transaction data for the address provided. "
+            "Focus on patterns that might indicate scams, such as unusual token transfers, "
+            "interactions with known scam contracts (if you have such knowledge, otherwise infer from patterns), "
+            "high frequency of small dusting transactions, or other red flags. "
+            "Provide a brief summary of your findings and a risk assessment (e.g., Low, Medium, High Risk) with justification.\n\n"
+            "Transaction Data:\n"
+            f"{raw_transactions_summary}"
+        )
+
+        ai_analysis_text = await vertex_ai_client.generate_text(prompt=ai_prompt, max_output_tokens=2048) # Increased token limit for analysis
+
+        if ai_analysis_text:
+            report_title = f"AI Scam Check Report for Address: {address}\n"
+            report_title += f"Analysis requested on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
+            final_report_content = report_title + "AI Analysis:\n" + ai_analysis_text
+        else:
+            final_report_content = (
+                f"AI Scam Check Report for Address: {address}\n"
+                f"Analysis requested on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
+                "The AI service did not return an analysis. This could be due to content filters, an issue with the AI model, or no specific concerns found based on the provided data. "
+                "Please review the raw transaction data if needed."
+            )
+            # Optionally, include the raw_transactions_summary in this fallback file too.
+            # final_report_content += "\n\n--- Raw Transaction Data Sent to AI ---\n" + raw_transactions_summary
+
+
+        report_file = BufferedInputFile(final_report_content.encode('utf-8'), filename=f"ai_scam_check_{address}.txt")
+        await callback_query.message.answer_document(report_file)
+
+    except Exception as e:
+        logging.error(f"Error during AI Scam Check for {address}: {e}", exc_info=True)
+        await callback_query.message.answer(f"Sorry, an error occurred while performing the AI Scam Check for {address}.")
+    finally:
+        await tron_api_client.close_session()
+        # VertexAIClient does not have an explicit close_session method in the provided snippet,
+        # as it doesn't manage an ongoing session like aiohttp.ClientSession.
+        # If it did, it would be closed here.

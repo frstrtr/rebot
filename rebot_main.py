@@ -32,6 +32,7 @@ from handlers import (
     # handle_proceed_to_memo_stage_callback, # Updated
     handle_skip_address_action_stage_callback,
     handle_update_report_tronscan_callback,
+    handle_ai_scam_check_tron_callback, # New handler import
 )
 
 # 1. Define Context Variable for user_id
@@ -202,6 +203,12 @@ class Rebot:
             F.data == "skip_address_action_stage",
         )
 
+        self.rebot_dp.callback_query.register(
+            handle_ai_scam_check_tron_callback,  # New handler for AI scam check
+            F.data == "ai_scam_check_tron",  # Callback data for the new handler
+        )
+
+        
         # Register other handlers if any
         # self.rebot_dp.my_chat_member.register(member_status_update_handler)
         # self.rebot_dp.errors.register(unhandled_updates_handler)

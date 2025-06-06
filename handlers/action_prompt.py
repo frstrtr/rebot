@@ -126,10 +126,15 @@ async def _send_action_prompt(
     )
 
     update_report_button = None
+    ai_scam_check_button = None # New button
     if blockchain.lower() == "tron":
         update_report_button = InlineKeyboardButton(
-            text="📊 Get TRC20 Report", # Changed text for clarity
-            callback_data=f"update_report_tronscan:{address}" # Only address needed if blockchain is implied
+            text="📊 Get TRC20 Report",
+            callback_data="update_report_tronscan" # No address needed, get from FSM
+        )
+        ai_scam_check_button = InlineKeyboardButton( # New button definition
+            text="🤖 AI Scam Check (TRC20)",
+            callback_data="ai_scam_check_tron" # Callback data for the new handler
         )
 
     skip_address_button = InlineKeyboardButton(
@@ -142,17 +147,32 @@ async def _send_action_prompt(
         [add_public_memo_button, add_private_memo_button],
     ]
     
-    third_row = []
-    if explorer_button:
-        third_row.append(explorer_button)
-    
-    if update_report_button: # Add the new button if it was created
-        third_row.append(update_report_button)
+    if blockchain.lower() == "tron":
+        # TRON-specific layout
+        third_row_tron = []
+        if update_report_button:
+            third_row_tron.append(update_report_button)
+        if ai_scam_check_button:
+            third_row_tron.append(ai_scam_check_button)
+        
+        if third_row_tron: # Should always be true if tron, as buttons are defined
+            keyboard_layout.append(third_row_tron)
 
-    third_row.append(skip_address_button)
-    
-    if third_row:
-        keyboard_layout.append(third_row)
+        fourth_row_tron = []
+        if explorer_button: # This will be "View on TronScan"
+            fourth_row_tron.append(explorer_button)
+        fourth_row_tron.append(skip_address_button)
+        keyboard_layout.append(fourth_row_tron)
+    else:
+        # Generic layout for other blockchains
+        third_row_generic = []
+        if explorer_button:
+            third_row_generic.append(explorer_button)
+        third_row_generic.append(skip_address_button) # Always add skip button
+        
+        if third_row_generic: # Should always be true as skip is always there
+            keyboard_layout.append(third_row_generic)
+
 
     reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard_layout)
 

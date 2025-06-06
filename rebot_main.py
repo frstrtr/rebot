@@ -17,7 +17,7 @@ from aiogram.filters import Command, StateFilter  # MODIFIED: Imported Command
 from aiogram.types import Update
 
 from config.credentials import Credentials
-from config.config import Config # Config is already imported
+from config.config import Config  # Config is already imported
 from database import create_tables
 from handlers import (
     command_start_handler,
@@ -26,11 +26,12 @@ from handlers import (
     checkmemo_handler,
     handle_blockchain_clarification_callback,
     # handle_memo_action_callback, # Updated
-    handle_show_public_memos_callback, # Updated
-    handle_show_private_memos_callback, # New
-    handle_request_memo_callback, # New
+    handle_show_public_memos_callback,  # Updated
+    handle_show_private_memos_callback,  # New
+    handle_request_memo_callback,  # New
     # handle_proceed_to_memo_stage_callback, # Updated
     handle_skip_address_action_stage_callback,
+    handle_update_report_tronscan_callback,
 )
 
 # 1. Define Context Variable for user_id
@@ -41,6 +42,7 @@ user_id_context = contextvars.ContextVar("user_id_context", default="N/A")
 #     YELLOW = '\033[93m'
 #     GREEN = '\033[92m'  # Added Green
 #     RESET = '\033[0m'
+
 
 # 2. Custom Logging Filter to add user_id to log records
 class UserIdContextFilter(logging.Filter):
@@ -163,37 +165,43 @@ class Rebot:
             handle_blockchain_clarification_callback,
             F.data.startswith("clarify_bc:"),
         )
-        
+
+        # Register update report handler
+        self.rebot_dp.callback_query.register(
+            handle_update_report_tronscan_callback,
+            F.data == "update_report_tronscan", # Corrected: was F.data.startswith("update_report_tronscan:")
+        )
+
         # self.rebot_dp.callback_query.register(
         #     handle_memo_action_callback, # This was for buttons from _prompt_for_next_memo
-        #     F.data.startswith("memo_action:"), 
+        #     F.data.startswith("memo_action:"),
         # )
-        
+
         self.rebot_dp.callback_query.register(
-            handle_show_public_memos_callback, # Changed from show_prev_memos
+            handle_show_public_memos_callback,  # Changed from show_prev_memos
             F.data == "show_public_memos",
         )
-        
+
         self.rebot_dp.callback_query.register(
             handle_show_private_memos_callback,
             F.data == "show_private_memos",
         )
-        
+
         # self.rebot_dp.callback_query.register(
         #     handle_proceed_to_memo_stage_callback, # Replaced by request_memo:type
-        #     F.data == "proceed_to_memo_stage", 
+        #     F.data == "proceed_to_memo_stage",
         # )
 
         self.rebot_dp.callback_query.register(
-            handle_request_memo_callback, # Handles request_memo:public and request_memo:private
+            handle_request_memo_callback,  # Handles request_memo:public and request_memo:private
             F.data.startswith("request_memo:"),
         )
-        
+
         self.rebot_dp.callback_query.register(
             handle_skip_address_action_stage_callback,
             F.data == "skip_address_action_stage",
         )
-        
+
         # Register other handlers if any
         # self.rebot_dp.my_chat_member.register(member_status_update_handler)
         # self.rebot_dp.errors.register(unhandled_updates_handler)
@@ -213,12 +221,12 @@ async def main():
 if __name__ == "__main__":
     # 1. Create the filter and formatters
     custom_filter = UserIdContextFilter()
-    
+
     # Formatter for console with color using Config
     console_log_formatter = logging.Formatter(
         f"%(asctime)s - %(levelname)s - %(name)s - UserID: {Config.YELLOW}%(user_id)s{Config.RESET_COLOR} - %(message)s"
     )
-    
+
     # Formatter for file (no color)
     file_log_formatter = logging.Formatter(
         "%(asctime)s - %(levelname)s - %(name)s - UserID: %(user_id)s - %(message)s"
@@ -232,7 +240,7 @@ if __name__ == "__main__":
 
     # Console Handler
     console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(console_log_formatter) # Use colored formatter
+    console_handler.setFormatter(console_log_formatter)  # Use colored formatter
     console_handler.addFilter(custom_filter)
     root_logger.addHandler(console_handler)
 
@@ -246,7 +254,7 @@ if __name__ == "__main__":
     file_handler = TimedRotatingFileHandler(
         log_file_path, when="midnight", interval=1, backupCount=7, encoding="utf-8"
     )
-    file_handler.setFormatter(file_log_formatter) # Use non-colored formatter for file
+    file_handler.setFormatter(file_log_formatter)  # Use non-colored formatter for file
     file_handler.addFilter(custom_filter)
     root_logger.addHandler(file_handler)
 

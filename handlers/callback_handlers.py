@@ -4,12 +4,15 @@ Handles callbacks from inline buttons related to blockchain clarifications.
 
 import logging
 from aiogram import html, types
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramAPIError
+from datetime import datetime # Ensure datetime is imported
+import io # For sending text as a file
 
 from database import SessionLocal, get_or_create_user, save_crypto_address # Add get_or_create_user, MemoType
 from database.models import MemoType
+from extapi.tronscan.client import TronScanAPI # Import TronScanAPI client
 from .address_processing import (
     _display_memos_for_address_blockchain,
     _orchestrate_next_processing_step,
@@ -322,13 +325,7 @@ async def handle_request_memo_callback(callback_query: types.CallbackQuery, stat
 
     # The `proceed_to_memo_stage` callback should have called `_orchestrate_next_processing_step`,
     # which in turn calls `_prompt_for_next_memo` if `addresses_for_memo_prompt_details` is set.
-    # `_prompt_for_next_memo` then sets `current_address_for_memo_id` etc. in FSM.
-    # This `handle_request_memo_callback` replaces the old `handle_memo_action_callback`'s "request_add" part.
-
-    # Let's retrieve the ID that _prompt_for_next_memo would have set.
-    # This means the user must have clicked "Add/Manage Memo" from _send_action_prompt,
-    # which calls `handle_proceed_to_memo_stage_callback`, then orchestrator, then `_prompt_for_next_memo`.
-    # The `_prompt_for_next_memo` shows "Add Memo" / "Skip" buttons which call `handle_memo_action_callback`.
+    # `_prompt_for_next_memo` shows "Add Memo" / "Skip" buttons which call `handle_memo_action_callback`.
     # This new `request_memo:public/private` comes from `_send_action_prompt`.
     # So, if user clicks "Add Public/Private Memo" from `_send_action_prompt`, we need to:
     # 1. Save the address to DB to get an ID (if not already done for this specific intent).
@@ -386,26 +383,106 @@ async def handle_request_memo_callback(callback_query: types.CallbackQuery, stat
     await state.set_state(AddressProcessingStates.awaiting_memo)
 
 
-# Remove or comment out handle_proceed_to_memo_stage_callback if "Add/Manage Memo" button is removed
-# Or repurpose it if "Add/Manage Memo" leads to a choice between public/private text input.
-# For now, direct "Add Public/Private Memo" buttons are simpler.
-# The old `handle_proceed_to_memo_stage_callback` called `_orchestrate_next_processing_step`.
-# The new `request_memo:type` callbacks now directly set up for `awaiting_memo`.
+async def handle_update_report_tronscan_callback(callback_query: types.CallbackQuery, state: FSMContext):
+    """Handles the 'Update Report (TRC20)' button click for TronScan."""
+    await callback_query.answer("Fetching TRC20 report from TronScan...")
+    user_data = await state.get_data()
+    address = user_data.get("current_action_address")
+    # blockchain = user_data.get("current_action_blockchain") # This is implicitly TRON for this handler
 
-# The `handle_memo_action_callback` (old one) was for buttons from `_prompt_for_next_memo`.
-# If `_prompt_for_next_memo` is still used, its buttons need to be distinct or this logic merged.
-# For now, assuming `_send_action_prompt` is the primary way to initiate adding a memo.
-# We can remove `handle_proceed_to_memo_stage_callback` and `handle_memo_action_callback`
-# if the new `handle_request_memo_callback` covers all "add memo" scenarios from the main action prompt.
+    if not address:
+        logging.warning(f"Could not retrieve address from state for TronScan report. UserID: {callback_query.from_user.id}")
+        await callback_query.message.answer("Error: Could not retrieve address for the report. Please try again.", show_alert=True)
+        return
 
-# Let's simplify: The "Add/Manage Memo" button from _send_action_prompt is now split into
-# "Add Public Memo" and "Add Private Memo". These will call `handle_request_memo_callback`.
-# The old `handle_proceed_to_memo_stage_callback` and `handle_memo_action_callback` might become obsolete
-# or need to be adapted if there's another flow that uses `_prompt_for_next_memo`.
+    api_client = TronScanAPI() # Uses API key from config by default
+    report_content = f"TRC20 Transaction Report for Address: {address}\n"
+    report_content += f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
+    all_transactions = []
+    current_start = 0
+    # TronScan API limit is often 50, but some allow up to 200. Let's use a reasonable limit.
+    # For a full report, pagination is needed. This example fetches a large batch.
+    # A more robust solution would paginate until all transactions are fetched.
+    # For now, let's fetch up to 200 as an example, or a configurable high number.
+    # The TronScan API for transfers has a 'total' field in response, which can be used for pagination.
+    # This simplified version fetches one large batch.
+    fetch_limit = 200 # Max usually allowed by Tronscan for transfers per request.
 
-# For this iteration, let's assume `handle_request_memo_callback` is the new way.
-# We need to update `__init__.py` and `rebot_main.py` registrations.
+    try:
+        await callback_query.message.answer(f"Querying TronScan for TRC20 transfers of <code>{address}</code> (limit {fetch_limit})...", parse_mode="HTML")
+        
+        # Fetching all TRC20 transactions (no specific contract_address)
+        # To get ALL transactions, you'd typically paginate.
+        # For this example, we'll fetch a large batch (e.g., limit 200, which is often max for this endpoint)
+        # and inform the user if more might exist.
+        
+        history_data = await api_client.get_trc20_transaction_history(
+            address=address,
+            limit=fetch_limit, # Fetch a large number of transactions
+            start=0
+        )
 
-# Commenting out for now, review if these are still needed for other flows:
-# async def handle_proceed_to_memo_stage_callback(callback_query: types.CallbackQuery, state: FSMContext): ...
-# async def handle_memo_action_callback(callback_query: types.CallbackQuery, state: FSMContext): ...
+        if history_data and history_data.get("token_transfers"):
+            transactions = history_data.get("token_transfers", [])
+            total_found_api = history_data.get("total", len(transactions)) # Get total from API if available
+            
+            report_content += f"Found {len(transactions)} transactions in this batch (API reports total: {total_found_api}).\n"
+            if total_found_api > len(transactions):
+                report_content += "Note: More transactions might exist than shown in this batch due to API limits.\n"
+            report_content += "--------------------------------------------------\n"
+
+            for tx in transactions:
+                raw_timestamp_ms = tx.get('block_ts')
+                human_readable_timestamp = "N/A"
+                if raw_timestamp_ms is not None:
+                    try:
+                        timestamp_seconds = float(raw_timestamp_ms) / 1000.0
+                        dt_object = datetime.fromtimestamp(timestamp_seconds)
+                        human_readable_timestamp = dt_object.strftime("%Y-%m-%d %H:%M:%S")
+                    except (ValueError, TypeError):
+                        human_readable_timestamp = "Invalid Timestamp"
+                
+                token_info = tx.get('tokenInfo', {})
+                token_abbr = token_info.get('tokenAbbr', 'N/A')
+                token_name = token_info.get('tokenName', 'Unknown Token')
+                token_decimals = int(token_info.get('tokenDecimal', 0))
+                
+                quant_raw = tx.get('quant')
+                amount_formatted = "N/A"
+                if quant_raw is not None:
+                    try:
+                        amount_formatted = str(int(quant_raw) / (10**token_decimals))
+                    except (ValueError, TypeError):
+                        amount_formatted = f"{quant_raw} (raw)"
+
+
+                report_content += (
+                    f"Timestamp: {human_readable_timestamp} (Raw: {raw_timestamp_ms})\n"
+                    f"TxID: {tx.get('transaction_id', 'N/A')}\n"
+                    f"From: {tx.get('from_address', 'N/A')}\n"
+                    f"To: {tx.get('to_address', 'N/A')}\n"
+                    f"Token: {token_name} ({token_abbr})\n"
+                    f"Amount: {amount_formatted} {token_abbr} (Raw Quant: {quant_raw})\n"
+                    f"Confirmed: {tx.get('confirmed', 'N/A')}\n"
+                    f"--------------------------------------------------\n"
+                )
+        elif history_data: # Response received but no token_transfers key or it's empty
+            report_content += "No TRC20 transactions found or response format unexpected.\n"
+            report_content += f"API Response: {str(history_data)[:500]}...\n" # Log part of the response
+        else:
+            report_content += "Failed to fetch TRC20 transaction history from TronScan.\n"
+
+        # Send the report as a text file
+        report_file = BufferedInputFile(report_content.encode('utf-8'), filename=f"tronscan_report_{address}.txt")
+        await callback_query.message.answer_document(report_file)
+
+    except Exception as e:
+        logging.error(f"Error generating TronScan report for {address}: {e}", exc_info=True)
+        await callback_query.message.answer(f"Sorry, an error occurred while generating the report for {address}.")
+    finally:
+        await api_client.close_session() # Ensure the session is closed
+
+
+# ... existing code ...
+# Make sure to register this new handler in your main bot file (e.g., rebot_main.py)
+# dp.callback_query.register(handle_update_report_tronscan_callback, F.data.startswith("update_report_tronscan:"))

@@ -13,6 +13,7 @@ from .callback_handlers import (
     handle_request_memo_callback, # New (replaces proceed_to_memo_stage and parts of memo_action)
     # handle_proceed_to_memo_stage_callback, # Potentially replaced
     handle_skip_address_action_stage_callback,
+    handle_update_report_tronscan_callback,
 )
 from .states import AddressProcessingStates
 
@@ -29,4 +30,5 @@ __all__ = [
     # "handle_proceed_to_memo_stage_callback",
     "handle_skip_address_action_stage_callback",
     "AddressProcessingStates",
+    "handle_update_report_tronscan_callback",
 ]

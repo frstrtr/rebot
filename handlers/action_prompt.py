@@ -113,6 +113,13 @@ async def _send_action_prompt(
         callback_data="request_memo:private" # Callback data for your handler
     )
 
+    update_report_button = None
+    if blockchain.lower() == "tron":
+        update_report_button = InlineKeyboardButton(
+            text="📊 Get TRC20 Report", # Changed text for clarity
+            callback_data="update_report_tronscan" # Only address needed if blockchain is implied
+        )
+
     skip_address_button = InlineKeyboardButton(
         text="⏭️ Skip Address",
         callback_data="skip_address_action_stage" # Callback data for your handler
@@ -126,6 +133,10 @@ async def _send_action_prompt(
     third_row = []
     if explorer_button:
         third_row.append(explorer_button)
+    
+    if update_report_button: # Add the new button if it was created
+        third_row.append(update_report_button)
+
     third_row.append(skip_address_button)
     
     if third_row:

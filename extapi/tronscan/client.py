@@ -216,10 +216,12 @@ if __name__ == "__main__":
             print("Failed to get TRC20 balances.")
 
         print(f"\n\033[93m--- Testing get_trc20_transaction_history for {test_user_address} (all tokens, last 5) ---\033[0m")
-        history_all = await api_client.get_trc20_transaction_history(test_user_address, limit=5)
+        # history_all = await api_client.get_trc20_transaction_history(test_user_address, limit=5)
+        history_all = await api_client.get_trc20_transaction_history(test_user_address)
         if history_all and history_all.get("token_transfers"):
             print("TRC20 Transaction History (All Tokens, first 5):")
-            for tx in history_all["token_transfers"][:5]:
+            # for tx in history_all["token_transfers"][:5]:
+            for tx in history_all["token_transfers"]:
                 # Assuming tx is a dictionary-like object and 'block_ts' contains a Unix timestamp
                 raw_timestamp_ms = tx.get('block_ts')
                 human_readable_timestamp = "N/A" # Default value
@@ -241,9 +243,11 @@ if __name__ == "__main__":
                     human_readable_timestamp = "N/A"
 
                 print(
-                    f"  TxID: {tx.get('transaction_id')[:10]}..., From: {tx.get('from_address')}, To: {tx.get('to_address')}, "
+                    f"  Timestamp: {raw_timestamp_ms}  "
+                    f"From: {tx.get('from_address')}, To: {tx.get('to_address')}, "
+                    # f"  TxID: {tx.get('transaction_id')[:10]}..., From: {tx.get('from_address')}, To: {tx.get('to_address')}, "
                     f"Token: {tx.get('tokenInfo', {}).get('tokenAbbr', 'N/A')}, Amount: {tx.get('quant')}, Confirmed: {tx.get('confirmed')}, "
-                    f"Timestamp: {human_readable_timestamp}"
+                    # f"Timestamp: {human_readable_timestamp}"
                 )
         elif history_all:
             print(f"TRC20 History (All) response (structure might vary): {history_all}")

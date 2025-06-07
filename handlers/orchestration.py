@@ -27,7 +27,7 @@ async def _orchestrate_next_processing_step(
     if not current_scan_db_message_id:
         logging.error("Cannot orchestrate: current_scan_db_message_id not found in FSM state.")
         await message_to_reply_to.answer(
-            "[_orchestrate_next_processing_step] Internal error (missing message context). Try scanning again."
+            "Internal error (missing message context). Try scanning again."
         )
         await state.clear()
         return
@@ -70,12 +70,12 @@ async def _orchestrate_next_processing_step(
                 await _prompt_for_next_memo(message_to_reply_to, state, ready_for_memo_prompt_with_ids)
             elif not pending_blockchain_clarification: # No more clarifications and nothing to prompt for memo
                 logging.info("No addresses successfully saved to prompt for memo, and no pending clarifications.")
-                await message_to_reply_to.answer("[_orchestrate_next_processing_step] Finished processing addresses.")
+                await message_to_reply_to.answer("Finished processing addresses.")
                 await state.clear()
         
         else: # No pending clarifications and no addresses ready for memo prompt
             logging.info("Orchestration complete: No pending clarifications or memo prompts.")
-            await message_to_reply_to.answer("[_orchestrate_next_processing_step] All detected addresses processed.")
+            await message_to_reply_to.answer("All detected addresses processed.")
             await state.clear()
             
     except Exception as e:

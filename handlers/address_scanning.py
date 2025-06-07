@@ -34,7 +34,7 @@ async def _scan_message_for_addresses_action(
         if db_message_instance is None or db_message_instance.id is None:
             logging.error("Failed to save message to database or get its ID.")
             await message.reply(
-                "[_scan_message_for_addresses_action] An error occurred while processing your message (DB save failed)."
+                "An error occurred while processing your message (DB save failed)."
             )
             db.close()
             return
@@ -48,13 +48,13 @@ async def _scan_message_for_addresses_action(
             )
             if text_override and not text_to_scan:
                 await message.reply(
-                    "[_scan_message_for_addresses_action] The address from the link appears to be empty."
+                    "The address from the link appears to be empty."
                 )
             db.close()
             return
 
         logging.info(
-            f"[_scan_message_for_addresses_action] Scanning message ID %s. Text: '{Colors.GREEN}%s{Colors.RESET}'",
+            f"Scanning message ID %s. Text: '{Colors.GREEN}%s{Colors.RESET}'",
             saved_db_message_id,
             text_to_scan,
         )
@@ -104,7 +104,7 @@ async def _scan_message_for_addresses_action(
         if not detected_raw_addresses_map:
             logging.debug("No crypto addresses found in message ID %s.", saved_db_message_id)
             await message.reply(
-                "[_scan_message_for_addresses_action] No crypto addresses found in your message."
+                "No crypto addresses found in your message."
             )
             db.close()
             return
@@ -118,7 +118,7 @@ async def _scan_message_for_addresses_action(
         ordered_addr_keys = list(aggregated_detections.keys())
         if not ordered_addr_keys:
             logging.info("No processable addresses after aggregation in message ID %s.", saved_db_message_id)
-            await message.reply("[_scan_message_for_addresses_action] No processable crypto addresses found.")
+            await message.reply("No processable crypto addresses found.")
             db.close()
             return
 
@@ -127,7 +127,7 @@ async def _scan_message_for_addresses_action(
 
         if len(ordered_addr_keys) > 1:
             await message.reply(
-                f"[_scan_message_for_addresses_action] Found {len(ordered_addr_keys)} unique addresses. "
+                f"Found {len(ordered_addr_keys)} unique addresses. "
                 f"Processing first: <code>{html.quote(addr_str_to_process)}</code>.\n"
                 "Send others separately if needed."
             )
@@ -200,10 +200,10 @@ async def _scan_message_for_addresses_action(
 
     except ValueError as ve:
         logging.error("ValueError in address scanning: %s", ve)
-        await message.reply("[_scan_message_for_addresses_action] Error processing message.")
+        await message.reply("Error processing message.")
     except Exception as e:
         logging.exception("Unexpected error in _scan_message_for_addresses_action: %s", e)
-        await message.reply("[_scan_message_for_addresses_action] Unexpected error.")
+        await message.reply("Unexpected error.")
     finally:
         if db and db.is_active:
             db.close()

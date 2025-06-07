@@ -37,7 +37,7 @@ async def _send_action_prompt(
     )
     
     prompt_text = (
-        f"[_send_action_prompt] Address <code>{html.quote(address)}</code> identified for <b>{html.quote(blockchain.capitalize())}</b>.\n"
+        f"Address <code>{html.quote(address)}</code> identified for <b>{html.quote(blockchain.capitalize())}</b>.\n"
         "What would you like to do?"
     )
 

@@ -70,7 +70,7 @@ async def _ask_for_blockchain_clarification(
     )
     keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons_rows)
 
-    prompt_text_base = f"[_ask_for_blockchain_clarification] For address: <code>{html.quote(address)}</code>\n"
+    prompt_text_base = f"For address: <code>{html.quote(address)}</code>\n"
     if detected_options and detected_options != ["Unknown"] and keyboard_buttons_rows[:-1]: # Check if actual options were added
         prompt_text = prompt_text_base + "Which blockchain network does this address belong to?\nPlease select from the options below."
     else:
@@ -98,7 +98,7 @@ async def _handle_blockchain_reply(message: Message, state: FSMContext):
 
     if not chosen_blockchain:
         await message.reply(
-            "[_handle_blockchain_reply] Blockchain name cannot be empty. Please try again, or use the skip button."
+            "Blockchain name cannot be empty. Please try again, or use the skip button."
         )
         return
 
@@ -111,7 +111,7 @@ async def _handle_blockchain_reply(message: Message, state: FSMContext):
         # pending_blockchain_clarification is handled by orchestrator
     )
     await message.reply(
-        f"[_handle_blockchain_reply] Noted: <code>{html.quote(item_being_clarified['address'])}</code> will be associated with <b>{html.quote(chosen_blockchain.capitalize())}</b>.",
+        f"Noted: <code>{html.quote(item_being_clarified['address'])}</code> will be associated with <b>{html.quote(chosen_blockchain.capitalize())}</b>.",
         parse_mode="HTML",
     )
     await state.set_state(None) # Clear specific state, orchestrator will take over

@@ -36,14 +36,9 @@ from handlers import (
     handle_ai_response_memo_action_callback, # New handler import for AI memo actions
 )
 
+
 # 1. Define Context Variable for user_id
 user_id_context = contextvars.ContextVar("user_id_context", default="N/A")
-
-# ANSI escape codes for colors are now in Config
-# class Colors:
-#     YELLOW = '\033[93m'
-#     GREEN = '\033[92m'  # Added Green
-#     RESET = '\033[0m'
 
 
 # 2. Custom Logging Filter to add user_id to log records
@@ -58,7 +53,44 @@ class UserIdContextFilter(logging.Filter):
         return True
 
 
-# 3. Aiogram Middleware to extract and set user_id in context
+# 3. Custom Logging Formatter for Admin Colors
+class AdminColorLogFormatter(logging.Formatter):
+    """
+    A custom logging formatter that colors the UserID based on admin status.
+    Admins (from Config.ADMINS) will have their UserID colored purple.
+    Other UserIDs will be colored yellow.
+    """
+    def format(self, record):
+        user_id_str = getattr(record, 'user_id', 'N/A') # user_id is added by UserIdContextFilter
+        is_admin = False
+
+        # Config.ADMINS stores admin IDs as integers
+        # record.user_id is a string from contextvars
+        if user_id_str.isdigit():
+            try:
+                user_id_int = int(user_id_str)
+                if hasattr(Config, 'ADMINS') and isinstance(Config.ADMINS, (list, set, tuple)):
+                    if user_id_int in Config.ADMINS:
+                        is_admin = True
+            except ValueError:
+                # This case should ideally not be reached if user_id_str.isdigit() is true
+                pass # Not an admin if conversion fails
+
+        # Determine color based on admin status
+        # Ensure Config.PURPLE and Config.YELLOW are defined
+        color_code = Config.PURPLE if is_admin else Config.YELLOW
+        reset_color_code = Config.RESET_COLOR # Ensure Config.RESET_COLOR is defined
+        
+        # Create a new field on the record for the colored user_id string
+        record.colored_user_id = f"{color_code}{user_id_str}{reset_color_code}"
+        
+        # Call the parent class's format method to complete the formatting.
+        # This will use the format string provided during initialization of the formatter,
+        # substituting %(colored_user_id)s with the value we just set.
+        return super().format(record)
+
+
+# 4. Aiogram Middleware to extract and set user_id in context
 class UserIdLoggingMiddleware(BaseMiddleware):
     """Middleware to extract user_id from the event and set it in context variable."""
 
@@ -235,10 +267,11 @@ if __name__ == "__main__":
     # 1. Create the filter and formatters
     custom_filter = UserIdContextFilter()
 
-    # Formatter for console with color using Config
-    console_log_formatter = logging.Formatter(
-        f"%(asctime)s - %(levelname)s - %(name)s - UserID: {Config.YELLOW}%(user_id)s{Config.RESET_COLOR} - %(message)s"
-    )
+    # New format string for the console that uses the 'colored_user_id' field
+    console_format_string = "%(asctime)s - %(levelname)s - %(name)s - UserID: %(colored_user_id)s - %(message)s"
+    
+    # Instantiate AdminColorLogFormatter for console
+    console_log_formatter = AdminColorLogFormatter(console_format_string)
 
     # Formatter for file (no color)
     file_log_formatter = logging.Formatter(

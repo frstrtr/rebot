@@ -248,7 +248,7 @@ class TronScanAPI:
         if contract_address:
             params["contractAddress"] = contract_address # API might use 'contract_address' or 'token_address'
         
-        logging.info(f"Fetching big token amounts for address: {address}, contract: {contract_address} (limit: {limit})")
+        logging.info(f"Fetching big token amounts for address: {address}, contract: {contract_address} (limit: {limit})") # pylint: disable=logging-fstring-interpolation
         return await self._request("GET", endpoint, params=params)
 
     async def get_stablecoin_key_events(self, limit: int = 50, start: int = 0) -> Optional[Dict[str, Any]]:

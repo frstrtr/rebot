@@ -613,7 +613,58 @@ async def _format_account_transfer_amounts_for_ai(address: str, api_client: Tron
     amounts_summary += "--------------------------\n\n"
     return amounts_summary
 
-async def _format_related_accounts_for_ai(address: str, api_client: TronScanAPI, max_to_show: int = 5) -> str:
+async def _format_blacklist_status_for_ai(address_to_check: str, full_blacklist_entries: list, for_related: bool = False) -> str:
+    """
+    Checks a given address against a pre-fetched list of blacklisted entries.
+    Returns a formatted string for AI consumption.
+    If for_related is True, the output is more concise.
+    """
+    if not full_blacklist_entries:
+        if not for_related:
+            return f"Section: Blacklist Status for {html.quote(address_to_check)}\n--------------------------\nCould not check blacklist (no data provided).\n--------------------------\n\n"
+        return "" # No data to check against for related account
+
+    found_on_blacklist = False
+    blacklist_details = ""
+
+    for entry in full_blacklist_entries:
+        if entry.get('blackAddress') == address_to_check:
+            token_name = entry.get('tokenName', 'N/A')
+            reason = entry.get('remark', 'No specific reason provided')
+            entry_time_ms = entry.get('time')
+            entry_time_str = "N/A"
+            if entry_time_ms:
+                try:
+                    entry_time_str = datetime.fromtimestamp(entry_time_ms / 1000).strftime('%Y-%m-%d %H:%M:%S UTC')
+                except: # pylint: disable=bare-except
+                    pass
+            
+            if for_related:
+                blacklist_details = f" (<b>WARNING: ON STABLECOIN BLACKLIST</b> - Token: {html.quote(token_name)})"
+            else:
+                blacklist_details = (
+                    f"WARNING: Address is ON the stablecoin blacklist.\n"
+                    f"  Token: {html.quote(token_name)}\n"
+                    f"  Reason/Remark: {html.quote(reason)}\n"
+                    f"  Blacklisted On: {entry_time_str}\n"
+                    f"  Transaction Hash (related to blacklisting): {html.quote(entry.get('transHash', 'N/A'))}\n"
+                )
+            found_on_blacklist = True
+            break 
+    
+    if for_related:
+        return blacklist_details # Return only the concise note for related accounts
+
+    # For primary address check:
+    blacklist_summary = f"Section: Stablecoin Blacklist Status for {html.quote(address_to_check)}\n--------------------------\n"
+    if found_on_blacklist:
+        blacklist_summary += blacklist_details
+    else:
+        blacklist_summary += "Address is NOT found on the stablecoin blacklist.\n"
+    blacklist_summary += "--------------------------\n\n"
+    return blacklist_summary
+
+async def _format_related_accounts_for_ai(address: str, api_client: TronScanAPI, full_blacklist_entries: list, max_to_show: int = 5) -> str:
     related_summary = f"Section: Top Related Accounts (Interacted With - Max {max_to_show} shown)\n--------------------------\n"
     try:
         related_data = await api_client.get_account_related_accounts(address)
@@ -621,8 +672,12 @@ async def _format_related_accounts_for_ai(address: str, api_client: TronScanAPI,
             accounts = related_data['data']
             if accounts:
                 for acc_data in accounts[:max_to_show]:
+                    related_address = acc_data.get('related_address', 'N/A')
+                    # Get concise blacklist status for the related address
+                    blacklist_note = await _format_blacklist_status_for_ai(related_address, full_blacklist_entries, for_related=True)
+                    
                     related_summary += (
-                        f"  - Address: {html.quote(acc_data.get('related_address', 'N/A'))}, "
+                        f"  - Address: {html.quote(related_address)}{blacklist_note}, "
                         f"Tag: {html.quote(acc_data.get('addressTag', 'N/A'))}, "
                         f"In USD: {acc_data.get('inAmountUsd', 'N/A')}, "
                         f"Out USD: {acc_data.get('outAmountUsd', 'N/A')}\n"
@@ -644,7 +699,6 @@ async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery
     await callback_query.answer("Performing AI Scam Check for TRC20 transactions...")
     user_data = await state.get_data()
     address = user_data.get("current_action_address")
-    # blockchain = user_data.get("current_action_blockchain", "tron") # Should be set
 
     if not address:
         logging.warning(f"Could not retrieve address from state for AI Scam Check. UserID: {callback_query.from_user.id}")
@@ -657,15 +711,32 @@ async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery
     enriched_data_for_ai = f"Comprehensive AI Scam Analysis Request for TRON Address: {html.quote(address)}\n"
     enriched_data_for_ai += f"Report requested on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
     
-    fetch_limit_trc20_history = 50 # For TRC20 transaction history list
-
+    fetch_limit_trc20_history = 50
     ai_response_message = None 
+    full_blacklist_entries = []
 
     try:
         await callback_query.message.answer(f"Gathering comprehensive data for <code>{html.quote(address)}</code> for AI analysis. This may take a moment...", parse_mode="HTML")
 
+        # 0. Fetch Stablecoin Blacklist (once)
+        try:
+            # get_stablecoin_blacklist internally handles caching and fetching all pages if necessary.
+            # We request a large limit to get the full list from the cache/API for our checks.
+            blacklist_response = await tron_api_client.get_stablecoin_blacklist(limit=100000) # Fetch up to 100k entries
+            if blacklist_response and isinstance(blacklist_response.get('data'), list):
+                full_blacklist_entries = blacklist_response['data']
+                logging.info(f"Fetched {len(full_blacklist_entries)} entries from stablecoin blacklist for AI check of {address}.")
+            else:
+                logging.warning(f"Could not fetch or parse stablecoin blacklist for AI check of {address}. Response: {blacklist_response}")
+        except Exception as e_bl:
+            logging.error(f"Error fetching stablecoin blacklist for AI for {address}: {e_bl}")
+            enriched_data_for_ai += f"Section: Blacklist Status\n--------------------------\nError fetching stablecoin blacklist: {html.quote(str(e_bl))}\n--------------------------\n\n"
+
         # 1. Account Info
         enriched_data_for_ai += await _format_account_info_for_ai(address, tron_api_client)
+        
+        # 1.5. Blacklist status for the main address
+        enriched_data_for_ai += await _format_blacklist_status_for_ai(address, full_blacklist_entries)
         
         # 2. Account Tags
         enriched_data_for_ai += await _format_account_tags_for_ai(address, tron_api_client)
@@ -676,8 +747,8 @@ async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery
         # 4. Account Transfer Amounts (Fund Flow Summary)
         enriched_data_for_ai += await _format_account_transfer_amounts_for_ai(address, tron_api_client, max_details_to_show=3)
         
-        # 5. Related Accounts
-        enriched_data_for_ai += await _format_related_accounts_for_ai(address, tron_api_client, max_to_show=5)
+        # 5. Related Accounts (now includes blacklist check)
+        enriched_data_for_ai += await _format_related_accounts_for_ai(address, tron_api_client, full_blacklist_entries, max_to_show=5)
 
         # 6. TRC20 Transaction History (Existing Logic, adapted)
         trc20_history_summary = f"Section: Recent TRC20 Transactions (Limit {fetch_limit_trc20_history})\n--------------------------\n"
@@ -754,9 +825,11 @@ async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery
         ai_prompt = (
             "You are a cryptocurrency transaction analyst specializing in identifying suspicious or potentially scam-related activities on the TRON blockchain. "
             "Please analyze the following comprehensive data for the provided TRON address. "
-            "The data includes: Account Overview (TRX balance, creation time, etc.), Account Tags (e.g., Exchange, Scammer), "
-            "Top TRC20 Token Balances, a Summary of USD Fund Flows (In/Out), Top Related Accounts interacted with, and a list of Recent TRC20 Transactions. "
+            "The data includes: Account Overview (TRX balance, creation time, etc.), Stablecoin Blacklist Status for the primary address, Account Tags (e.g., Exchange, Scammer), "
+            "Top TRC20 Token Balances, a Summary of USD Fund Flows (In/Out), Top Related Accounts interacted with (including their stablecoin blacklist status), and a list of Recent TRC20 Transactions. "
             "Focus on patterns that might indicate scams, such as: \n"
+            "- The address itself being on the stablecoin blacklist (MAJOR RED FLAG).\n"
+            "- Interactions with addresses that are on the stablecoin blacklist (MAJOR RED FLAG).\n"
             "- Unusual token types or balances (e.g., many obscure tokens, sudden large influx of unknown token).\n"
             "- Interactions with addresses having suspicious tags.\n"
             "- Discrepancies in fund flow (e.g., large inflows followed by rapid outflows to multiple new addresses).\n"
@@ -785,7 +858,7 @@ async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery
             # The AI text itself should not be HTML quoted if it's meant to be formatted by AI.
             # However, if the AI might return unsafe HTML, quoting is safer.
             # For now, assuming AI returns plain text that we want to display as is.
-            response_message_text = report_title + "<b><u>AI Analysis:</u></b>\n" + html.quote(ai_analysis_text) # Use html.quote for safety
+            response_message_text = report_title + "<b><u>AI Analysis:</u></b>\n" + html.quote(ai_analysis_text) # Use html.escape for safety
         else:
             response_message_text = (
                 f"<b>AI Scam Check Report for Address:</b> <code>{html.quote(address)}</code>\n"

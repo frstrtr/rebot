@@ -15,6 +15,7 @@ from .callback_handlers import (
     handle_skip_address_action_stage_callback,
     handle_update_report_tronscan_callback,
     handle_ai_scam_check_tron_callback, # New handler import
+    handle_ai_language_choice_callback, # New handler import
     handle_ai_response_memo_action_callback, # New handler for AI response memo actions
 )
 from .states import AddressProcessingStates
@@ -34,5 +35,6 @@ __all__ = [
     "AddressProcessingStates",
     "handle_update_report_tronscan_callback",
     "handle_ai_scam_check_tron_callback", # New handler export
+    "handle_ai_language_choice_callback", # New handler export
     "handle_ai_response_memo_action_callback", # New handler export
 ]

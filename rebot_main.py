@@ -33,8 +33,10 @@ from handlers import (
     handle_skip_address_action_stage_callback,
     handle_update_report_tronscan_callback,
     handle_ai_scam_check_tron_callback, # New handler import
+    handle_ai_language_choice_callback, # New handler import for AI language choice
     handle_ai_response_memo_action_callback, # New handler import for AI memo actions
 )
+from handlers.states import AddressProcessingStates # Import the missing states
 
 
 # 1. Define Context Variable for user_id
@@ -240,12 +242,17 @@ class Rebot:
             handle_ai_scam_check_tron_callback,  # New handler for AI scam check
             F.data == "ai_scam_check_tron",  # Callback data for the new handler
         )
+
+        self.rebot_dp.callback_query.register(
+            handle_ai_language_choice_callback, # New handler for AI language choice
+            AddressProcessingStates.awaiting_ai_language_choice, # Filter by state
+            F.data.startswith("ai_lang:"),
+        )
         
         self.rebot_dp.callback_query.register(
             handle_ai_response_memo_action_callback, # Handler for AI response memo buttons
             F.data.startswith("ai_memo_action:"),
         )
-
 
         # Register other handlers if any
         # self.rebot_dp.my_chat_member.register(member_status_update_handler)

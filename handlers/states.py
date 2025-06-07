@@ -7,4 +7,5 @@ class AddressProcessingStates(StatesGroup):
     """State management for address processing in a Telegram bot using aiogram."""
 
     awaiting_blockchain = State()
+    awaiting_ai_language_choice = State()  # New state for AI language selection
     awaiting_memo = State()

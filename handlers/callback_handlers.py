@@ -695,7 +695,7 @@ async def _format_related_accounts_for_ai(address: str, api_client: TronScanAPI,
     return related_summary
 
 async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery, state: FSMContext):
-    """Handles the 'AI Scam Check (TRC20)' button click."""
+    """Handles the 'AI Scam Check (TRC20)' button click. Gathers data and prompts for language."""
     await callback_query.answer("Performing AI Scam Check for TRC20 transactions...")
     user_data = await state.get_data()
     address = user_data.get("current_action_address")
@@ -705,24 +705,30 @@ async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery
         await callback_query.message.answer("Error: Could not retrieve address for the AI report. Please try again.", show_alert=True)
         return
 
-    tron_api_client = TronScanAPI()
-    vertex_ai_client = None 
+    # Edit the message from which the button was pressed to remove buttons and show "Gathering data..."
+    try:
+        await callback_query.message.edit_text(
+            text=f"{callback_query.message.text}\n\n🔄 Gathering comprehensive data for <code>{html.quote(address)}</code>. This may take a moment...",
+            parse_mode="HTML",
+            reply_markup=None # Remove original buttons
+        )
+    except TelegramAPIError as e:
+        logging.warning(f"Could not edit message text/markup in handle_ai_scam_check_tron_callback: {e}")
+        # If edit fails, send a new message
+        await callback_query.message.answer(f"🔄 Gathering comprehensive data for <code>{html.quote(address)}</code> for AI analysis. This may take a moment...", parse_mode="HTML")
 
+
+    tron_api_client = TronScanAPI()
     enriched_data_for_ai = f"Comprehensive AI Scam Analysis Request for TRON Address: {html.quote(address)}\n"
     enriched_data_for_ai += f"Report requested on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
     
     fetch_limit_trc20_history = 50
-    ai_response_message = None 
     full_blacklist_entries = []
 
     try:
-        await callback_query.message.answer(f"Gathering comprehensive data for <code>{html.quote(address)}</code> for AI analysis. This may take a moment...", parse_mode="HTML")
-
         # 0. Fetch Stablecoin Blacklist (once)
         try:
-            # get_stablecoin_blacklist internally handles caching and fetching all pages if necessary.
-            # We request a large limit to get the full list from the cache/API for our checks.
-            blacklist_response = await tron_api_client.get_stablecoin_blacklist(limit=100000) # Fetch up to 100k entries
+            blacklist_response = await tron_api_client.get_stablecoin_blacklist(limit=100000) 
             if blacklist_response and isinstance(blacklist_response.get('data'), list):
                 full_blacklist_entries = blacklist_response['data']
                 logging.info(f"Fetched {len(full_blacklist_entries)} entries from stablecoin blacklist for AI check of {address}.")
@@ -734,38 +740,27 @@ async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery
 
         # 1. Account Info
         enriched_data_for_ai += await _format_account_info_for_ai(address, tron_api_client)
-        
         # 1.5. Blacklist status for the main address
         enriched_data_for_ai += await _format_blacklist_status_for_ai(address, full_blacklist_entries)
-        
         # 2. Account Tags
         enriched_data_for_ai += await _format_account_tags_for_ai(address, tron_api_client)
-
         # 3. TRC20 Balances
         enriched_data_for_ai += await _format_trc20_balances_for_ai(address, tron_api_client, max_to_show=5)
-
         # 4. Account Transfer Amounts (Fund Flow Summary)
         enriched_data_for_ai += await _format_account_transfer_amounts_for_ai(address, tron_api_client, max_details_to_show=3)
-        
         # 5. Related Accounts (now includes blacklist check)
         enriched_data_for_ai += await _format_related_accounts_for_ai(address, tron_api_client, full_blacklist_entries, max_to_show=5)
-
-        # 6. TRC20 Transaction History (Existing Logic, adapted)
+        # 6. TRC20 Transaction History
         trc20_history_summary = f"Section: Recent TRC20 Transactions (Limit {fetch_limit_trc20_history})\n--------------------------\n"
         history_data = await tron_api_client.get_trc20_transaction_history(
-            address=address,
-            limit=fetch_limit_trc20_history,
-            start=0
+            address=address, limit=fetch_limit_trc20_history, start=0
         )
-
         if history_data and history_data.get("token_transfers"):
             transactions = history_data.get("token_transfers", [])
             total_found_api = history_data.get("total", len(transactions))
-            
             trc20_history_summary += f"Found {len(transactions)} transactions in this batch (API reports total: {total_found_api}).\n"
             if total_found_api > len(transactions) and len(transactions) == fetch_limit_trc20_history:
                 trc20_history_summary += f"Note: Analyzing the latest {fetch_limit_trc20_history} transactions. More transactions might exist.\n"
-            
             if not transactions:
                  trc20_history_summary += "No TRC20 transactions found in the fetched batch.\n"
             else:
@@ -774,25 +769,17 @@ async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery
                     human_readable_timestamp = "N/A"
                     if raw_timestamp_ms is not None:
                         try:
-                            timestamp_seconds = float(raw_timestamp_ms) / 1000.0
-                            dt_object = datetime.fromtimestamp(timestamp_seconds)
-                            human_readable_timestamp = dt_object.strftime("%Y-%m-%d %H:%M:%S")
-                        except (ValueError, TypeError):
-                            human_readable_timestamp = "Invalid Timestamp"
-                    
+                            human_readable_timestamp = datetime.fromtimestamp(float(raw_timestamp_ms) / 1000.0).strftime("%Y-%m-%d %H:%M:%S")
+                        except (ValueError, TypeError): human_readable_timestamp = "Invalid Timestamp"
                     token_info = tx.get('tokenInfo', {})
                     token_abbr = token_info.get('tokenAbbr', 'N/A')
                     token_name = token_info.get('tokenName', 'Unknown Token')
                     token_decimals = int(token_info.get('tokenDecimal', 0))
-                    
                     quant_raw = tx.get('quant')
                     amount_formatted = "N/A"
                     if quant_raw is not None:
-                        try:
-                            amount_formatted = str(int(quant_raw) / (10**token_decimals))
-                        except (ValueError, TypeError):
-                            amount_formatted = f"{quant_raw} (raw)"
-
+                        try: amount_formatted = str(int(quant_raw) / (10**token_decimals))
+                        except (ValueError, TypeError): amount_formatted = f"{quant_raw} (raw)"
                     trc20_history_summary += (
                         f"Tx {tx_idx + 1}:\n"
                         f"  Time: {human_readable_timestamp}, TxID: {html.quote(tx.get('transaction_id', 'N/A'))}\n"
@@ -800,68 +787,106 @@ async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery
                         f"  Token: {html.quote(token_name)} ({html.quote(token_abbr)}), Amount: {html.quote(amount_formatted)} {html.quote(token_abbr)}\n"
                         f"  Confirmed: {tx.get('confirmed', 'N/A')}\n---\n"
                     )
-        elif history_data:
-            trc20_history_summary += "No TRC20 transactions found or response format unexpected for history.\n"
-        else:
-            trc20_history_summary += "Failed to fetch TRC20 transaction history from TronScan.\n"
+        elif history_data: trc20_history_summary += "No TRC20 transactions found or response format unexpected for history.\n"
+        else: trc20_history_summary += "Failed to fetch TRC20 transaction history from TronScan.\n"
         trc20_history_summary += "--------------------------\n\n"
         enriched_data_for_ai += trc20_history_summary
         
-        # Check if any data was actually fetched for AI
-        if "Could not retrieve" in enriched_data_for_ai and "Failed to fetch" in enriched_data_for_ai and "No TRC20 transactions found" in enriched_data_for_ai :
-             # Heuristic: if all sections report errors or no data
+        if "Could not retrieve" in enriched_data_for_ai and "Failed to fetch" in enriched_data_for_ai and "No TRC20 transactions found" in enriched_data_for_ai:
             await callback_query.message.answer("Could not fetch sufficient transaction data for AI analysis. Please try again later or check the address on an explorer.")
             return
 
-        await callback_query.message.answer("Sending comprehensive data to AI for analysis...")
-        
-        try:
-            vertex_ai_client = VertexAIClient() 
-        except Exception as e:
-            logging.error(f"Failed to initialize VertexAIClient for AI Scam Check: {e}", exc_info=True) 
-            await callback_query.message.answer("Error: Could not initialize the AI service. Please try again later.")
-            return
-
-        ai_prompt = (
-            "You are a cryptocurrency transaction analyst specializing in identifying suspicious or potentially scam-related activities on the TRON blockchain. "
-            "Please analyze the following comprehensive data for the provided TRON address. "
-            "The data includes: Account Overview (TRX balance, creation time, etc.), Stablecoin Blacklist Status for the primary address, Account Tags (e.g., Exchange, Scammer), "
-            "Top TRC20 Token Balances, a Summary of USD Fund Flows (In/Out), Top Related Accounts interacted with (including their stablecoin blacklist status), and a list of Recent TRC20 Transactions. "
-            "Focus on patterns that might indicate scams, such as: \n"
-            "- The address itself being on the stablecoin blacklist (MAJOR RED FLAG).\n"
-            "- Interactions with addresses that are on the stablecoin blacklist (MAJOR RED FLAG).\n"
-            "- Unusual token types or balances (e.g., many obscure tokens, sudden large influx of unknown token).\n"
-            "- Interactions with addresses having suspicious tags.\n"
-            "- Discrepancies in fund flow (e.g., large inflows followed by rapid outflows to multiple new addresses).\n"
-            "- Connections to known scam-related addresses or patterns in related accounts.\n"
-            "- Specific transaction patterns in TRC20 history (e.g., dusting, small initial test transactions followed by larger ones, specific scam contract interactions if identifiable from patterns).\n"
-            "- Consider various scam schemes: Ponzi, Pump and Dump, Rug Pulls, Fake ICOs, Airdrop Scams, HYIPs, Phishing, Impersonation, Giveaway Scams, Romance Scams, Pig Butchering, Blackmail/Extortion, Address Poisoning, Fake Platforms/Wallets, Cloud Mining Scams, Smurfing, Mixing, Wash Trading.\n"
-            "- High frequency of small dusting transactions, or other red flags based on the combined data.\n\n"
-            "Provide a concise summary of your findings, a risk assessment (e.g., Low, Medium, High, Very High Risk) with clear justification based on the provided data points, and if possible, suggest the type of suspicious activity if any is detected. "
-            "Your report should be analytical and directly reference the data sections if they contribute to your assessment. "
-            "The final report should not exceed 1000 symbols.\n\n"
-            "Comprehensive Data for Analysis:\n"
-            f"{enriched_data_for_ai}" # This is already HTML quoted by helper functions where needed
+        # Store data in FSM for the next step (language choice)
+        await state.update_data(
+            ai_enriched_data=enriched_data_for_ai,
+            current_action_address=address # Ensure address is in state for the next handler
         )
 
-        # For debugging, print the length of the prompt
-        logging.info(f"Length of prompt for AI: {len(ai_prompt)} characters.")
-        # If prompt is too long, consider sending data as a file or further summarizing.
-        # For now, we assume it's within reasonable limits for the AI model.
+        language_buttons = [
+            [
+                InlineKeyboardButton(text="🇬🇧 English", callback_data="ai_lang:en"),
+                InlineKeyboardButton(text="🇷🇺 Русский", callback_data="ai_lang:ru"),
+            ]
+        ]
+        reply_markup_lang = InlineKeyboardMarkup(inline_keyboard=language_buttons)
+        
+        # Edit the message to ask for language choice
+        await callback_query.message.edit_text(
+            text=f"Data gathered for <code>{html.quote(address)}</code>.\n📊 Please choose the report language:",
+            parse_mode="HTML",
+            reply_markup=reply_markup_lang
+        )
+        await state.set_state(AddressProcessingStates.awaiting_ai_language_choice)
 
-        ai_analysis_text = await vertex_ai_client.generate_text(prompt=ai_prompt, max_output_tokens=1024) 
+    except Exception as e:
+        logging.error(f"Error during AI Scam Check data gathering for {address}: {e}", exc_info=True)
+        await callback_query.message.answer(f"Sorry, an error occurred while gathering data for {html.quote(address)}.")
+    finally:
+        await tron_api_client.close_session()
+
+
+async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery, state: FSMContext):
+    """Handles AI report language selection and triggers AI analysis."""
+    await callback_query.answer()
+    chosen_lang_code = callback_query.data.split(":")[1]
+    lang_map = {"en": "English", "ru": "Russian"}
+    chosen_lang_name = lang_map.get(chosen_lang_code, "the selected language")
+
+    user_data = await state.get_data()
+    enriched_data_for_ai = user_data.get("ai_enriched_data")
+    address = user_data.get("current_action_address") # Retrieve address from state
+
+    if not enriched_data_for_ai or not address:
+        logging.warning(f"Missing enriched_data_for_ai or address in state for language choice. UserID: {callback_query.from_user.id}")
+        await callback_query.message.edit_text("Error: Critical data missing for AI analysis. Please try again.", reply_markup=None)
+        await state.set_state(None) # Clear state
+        return
+
+    await callback_query.message.edit_text(
+        text=f"Got it! Preparing AI analysis in {chosen_lang_name} for <code>{html.quote(address)}</code>...",
+        parse_mode="HTML",
+        reply_markup=None
+    )
+
+    vertex_ai_client = None
+    ai_analysis_text = None
+    try:
+        vertex_ai_client = VertexAIClient()
+        
+        ai_prompt = (
+            f"You are a cryptocurrency transaction analyst specializing in identifying suspicious or potentially scam-related activities on the TRON blockchain. "
+            f"Please analyze the following comprehensive data for the provided TRON address. "
+            f"The data includes: Account Overview (TRX balance, creation time, etc.), Stablecoin Blacklist Status for the primary address, Account Tags (e.g., Exchange, Scammer), "
+            f"Top TRC20 Token Balances, a Summary of USD Fund Flows (In/Out), Top Related Accounts interacted with (including their stablecoin blacklist status), and a list of Recent TRC20 Transactions. "
+            f"Focus on patterns that might indicate scams, such as: \n"
+            f"- The address itself being on the stablecoin blacklist (MAJOR RED FLAG).\n"
+            f"- Interactions with addresses that are on the stablecoin blacklist (MAJOR RED FLAG).\n"
+            f"- Unusual token types or balances (e.g., many obscure tokens, sudden large influx of unknown token).\n"
+            f"- Interactions with addresses having suspicious tags.\n"
+            f"- Discrepancies in fund flow (e.g., large inflows followed by rapid outflows to multiple new addresses).\n"
+            f"- Connections to known scam-related addresses or patterns in related accounts.\n"
+            f"- Specific transaction patterns in TRC20 history (e.g., dusting, small initial test transactions followed by larger ones, specific scam contract interactions if identifiable from patterns).\n"
+            f"- Consider various scam schemes: Ponzi, Pump and Dump, Rug Pulls, Fake ICOs, Airdrop Scams, HYIPs, Phishing, Impersonation, Giveaway Scams, Romance Scams, Pig Butchering, Blackmail/Extortion, Address Poisoning, Fake Platforms/Wallets, Cloud Mining Scams, Smurfing, Mixing, Wash Trading.\n"
+            f"- High frequency of small dusting transactions, or other red flags based on the combined data.\n\n"
+            f"Provide a concise summary of your findings, a risk assessment (e.g., Low, Medium, High, Very High Risk) with clear justification based on the provided data points, and if possible, suggest the type of suspicious activity if any is detected. "
+            f"Your report should be analytical and directly reference the data sections if they contribute to your assessment. "
+            f"The final report should not exceed 1000 symbols.\n"
+            f"IMPORTANT: Please provide your entire response in {chosen_lang_name.upper()}.\n\n"
+            f"Comprehensive Data for Analysis:\n"
+            f"{enriched_data_for_ai}"
+        )
+
+        logging.info(f"Length of prompt for AI ({chosen_lang_name}): {len(ai_prompt)} characters for address {address}.")
+        ai_analysis_text = await vertex_ai_client.generate_text(prompt=ai_prompt, max_output_tokens=1024)
 
         response_message_text = ""
         if ai_analysis_text:
-            report_title = f"<b>AI Scam Check Report for Address:</b> <code>{html.quote(address)}</code>\n"
+            report_title = f"<b>AI Scam Check Report for Address:</b> <code>{html.quote(address)}</code> ({chosen_lang_name})\n"
             report_title += f"<i>Analysis requested on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}</i>\n\n"
-            # The AI text itself should not be HTML quoted if it's meant to be formatted by AI.
-            # However, if the AI might return unsafe HTML, quoting is safer.
-            # For now, assuming AI returns plain text that we want to display as is.
-            response_message_text = report_title + "<b><u>AI Analysis:</u></b>\n" + html.quote(ai_analysis_text) # Use html.escape for safety
+            response_message_text = report_title + "<b><u>AI Analysis:</u></b>\n" + html.quote(ai_analysis_text)
         else:
             response_message_text = (
-                f"<b>AI Scam Check Report for Address:</b> <code>{html.quote(address)}</code>\n"
+                f"<b>AI Scam Check Report for Address:</b> <code>{html.quote(address)}</code> ({chosen_lang_name})\n"
                 f"<i>Analysis requested on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}</i>\n\n"
                 "The AI service did not return an analysis. This could be due to content filters, an issue with the AI model, "
                 "or no specific concerns found based on the provided data. "
@@ -869,7 +894,7 @@ async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery
             )
 
         if len(response_message_text) > 4096:
-            logging.warning(f"AI Scam Check report for {address} is too long ({len(response_message_text)} chars) for a single Telegram message. Truncating.") 
+            logging.warning(f"AI Scam Check report for {address} ({chosen_lang_name}) is too long ({len(response_message_text)} chars). Truncating.")
             response_message_text = response_message_text[:4090] + "\n<b>[Report Truncated]</b>"
         
         keyboard_buttons = [
@@ -883,18 +908,27 @@ async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery
         ]
         reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
 
-        ai_response_message = await callback_query.message.answer(response_message_text, parse_mode="HTML", reply_markup=reply_markup)
+        # Edit the "Preparing analysis..." message to show the actual report
+        ai_response_message = await callback_query.message.edit_text(response_message_text, parse_mode="HTML", reply_markup=reply_markup)
         
         await state.update_data(
             ai_response_text_for_memo=ai_analysis_text, 
             ai_response_message_id=ai_response_message.message_id,
+            # current_action_address and current_action_blockchain should still be in state from previous steps
+            # ai_enriched_data can be cleared if no longer needed
+            ai_enriched_data=None 
         )
+        await state.set_state(None) # Clear the awaiting_ai_language_choice state
 
     except Exception as e:
-        logging.error(f"Error during AI Scam Check for {address}: {e}", exc_info=True)
-        await callback_query.message.answer(f"Sorry, an error occurred while performing the AI Scam Check for {html.quote(address)}.")
-    finally:
-        await tron_api_client.close_session()
+        logging.error(f"Error during AI analysis or response display for {address} ({chosen_lang_name}): {e}", exc_info=True)
+        try:
+            await callback_query.message.edit_text(f"Sorry, an error occurred while performing the AI Scam Check for {html.quote(address)} in {chosen_lang_name}.", reply_markup=None)
+        except TelegramAPIError: # If editing fails (e.g. message too old)
+             await callback_query.message.answer(f"Sorry, an error occurred while performing the AI Scam Check for {html.quote(address)} in {chosen_lang_name}.")
+        await state.set_state(None) # Clear state on error
+    # finally:
+        # VertexAIClient does not have an explicit close session method like aiohttp.ClientSession
 
 
 async def handle_ai_response_memo_action_callback(callback_query: types.CallbackQuery, state: FSMContext):

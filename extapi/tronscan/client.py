@@ -9,8 +9,8 @@ from datetime import datetime
 import json
 import os
 from pathlib import Path
-import asyncio # Add this import
-import re # Add this import
+import asyncio
+import re
 
 # Adjust the import path for Config based on the new structure
 # Assuming 'config' is a top-level directory relative to where the bot runs,
@@ -83,19 +83,17 @@ class TronScanAPI:
 
         try:
             async with session.request(method, url, params=params, json=data, headers=headers, timeout=10) as response:
-                # Check for HTTP errors first
-                if not response.ok: # response.ok is False if status is 400 or higher
-                    error_body = await response.text() # Read the error body
+                if not response.ok: 
+                    error_body = await response.text() 
                     logging.error(
-                        f"TronScan API HTTP error: {response.status} {response.reason} for URL {url}. " # pylint: disable=logging-fstring-interpolation
+                        f"TronScan API HTTP error: {response.status} {response.reason} for URL {url}. " 
                         f"Response: {error_body}"
                     )
                     if response.status == 403:
                         try:
                             error_json = json.loads(error_body)
                             if "Error" in error_json and "exceeds the frequency limit" in error_json["Error"]:
-                                retry_seconds = 30  # Default retry time
-                                # Example: "The key exceeds the frequency limit(1), and the query server is suspended for 30 s"
+                                retry_seconds = 30  
                                 match = re.search(r"suspended for (\d+) s", error_json["Error"])
                                 if match:
                                     retry_seconds = int(match.group(1))
@@ -106,21 +104,19 @@ class TronScanAPI:
                                 )
                         except json.JSONDecodeError:
                             logging.debug(f"Could not parse 403 error body as JSON or find rate limit message: {error_body}")
-                        # For other 403s or if parsing failed, fall through to return None
-                    return None # Return None for non-rate-limit HTTP errors or if rate limit parsing failed
+                    return None 
 
-                # If response is OK, proceed to get JSON
-                logging.debug(f"TronScan API request to {url} successful ({response.status})") # pylint: disable=logging-fstring-interpolation
+                logging.debug(f"TronScan API request to {url} successful ({response.status})") 
                 return await response.json()
         except aiohttp.ClientResponseError as e:
-            logging.error(f"TronScan API HTTP error (ClientResponseError): {e.status} {e.message} for URL {url}") # pylint: disable=logging-fstring-interpolation
+            logging.error(f"TronScan API HTTP error (ClientResponseError): {e.status} {e.message} for URL {url}") 
             logging.error(f"TronScan API error details (from exception): status={e.status}, message='{e.message}', headers='{e.headers}'")
         except aiohttp.ClientError as e:
-            logging.error(f"TronScan API client error: {e} for URL {url}") # pylint: disable=logging-fstring-interpolation
-        except TronScanRateLimitError: # Re-raise if it's our custom rate limit error
+            logging.error(f"TronScan API client error: {e} for URL {url}") 
+        except TronScanRateLimitError: 
             raise
         except Exception as e:
-            logging.error(f"An unexpected error occurred during TronScan API request to {url}: {e}", exc_info=True) # pylint: disable=logging-fstring-interpolation
+            logging.error(f"An unexpected error occurred during TronScan API request to {url}: {e}", exc_info=True) 
 
         return None
 
@@ -132,9 +128,9 @@ class TronScanAPI:
         if not address:
             logging.warning("get_account_info called with empty address.")
             return None
-        endpoint = "accountv2"  # Ensure this is the correct endpoint
+        endpoint = "accountv2"
         params = {"address": address}
-        logging.info(f"Fetching TronScan account info for address: {address}") # pylint: disable=logging-fstring-interpolation
+        logging.info(f"Fetching TronScan account info for address: {address}") 
         return await self._request("GET", endpoint, params=params)
 
     async def get_account_trc20_balances(self, address: str, limit: int = 50, start: int = 0) -> Optional[Dict[str, Any]]:
@@ -145,14 +141,14 @@ class TronScanAPI:
         if not address:
             logging.warning("get_account_trc20_balances called with empty address.")
             return None
-        endpoint = "account/tokens" # This endpoint might be /api/account/tokens or similar for balances
+        endpoint = "account/tokens" 
         params = {
             "address": address,
             "start": start,
             "limit": limit,
-            "show": 0 # Often used to specify TRC20, check API docs
+            "show": 0 
         }
-        logging.info(f"Fetching TRC20 balances for address: {address}") # pylint: disable=logging-fstring-interpolation
+        logging.info(f"Fetching TRC20 balances for address: {address}") 
         return await self._request("GET", endpoint, params=params)
 
     async def get_trc20_transaction_history(
@@ -167,22 +163,13 @@ class TronScanAPI:
         """
         Fetches TRC20 token transaction history for a given address.
         Endpoint example: /api/token_trc20/transfers
-        Common parameters:
-        - relatedAddress or address: The account address.
-        - contract_address: Filter by a specific TRC20 token contract.
-        - limit, start: For pagination.
-        - start_timestamp, end_timestamp: For time range filtering (in milliseconds).
         """
         if not address:
             logging.warning("get_trc20_transaction_history called with empty address.")
             return None
-
-        # The exact endpoint and parameter names can vary slightly.
-        # Common variations for address parameter: 'address', 'relatedAddress', 'account_address'
-        # Check TronScan's official API documentation for the most accurate details.
         endpoint = "token_trc20/transfers"
         params = {
-            "relatedAddress": address, # Using 'relatedAddress' as it's common for transfers
+            "relatedAddress": address, 
             "limit": limit,
             "start": start,
         }
@@ -194,7 +181,7 @@ class TronScanAPI:
             params["end_timestamp"] = end_timestamp
 
         logging.info(
-            f"Fetching TRC20 transaction history for address: {address}, contract: {contract_address}" # pylint: disable=logging-fstring-interpolation
+            f"Fetching TRC20 transaction history for address: {address}, contract: {contract_address}" 
         )
         return await self._request("GET", endpoint, params=params)
 
@@ -215,17 +202,13 @@ class TronScanAPI:
         """
         Fetches all tags of an account.
         Endpoint: /api/account/tag
-        Note: The actual structure of the response for tags should be verified.
-              Sometimes tags are part of the main account info response.
         """
         if not address:
             logging.warning("get_account_tags called with empty address.")
             return None
-        endpoint = "account/tag" # As specified by user
+        endpoint = "account/tag" 
         params = {"address": address}
         logging.info(f"Fetching account tags for address: {address}")
-        # This might return a list of tags or a more complex object.
-        # Example: {"address":"TR...","tags":[{"tag":"Whale","tag_id":1}]}
         return await self._request("GET", endpoint, params=params)
 
     def _ensure_cache_dir_exists(self):
@@ -275,8 +258,8 @@ class TronScanAPI:
         """Helper to fetch all entries from the /api/stableCoin/blackList endpoint."""
         all_entries = []
         current_start = 0
-        page_limit = 50  # Number of entries to fetch per API call (standard pagination)
-        max_retries = 3 # Max retries for rate limit errors on a single page fetch
+        page_limit = 50  
+        max_retries = 3 
         current_page_retries = 0
 
         while True:
@@ -284,27 +267,25 @@ class TronScanAPI:
                 params = {
                     "limit": page_limit,
                     "start": current_start,
-                    "sort": 2,  # Sort by time
-                    "direction": 2  # Descending order
+                    "sort": 2,  
+                    "direction": 2  
                 }
                 logging.debug(f"Fetching blacklist page: start={current_start}, limit={page_limit}, sort=time, direction=desc")
                 response_data = await self._request("GET", "stableCoin/blackList", params=params)
-                current_page_retries = 0 # Reset retries on a successful request attempt
+                current_page_retries = 0 
 
                 if response_data and isinstance(response_data.get('data'), list):
                     page_entries = response_data['data']
-                    if not page_entries:  # No more entries on this page, successfully reached the end
+                    if not page_entries:  
                         logging.debug("Fetched last page of blacklist or no entries found on current page.")
                         break
                     all_entries.extend(page_entries)
 
-                    if len(page_entries) < page_limit: # Likely the last page
+                    if len(page_entries) < page_limit: 
                         logging.debug(f"Fetched {len(page_entries)} entries, which is less than page_limit {page_limit}. Assuming end of blacklist.")
                         break
                     current_start += len(page_entries)
                 else:
-                    # This block is reached if response_data is None (non-rate-limit error from _request)
-                    # or if response_data is not None but doesn't have response_data['data'] as a list.
                     if current_start == 0 and not all_entries:
                         logging.warning(
                             "Failed to fetch initial blacklist page. "
@@ -315,7 +296,7 @@ class TronScanAPI:
                             f"Error fetching blacklist page or unexpected data format after fetching {len(all_entries)} entries. "
                             f"Problematic response_data for start={current_start}: {response_data if response_data is not None else 'No response data (see previous HTTP error logs)'}"
                         )
-                    break # Stop trying to fetch further pages on error or unexpected format
+                    break 
             except TronScanRateLimitError as e:
                 if current_page_retries < max_retries:
                     current_page_retries += 1
@@ -325,23 +306,20 @@ class TronScanAPI:
                         f"Waiting for {wait_time} seconds. Error: {e.args[0]}"
                     )
                     await asyncio.sleep(wait_time)
-                    # Loop will continue and retry the current page
                 else:
                     logging.error(
                         f"Max retries ({max_retries}) exceeded for rate limit error at start={current_start}. Aborting blacklist fetch."
                     )
-                    break # Abort fetching after max_retries for this page
+                    break 
             except Exception as e:
                 logging.error(f"Unexpected error during blacklist page fetch for start={current_start}: {e}", exc_info=True)
-                break # Stop on other unexpected errors
+                break 
         return all_entries
 
     async def get_stablecoin_blacklist(self, limit: int = 50, start: int = 0) -> Optional[Dict[str, Any]]:
         """
         Fetches a list of all blacklist addresses for stablecoins.
         Manages a local cache (data/cache/stablecoin_blacklist.json).
-        If cache exists, fetches only updates. Otherwise, downloads the full list.
-        The returned 'limit' and 'start' apply to the locally managed list.
         """
         cached_blacklist = self._load_blacklist_from_disk()
         final_blacklist_data = []
@@ -351,31 +329,30 @@ class TronScanAPI:
             latest_cached_timestamp = 0
             if cached_blacklist:
                 try:
-                    # Ensure items have 'time' and it's a number, default to 0 if missing/invalid
                     valid_times = [item.get('time', 0) for item in cached_blacklist if isinstance(item.get('time'), (int, float))]
                     if valid_times:
                         latest_cached_timestamp = max(valid_times)
-                except Exception as e: # Catch any error during max() or list comprehension
+                except Exception as e: 
                     logging.warning(f"Could not determine latest timestamp from cached blacklist: {e}. Will perform full refresh.")
                     latest_cached_timestamp = 0
-                    cached_blacklist = [] # Treat as if cache was empty to trigger full download logic below
+                    cached_blacklist = [] 
 
-            if latest_cached_timestamp > 0 : # Proceed with update logic only if we have a valid timestamp
+            if latest_cached_timestamp > 0 : 
                 logging.info(f"Checking for blacklist updates since timestamp: {latest_cached_timestamp}")
                 newly_fetched_entries_on_api = []
                 current_api_page_start = 0
                 api_page_limit = 50
-                stop_fetching_further_pages = False # Initialize flag
+                stop_fetching_further_pages = False 
 
                 while True:
                     params = {
                         "limit": api_page_limit,
                         "start": current_api_page_start,
-                        "sort": 2,  # Sort by time
-                        "direction": 2,  # Descending order
+                        "sort": 2,  
+                        "direction": 2,  
                     }
-                    logging.debug(f"Params for blacklist update request: {params}") # Changed print to logging.debug
-                    logging.debug(f"Fetching update page for blacklist: start={current_api_page_start}, sort=time, direction=desc") # Changed print to logging.debug
+                    logging.debug(f"Params for blacklist update request: {params}") 
+                    logging.debug(f"Fetching update page for blacklist: start={current_api_page_start}, sort=time, direction=desc") 
                     
                     api_response = None
                     try:
@@ -384,12 +361,10 @@ class TronScanAPI:
                         logging.warning(f"Rate limit hit during stablecoin blacklist update (page start={current_api_page_start}): {e.args[0]}. "
                                         f"Aborting further updates for this call. Using currently fetched new items plus cache.")
                         stop_fetching_further_pages = True 
-                        # api_response remains None, loop will break or skip processing this page.
                     
                     current_page_new_items_to_add = []
-                    # stop_fetching_further_pages = False # This was previously here, moved initialization up
 
-                    if stop_fetching_further_pages: # Check if we need to break due to rate limit or other reasons
+                    if stop_fetching_further_pages: 
                         break
 
                     if api_response and isinstance(api_response.get('data'), list):
@@ -407,15 +382,10 @@ class TronScanAPI:
                                 continue
 
                             if item_time > latest_cached_timestamp:
-                                # Check if this new item (by hash) is already in our cached list or newly fetched list
-                                # This handles cases where API might return duplicates or items out of strict order briefly
                                 if not any(cached_item.get('transHash') == item_hash for cached_item in cached_blacklist) and \
                                    not any(new_item.get('transHash') == item_hash for new_item in newly_fetched_entries_on_api):
                                     current_page_new_items_to_add.append(item_from_api)
                             else:
-                                # Optimization: If API returns items sorted by time descending (newest first),
-                                # once we see an item older than or equal to our latest cached item,
-                                # subsequent items on this page and further pages should also be old or already known.
                                 stop_fetching_further_pages = True
                                 break 
                         
@@ -430,9 +400,8 @@ class TronScanAPI:
                 
                 if newly_fetched_entries_on_api:
                     logging.info(f"Found {len(newly_fetched_entries_on_api)} new potential blacklist entries.")
-                    # Combine, ensure uniqueness by transHash, and sort
-                    combined_dict = {item['transHash']: item for item in newly_fetched_entries_on_api} # New items take precedence
-                    for item in cached_blacklist: # Add old items if not overwritten by a new one with same hash
+                    combined_dict = {item['transHash']: item for item in newly_fetched_entries_on_api} 
+                    for item in cached_blacklist: 
                         if item.get('transHash') not in combined_dict:
                             combined_dict[item['transHash']] = item
                     
@@ -441,36 +410,31 @@ class TronScanAPI:
                 else:
                     logging.info("No new blacklist entries found.")
                     final_blacklist_data = cached_blacklist
-            else: # Cache was empty or latest_cached_timestamp was 0, so do a full fetch
-                 cached_blacklist = [] # Ensure it's empty for the full download logic
+            else: 
+                 cached_blacklist = [] 
                  logging.info("Cache was effectively empty. Performing full download for stablecoin blacklist.")
 
 
-        if not cached_blacklist: # This block handles initial full download
+        if not cached_blacklist: 
             logging.info(f"No local blacklist cache found or cache was marked for refresh. Performing full download.")
-            all_api_entries = [] # Initialize
+            all_api_entries = [] 
             try:
                 all_api_entries = await self._fetch_all_blacklist_pages()
-            except Exception as e: # Should be rare as _fetch_all_blacklist_pages handles its errors internally
+            except Exception as e: 
                 logging.error(f"Full download of blacklist failed unexpectedly at get_stablecoin_blacklist level: {e}", exc_info=True)
-                # all_api_entries will remain empty or partially filled if _fetch_all_blacklist_pages raised an unhandled error
             
             if all_api_entries:
-                # Sort by time, newest first
                 final_blacklist_data = sorted(all_api_entries, key=lambda x: x.get('time', 0), reverse=True)
-                # Remove duplicates just in case API returns some, preferring the one that would be kept by dict update (usually last seen)
                 unique_data_dict = {item['transHash']: item for item in final_blacklist_data if item.get('transHash')}
                 final_blacklist_data = list(unique_data_dict.values())
-                # Re-sort after ensuring uniqueness
                 final_blacklist_data = sorted(final_blacklist_data, key=lambda x: x.get('time', 0), reverse=True)
 
-                logging.info(f"Successfully fetched {len(final_blacklist_data)} total blacklist entries for new cache.") # pylint: disable=logging-fstring-interpolation
+                logging.info(f"Successfully fetched {len(final_blacklist_data)} total blacklist entries for new cache.") 
                 self._save_blacklist_to_disk(final_blacklist_data)
             else:
                 logging.warning("Full download of blacklist failed or returned no entries.")
                 final_blacklist_data = []
 
-        # Apply limit and start to the final_blacklist_data for the return value
         paginated_data = final_blacklist_data[start : start + limit]
         
         return {
@@ -488,7 +452,7 @@ class TronScanAPI:
             return None
         endpoint = "deep/account/transferAmount"
         params = {"address": address}
-        logging.info(f"Fetching account transfer amounts for address: {address}") # pylint: disable=logging-fstring-interpolation
+        logging.info(f"Fetching account transfer amounts for address: {address}") 
         return await self._request("GET", endpoint, params=params)
 
     async def get_account_token_big_amounts(
@@ -512,22 +476,63 @@ class TronScanAPI:
             "start": start
         }
         if contract_address:
-            params["contractAddress"] = contract_address # API might use 'contract_address' or 'token_address'
+            params["contractAddress"] = contract_address 
         
-        logging.info(f"Fetching big token amounts for address: {address}, contract: {contract_address} (limit: {limit})") # pylint: disable=logging-fstring-interpolation
+        logging.info(f"Fetching big token amounts for address: {address}, contract: {contract_address} (limit: {limit})") 
         return await self._request("GET", endpoint, params=params)
 
-    async def get_stablecoin_key_events(self, limit: int = 50, start: int = 0) -> Optional[Dict[str, Any]]:
+    async def get_stablecoin_key_events(
+        self,
+        limit: int = 50,
+        start: int = 0,
+        operator_address: Optional[str] = None,
+        sort_by: Optional[int] = None, 
+        direction: Optional[int] = None, 
+        start_time: Optional[int] = None, 
+        end_time: Optional[int] = None, 
+        start_amount: Optional[float] = None,
+        end_amount: Optional[float] = None,
+        usdt_events: Optional[str] = None, 
+        usdc_events: Optional[str] = None,
+        usdd_events: Optional[str] = None,
+        usdj_events: Optional[str] = None,
+        tusd_events: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
         """
-        Fetches key events of TRON stablecoins (e.g., AddedBlackList, LogSetOwner).
-        Endpoint: /api/stableCoin/totalSupply/keyEvents
+        Fetches key events of TRON stablecoins.
+        Endpoint: /api/deep/stableCoin/totalSupply/keyEvents
         """
-        endpoint = "stableCoin/totalSupply/keyEvents"
+        endpoint = "deep/stableCoin/totalSupply/keyEvents"
         params = {
             "limit": limit,
             "start": start
         }
-        logging.info(f"Fetching stablecoin key events (limit: {limit}, start: {start})")
+        if operator_address is not None:
+            params["operatorAddress"] = operator_address
+        if sort_by is not None:
+            params["sort"] = sort_by
+        if direction is not None:
+            params["direction"] = direction
+        if start_time is not None:
+            params["startTime"] = start_time
+        if end_time is not None:
+            params["endTime"] = end_time
+        if start_amount is not None:
+            params["startAmount"] = start_amount
+        if end_amount is not None:
+            params["endAmount"] = end_amount
+        if usdt_events is not None:
+            params["USDT"] = usdt_events
+        if usdc_events is not None:
+            params["USDC"] = usdc_events
+        if usdd_events is not None:
+            params["USDD"] = usdd_events
+        if usdj_events is not None:
+            params["USDJ"] = usdj_events
+        if tusd_events is not None:
+            params["TUSD"] = tusd_events
+
+        logging.info(f"Fetching stablecoin key events with params: {params}")
         return await self._request("GET", endpoint, params=params)
 
 
@@ -655,7 +660,7 @@ if __name__ == "__main__":
         print(f"\n\033[93m--- Testing get_account_related_accounts for {test_user_address} ---\033[0m")
         related_accounts = await api_client.get_account_related_accounts(test_user_address)
         if related_accounts:
-            print(f"Related Accounts data received (first few entries if list):")
+            print(f"Related Accounts ({len(related_accounts.get('data', []))}) data received (first few entries if list):")
             if isinstance(related_accounts.get('data'), list): # Assuming 'data' holds the list
                 for acc_data in related_accounts['data'][:3]:
                     print(f"  Related Address: {acc_data.get('related_address')}, Tag: {acc_data.get('addressTag')}, In: {acc_data.get('inAmountUsd')}, Out: {acc_data.get('outAmountUsd')}")
@@ -667,7 +672,7 @@ if __name__ == "__main__":
         print(f"\n\033[93m--- Testing get_account_tags for {test_user_address} ---\033[0m")
         account_tags = await api_client.get_account_tags(test_user_address)
         if account_tags:
-            print(f"Account Tags received for {test_user_address}:")
+            print(f"Account Tags ({len(account_tags.get('Assets', []))})received for {test_user_address}:")
             # Assuming tags might be in a list under a 'tags' key or similar
             if isinstance(account_tags.get('tags'), list):
                  for tag_info in account_tags['tags']:
@@ -680,7 +685,7 @@ if __name__ == "__main__":
         else:
             print(f"Failed to get account tags for {test_user_address}.")
 
-        print(f"\n\033[93m--- Testing get_stablecoin_blacklist (first 5) ---\033[0m")
+        print("\n\033[93m--- Testing get_stablecoin_blacklist (first 5) ---\033[0m")
         blacklist = await api_client.get_stablecoin_blacklist(limit=5)
         if blacklist and blacklist.get('data'): # Assuming data is in 'data' key
             print("Stablecoin Blacklist (first 5):")
@@ -695,23 +700,69 @@ if __name__ == "__main__":
         transfer_amounts = await api_client.get_account_transfer_amounts(test_user_address)
         if transfer_amounts:
             print(f"Account Transfer Amounts for {test_user_address}:")
-            # Example: print top 2 incoming and outgoing if available
-            if transfer_amounts.get('receiveList'):
-                print("  Top Incoming:")
-                for tx_info in transfer_amounts['receiveList'][:2]:
-                    print(f"    From: {tx_info.get('address')}, Amount USD: {tx_info.get('amountUsd')}, Tag: {tx_info.get('tag')}")
-            if transfer_amounts.get('sendList'):
-                print("  Top Outgoing:")
-                for tx_info in transfer_amounts['sendList'][:2]:
-                    print(f"    To: {tx_info.get('address')}, Amount USD: {tx_info.get('amountUsd')}, Tag: {tx_info.get('tag')}")
-            # print(transfer_amounts) # Or print raw for full details
+
+            # Check for the new structure: 'transfer_out' and 'transfer_in'
+            if 'transfer_out' in transfer_amounts or 'transfer_in' in transfer_amounts:
+                if transfer_amounts.get('transfer_out'):
+                    out_data = transfer_amounts['transfer_out']
+                    print(f"  Transfer Out (Total: {out_data.get('total')}, Amount Total USD: {out_data.get('amountTotal')}) (first 2 entries):")
+                    if isinstance(out_data.get('data'), list):
+                        for item in out_data['data'][:2]:
+                            print(f"    - Address: {item.get('address')}, Amount USD: {item.get('amountInUsd')}, Tag: {item.get('addressTag')}")
+                            # Optionally print contract info if relevant and present for this address
+                            if isinstance(out_data.get('contractInfo'), dict) and item.get('address') in out_data['contractInfo']:
+                                print(f"      Contract Info: {out_data['contractInfo'][item.get('address')]}")
+                
+                if transfer_amounts.get('transfer_in'):
+                    in_data = transfer_amounts['transfer_in']
+                    print(f"  Transfer In (Total: {in_data.get('total')}, Amount Total USD: {in_data.get('amountTotal')}) (first 2 entries):")
+                    if isinstance(in_data.get('data'), list):
+                        for item in in_data['data'][:2]:
+                            print(f"    - Address: {item.get('address')}, Amount USD: {item.get('amountInUsd')}, Tag: {item.get('addressTag')}")
+                            if isinstance(in_data.get('contractInfo'), dict) and item.get('address') in in_data['contractInfo']:
+                                print(f"      Contract Info: {in_data['contractInfo'][item.get('address')]}")
+
+            # Fallback to checking for 'stableAmountLine' or 'stableAmount24h'
+            elif 'stableAmountLine' in transfer_amounts or 'stableAmount24h' in transfer_amounts:
+                if transfer_amounts.get('stableAmountLine'):
+                    print("  Stable Amount Line (first 2 tokens, first 2 data points per token):")
+                    for token_data in transfer_amounts['stableAmountLine'][:2]:
+                        print(f"    Token: {token_data.get('tokenAbbr')}, Contract: {token_data.get('contractAddress')}")
+                        if isinstance(token_data.get('lineData'), list):
+                            for ld_item in token_data['lineData'][:2]:
+                                print(f"      - Timestamp: {ld_item.get('t')}, Value: {ld_item.get('v')}")
+                
+                if transfer_amounts.get('stableAmount24h'):
+                    print("  Stable Amount 24h (first 2 tokens):")
+                    for token_data in transfer_amounts['stableAmount24h'][:2]:
+                        print(f"    - Token: {token_data.get('tokenAbbr')}, Contract: {token_data.get('contractAddress')}, Amount24h: {token_data.get('amount24h')}")
+            
+            # Fallback to checking for the previously assumed structure (receiveList/sendList)
+            elif transfer_amounts.get('receiveList') or transfer_amounts.get('sendList'):
+                if transfer_amounts.get('receiveList'):
+                    print("  Top Incoming (first 2 entries):")
+                    for tx_info in transfer_amounts['receiveList'][:2]:
+                        print(f"    - {tx_info}") # Print the dictionary item
+                
+                if transfer_amounts.get('sendList'):
+                    print("  Top Outgoing (first 2 entries):")
+                    for tx_info in transfer_amounts['sendList'][:2]:
+                        print(f"    - {tx_info}") # Print the dictionary item
+            
+            # If no known structure is found, print a generic representation
+            else:
+                print("  Data structure not recognized by specific formatting, printing raw (up to 400 chars):")
+                raw_str = str(transfer_amounts)
+                print(f"    {raw_str[:400]}{'...' if len(raw_str) > 400 else ''}")
+
         else:
             print(f"Failed to get account transfer amounts for {test_user_address}.")
+
 
         print(f"\n\033[93m--- Testing get_account_token_big_amounts for {test_user_address} (USDT, limit 3) ---\033[0m")
         big_amounts_usdt = await api_client.get_account_token_big_amounts(test_user_address, contract_address=usdt_trc20_contract_address, limit=3)
         if big_amounts_usdt and big_amounts_usdt.get('data'):
-            print(f"Big USDT Token Amounts for {test_user_address} (first 3):")
+            print(f"Big USDT Token Amounts ({len(big_amounts_usdt['data'])}) for {test_user_address} (first 3):")
             for tx_info in big_amounts_usdt['data'][:3]:
                 print(f"  TxID: {tx_info.get('transaction_id')}, Amount: {tx_info.get('amount')}, To: {tx_info.get('to_address')}, From: {tx_info.get('from_address')}")
         elif big_amounts_usdt:
@@ -722,9 +773,36 @@ if __name__ == "__main__":
         print(f"\n\033[93m--- Testing get_stablecoin_key_events (first 5) ---\033[0m")
         key_events = await api_client.get_stablecoin_key_events(limit=5)
         if key_events and key_events.get('data'):
-            print("Stablecoin Key Events (first 5):")
+            print(f"Stablecoin Key Events ({len(key_events['data'])}) (first 5):")
             for event in key_events['data'][:5]:
                 print(f"  Event Type: {event.get('eventType')}, Token: {event.get('tokenSymbol')}, Address: {event.get('address')}, Timestamp: {event.get('block_ts')}")
+        elif key_events:
+            print(f"Stablecoin Key Events response (structure might vary): {key_events}")
+        else:
+            print("Failed to get stablecoin key events.")
+
+
+        print(f"\n\033[93m--- Testing get_stablecoin_key_events (first 5, USDT AddedBlackList) ---\033[0m")
+        key_events = await api_client.get_stablecoin_key_events(limit=5, usdt_events="AddedBlackList", sort_by=2, direction=2)
+        if key_events and key_events.get('data'):
+            event_list = key_events['data']
+            print(f"Stablecoin Key Events (Total in response: {key_events.get('total', len(event_list))}, showing first {len(event_list[:5])}):")
+            for event in event_list[:5]:
+                print(
+                    f"  Event Type: {event.get('eventName')}, Token: {event.get('tokenSymbol')}, " # Adjusted 'eventType' to 'eventName' if that's the field
+                    f"Tx Hash: {event.get('transaction_id')}, "
+                    f"Block TS: {event.get('block_ts')}, "
+                    f"Contract: {event.get('contract_address')}, "
+                    f"Operator: {event.get('operator_address')}" 
+                )
+                details_to_print = {}
+                if 'old_value' in event: details_to_print['Old Value'] = event['old_value']
+                if 'new_value' in event: details_to_print['New Value'] = event['new_value']
+                if 'black_address' in event: details_to_print['Black Address'] = event['black_address']
+                if 'amount' in event: details_to_print['Amount'] = event['amount']
+                if details_to_print:
+                    print(f"    Details: {details_to_print}")
+
         elif key_events:
             print(f"Stablecoin Key Events response (structure might vary): {key_events}")
         else:

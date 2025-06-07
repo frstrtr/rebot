@@ -487,33 +487,203 @@ async def handle_update_report_tronscan_callback(callback_query: types.CallbackQ
         await api_client.close_session() # Ensure the session is closed
 
 
+async def _format_account_info_for_ai(address: str, api_client: TronScanAPI) -> str:
+    info_summary = "Section: Account Overview\n--------------------------\n"
+    try:
+        account_info = await api_client.get_account_info(address)
+        if account_info:
+            trx_balance_sun = account_info.get('balance', 0)
+            trx_balance = trx_balance_sun / 1_000_000
+            account_name = account_info.get('account_name', 'N/A')
+            create_time_ms = account_info.get('create_time')
+            creation_time_str = "N/A"
+            if create_time_ms:
+                try:
+                    creation_time_str = datetime.fromtimestamp(create_time_ms / 1000).strftime('%Y-%m-%d %H:%M:%S UTC')
+                except: # pylint: disable=bare-except
+                    pass # Keep N/A
+            total_tx_count = account_info.get('total_transaction_count', 'N/A')
+            
+            info_summary += (
+                f"Address: {html.quote(address)}\n"
+                f"TRX Balance: {trx_balance:.6f} TRX\n"
+                f"Account Name: {html.quote(account_name)}\n"
+                f"Creation Time: {creation_time_str}\n"
+                f"Total Transactions: {total_tx_count}\n"
+            )
+        else:
+            info_summary += "Could not retrieve basic account information.\n"
+    except Exception as e:
+        logging.error(f"Error fetching account info for AI for {address}: {e}")
+        info_summary += f"Error fetching account info: {html.quote(str(e))}\n"
+    info_summary += "--------------------------\n\n"
+    return info_summary
+
+async def _format_account_tags_for_ai(address: str, api_client: TronScanAPI) -> str:
+    tags_summary = "Section: Account Tags\n--------------------------\n"
+    try:
+        tags_data = await api_client.get_account_tags(address)
+        found_tags = []
+        if tags_data:
+            if isinstance(tags_data.get('tags'), list) and tags_data['tags']:
+                for tag_info in tags_data['tags']:
+                    found_tags.append(tag_info.get('tag', 'Unknown Tag'))
+            elif tags_data.get('tag'): # Single tag structure
+                found_tags.append(tags_data.get('tag'))
+            elif address in tags_data and isinstance(tags_data[address], dict) and tags_data[address].get('tag'): # Address as key
+                found_tags.append(tags_data[address]['tag'])
+
+        if found_tags:
+            tags_summary += f"Tags: {html.quote(', '.join(list(set(found_tags))))}\n"
+        else:
+            tags_summary += "No specific tags found for this address.\n"
+    except Exception as e:
+        logging.error(f"Error fetching account tags for AI for {address}: {e}")
+        tags_summary += f"Error fetching account tags: {html.quote(str(e))}\n"
+    tags_summary += "(Note: Tags can indicate exchange, scammer, whale, etc.)\n--------------------------\n\n"
+    return tags_summary
+
+async def _format_trc20_balances_for_ai(address: str, api_client: TronScanAPI, max_to_show: int = 5) -> str:
+    balances_summary = f"Section: Top TRC20 Token Balances (Max {max_to_show} shown)\n--------------------------\n"
+    try:
+        balances_data = await api_client.get_account_trc20_balances(address, limit=50) # Fetch up to 50
+        if balances_data and balances_data.get('trc20token_balances'):
+            tokens = balances_data['trc20token_balances']
+            if tokens:
+                for i, token in enumerate(tokens[:max_to_show]):
+                    token_name = token.get('tokenName', 'N/A')
+                    token_abbr = token.get('tokenAbbr', 'N/A')
+                    balance_raw = token.get('balance') # Using 'balance' which is typically unscaled
+                    token_decimals = int(token.get('tokenDecimal', 0))
+                    balance_formatted = "N/A"
+                    if balance_raw is not None:
+                        try:
+                            balance_formatted = f"{int(balance_raw) / (10**token_decimals):.6f}"
+                        except: # pylint: disable=bare-except
+                            balance_formatted = f"{balance_raw} (raw)"
+                    balances_summary += f"  - {html.quote(token_name)} ({html.quote(token_abbr)}): {html.quote(balance_formatted)}\n"
+                if len(tokens) > max_to_show:
+                    balances_summary += f"(Showing top {max_to_show} balances out of {len(tokens)} found in API batch of up to 50)\n"
+                elif not tokens:
+                    balances_summary += "No TRC20 token balances found.\n"
+            else:
+                balances_summary += "No TRC20 token balances found.\n"
+        else:
+            balances_summary += "Could not retrieve TRC20 token balances.\n"
+    except Exception as e:
+        logging.error(f"Error fetching TRC20 balances for AI for {address}: {e}")
+        balances_summary += f"Error fetching TRC20 balances: {html.quote(str(e))}\n"
+    balances_summary += "--------------------------\n\n"
+    return balances_summary
+
+async def _format_account_transfer_amounts_for_ai(address: str, api_client: TronScanAPI, max_details_to_show: int = 2) -> str:
+    amounts_summary = "Section: Account Fund Flow Summary (USD)\n--------------------------\n"
+    try:
+        transfer_amounts = await api_client.get_account_transfer_amounts(address)
+        if transfer_amounts:
+            if transfer_amounts.get('transfer_in'):
+                in_data = transfer_amounts['transfer_in']
+                amounts_summary += "Transfer In:\n"
+                amounts_summary += f"  Total Records: {in_data.get('total', 'N/A')}\n"
+                amounts_summary += f"  Total USD Amount: {in_data.get('amountTotal', 'N/A')}\n"
+                if isinstance(in_data.get('data'), list) and in_data['data']:
+                    amounts_summary += f"  Top Senders (Max {max_details_to_show} shown):\n"
+                    for item in in_data['data'][:max_details_to_show]:
+                        amounts_summary += f"    - Address: {html.quote(item.get('address','N/A'))}, Amount USD: {item.get('amountInUsd','N/A')}, Tag: {html.quote(item.get('addressTag','N/A'))}\n"
+            else:
+                amounts_summary += "No 'transfer_in' data found.\n"
+            
+            amounts_summary += "\n"
+            if transfer_amounts.get('transfer_out'):
+                out_data = transfer_amounts['transfer_out']
+                amounts_summary += "Transfer Out:\n"
+                amounts_summary += f"  Total Records: {out_data.get('total', 'N/A')}\n"
+                amounts_summary += f"  Total USD Amount: {out_data.get('amountTotal', 'N/A')}\n"
+                if isinstance(out_data.get('data'), list) and out_data['data']:
+                    amounts_summary += f"  Top Receivers (Max {max_details_to_show} shown):\n"
+                    for item in out_data['data'][:max_details_to_show]:
+                        amounts_summary += f"    - Address: {html.quote(item.get('address','N/A'))}, Amount USD: {item.get('amountInUsd','N/A')}, Tag: {html.quote(item.get('addressTag','N/A'))}\n"
+            else:
+                amounts_summary += "No 'transfer_out' data found.\n"
+        else:
+            amounts_summary += "Could not retrieve account fund flow summary.\n"
+    except Exception as e:
+        logging.error(f"Error fetching account transfer amounts for AI for {address}: {e}")
+        amounts_summary += f"Error fetching account fund flow summary: {html.quote(str(e))}\n"
+    amounts_summary += "--------------------------\n\n"
+    return amounts_summary
+
+async def _format_related_accounts_for_ai(address: str, api_client: TronScanAPI, max_to_show: int = 5) -> str:
+    related_summary = f"Section: Top Related Accounts (Interacted With - Max {max_to_show} shown)\n--------------------------\n"
+    try:
+        related_data = await api_client.get_account_related_accounts(address)
+        if related_data and isinstance(related_data.get('data'), list):
+            accounts = related_data['data']
+            if accounts:
+                for acc_data in accounts[:max_to_show]:
+                    related_summary += (
+                        f"  - Address: {html.quote(acc_data.get('related_address', 'N/A'))}, "
+                        f"Tag: {html.quote(acc_data.get('addressTag', 'N/A'))}, "
+                        f"In USD: {acc_data.get('inAmountUsd', 'N/A')}, "
+                        f"Out USD: {acc_data.get('outAmountUsd', 'N/A')}\n"
+                    )
+                if len(accounts) > max_to_show:
+                    related_summary += f"(Showing top {max_to_show} related accounts out of {len(accounts)} found)\n"
+            else:
+                related_summary += "No related accounts found.\n"
+        else:
+            related_summary += "Could not retrieve related accounts information.\n"
+    except Exception as e:
+        logging.error(f"Error fetching related accounts for AI for {address}: {e}")
+        related_summary += f"Error fetching related accounts: {html.quote(str(e))}\n"
+    related_summary += "--------------------------\n\n"
+    return related_summary
+
 async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery, state: FSMContext):
     """Handles the 'AI Scam Check (TRC20)' button click."""
     await callback_query.answer("Performing AI Scam Check for TRC20 transactions...")
     user_data = await state.get_data()
     address = user_data.get("current_action_address")
-    blockchain = user_data.get("current_action_blockchain", "tron") # Should be set by _send_action_prompt
+    # blockchain = user_data.get("current_action_blockchain", "tron") # Should be set
 
     if not address:
-        logging.warning(f"Could not retrieve address from state for AI Scam Check. UserID: {callback_query.from_user.id}") # pylint:disable=logging-fstring-interpolation
+        logging.warning(f"Could not retrieve address from state for AI Scam Check. UserID: {callback_query.from_user.id}")
         await callback_query.message.answer("Error: Could not retrieve address for the AI report. Please try again.", show_alert=True)
         return
 
     tron_api_client = TronScanAPI()
     vertex_ai_client = None 
 
-    raw_transactions_summary = f"TRC20 Transaction Data for Address: {address}\n"
-    raw_transactions_summary += f"Report requested on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
-    fetch_limit = 50 
+    enriched_data_for_ai = f"Comprehensive AI Scam Analysis Request for TRON Address: {html.quote(address)}\n"
+    enriched_data_for_ai += f"Report requested on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
+    
+    fetch_limit_trc20_history = 50 # For TRC20 transaction history list
 
-    ai_response_message = None # To store the message object for later editing
+    ai_response_message = None 
 
     try:
-        await callback_query.message.answer(f"Querying TronScan for recent TRC20 transfers of <code>{html.quote(address)}</code> (limit {fetch_limit})...", parse_mode="HTML")
+        await callback_query.message.answer(f"Gathering comprehensive data for <code>{html.quote(address)}</code> for AI analysis. This may take a moment...", parse_mode="HTML")
+
+        # 1. Account Info
+        enriched_data_for_ai += await _format_account_info_for_ai(address, tron_api_client)
         
+        # 2. Account Tags
+        enriched_data_for_ai += await _format_account_tags_for_ai(address, tron_api_client)
+
+        # 3. TRC20 Balances
+        enriched_data_for_ai += await _format_trc20_balances_for_ai(address, tron_api_client, max_to_show=5)
+
+        # 4. Account Transfer Amounts (Fund Flow Summary)
+        enriched_data_for_ai += await _format_account_transfer_amounts_for_ai(address, tron_api_client, max_details_to_show=3)
+        
+        # 5. Related Accounts
+        enriched_data_for_ai += await _format_related_accounts_for_ai(address, tron_api_client, max_to_show=5)
+
+        # 6. TRC20 Transaction History (Existing Logic, adapted)
+        trc20_history_summary = f"Section: Recent TRC20 Transactions (Limit {fetch_limit_trc20_history})\n--------------------------\n"
         history_data = await tron_api_client.get_trc20_transaction_history(
             address=address,
-            limit=fetch_limit,
+            limit=fetch_limit_trc20_history,
             start=0
         )
 
@@ -521,58 +691,58 @@ async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery
             transactions = history_data.get("token_transfers", [])
             total_found_api = history_data.get("total", len(transactions))
             
-            raw_transactions_summary += f"Found {len(transactions)} transactions in this batch (API reports total: {total_found_api}).\n"
-            if total_found_api > len(transactions) and len(transactions) == fetch_limit:
-                raw_transactions_summary += f"Note: Analyzing the latest {fetch_limit} transactions. More transactions might exist.\n"
-            raw_transactions_summary += "--------------------------------------------------\n"
-
-            for tx_idx, tx in enumerate(transactions):
-                raw_timestamp_ms = tx.get('block_ts')
-                human_readable_timestamp = "N/A"
-                if raw_timestamp_ms is not None:
-                    try:
-                        timestamp_seconds = float(raw_timestamp_ms) / 1000.0
-                        dt_object = datetime.fromtimestamp(timestamp_seconds)
-                        human_readable_timestamp = dt_object.strftime("%Y-%m-%d %H:%M:%S")
-                    except (ValueError, TypeError):
-                        human_readable_timestamp = "Invalid Timestamp"
-                
-                token_info = tx.get('tokenInfo', {})
-                token_abbr = token_info.get('tokenAbbr', 'N/A')
-                token_name = token_info.get('tokenName', 'Unknown Token')
-                token_decimals = int(token_info.get('tokenDecimal', 0))
-                
-                quant_raw = tx.get('quant')
-                amount_formatted = "N/A"
-                if quant_raw is not None:
-                    try:
-                        amount_formatted = str(int(quant_raw) / (10**token_decimals))
-                    except (ValueError, TypeError):
-                        amount_formatted = f"{quant_raw} (raw)"
-
-                raw_transactions_summary += (
-                    f"Transaction {tx_idx + 1}:\n"
-                    f"  Timestamp: {human_readable_timestamp}\n"
-                    f"  TxID: {tx.get('transaction_id', 'N/A')}\n"
-                    f"  From: {tx.get('from_address', 'N/A')}\n"
-                    f"  To: {tx.get('to_address', 'N/A')}\n"
-                    f"  Token: {token_name} ({token_abbr})\n"
-                    f"  Amount: {amount_formatted} {token_abbr}\n"
-                    f"  Confirmed: {tx.get('confirmed', 'N/A')}\n"
-                    f"--------------------------------------------------\n"
-                )
+            trc20_history_summary += f"Found {len(transactions)} transactions in this batch (API reports total: {total_found_api}).\n"
+            if total_found_api > len(transactions) and len(transactions) == fetch_limit_trc20_history:
+                trc20_history_summary += f"Note: Analyzing the latest {fetch_limit_trc20_history} transactions. More transactions might exist.\n"
             
             if not transactions:
-                 raw_transactions_summary += "No TRC20 transactions found in the fetched batch.\n"
-        
-        elif history_data:
-            raw_transactions_summary += "No TRC20 transactions found or response format unexpected.\n"
-        else:
-            raw_transactions_summary += "Failed to fetch TRC20 transaction history from TronScan.\n"
-            await callback_query.message.answer("Could not fetch transaction data for AI analysis.")
-            return 
+                 trc20_history_summary += "No TRC20 transactions found in the fetched batch.\n"
+            else:
+                for tx_idx, tx in enumerate(transactions):
+                    raw_timestamp_ms = tx.get('block_ts')
+                    human_readable_timestamp = "N/A"
+                    if raw_timestamp_ms is not None:
+                        try:
+                            timestamp_seconds = float(raw_timestamp_ms) / 1000.0
+                            dt_object = datetime.fromtimestamp(timestamp_seconds)
+                            human_readable_timestamp = dt_object.strftime("%Y-%m-%d %H:%M:%S")
+                        except (ValueError, TypeError):
+                            human_readable_timestamp = "Invalid Timestamp"
+                    
+                    token_info = tx.get('tokenInfo', {})
+                    token_abbr = token_info.get('tokenAbbr', 'N/A')
+                    token_name = token_info.get('tokenName', 'Unknown Token')
+                    token_decimals = int(token_info.get('tokenDecimal', 0))
+                    
+                    quant_raw = tx.get('quant')
+                    amount_formatted = "N/A"
+                    if quant_raw is not None:
+                        try:
+                            amount_formatted = str(int(quant_raw) / (10**token_decimals))
+                        except (ValueError, TypeError):
+                            amount_formatted = f"{quant_raw} (raw)"
 
-        await callback_query.message.answer("Sending transaction data to AI for analysis...")
+                    trc20_history_summary += (
+                        f"Tx {tx_idx + 1}:\n"
+                        f"  Time: {human_readable_timestamp}, TxID: {html.quote(tx.get('transaction_id', 'N/A'))}\n"
+                        f"  From: {html.quote(tx.get('from_address', 'N/A'))}, To: {html.quote(tx.get('to_address', 'N/A'))}\n"
+                        f"  Token: {html.quote(token_name)} ({html.quote(token_abbr)}), Amount: {html.quote(amount_formatted)} {html.quote(token_abbr)}\n"
+                        f"  Confirmed: {tx.get('confirmed', 'N/A')}\n---\n"
+                    )
+        elif history_data:
+            trc20_history_summary += "No TRC20 transactions found or response format unexpected for history.\n"
+        else:
+            trc20_history_summary += "Failed to fetch TRC20 transaction history from TronScan.\n"
+        trc20_history_summary += "--------------------------\n\n"
+        enriched_data_for_ai += trc20_history_summary
+        
+        # Check if any data was actually fetched for AI
+        if "Could not retrieve" in enriched_data_for_ai and "Failed to fetch" in enriched_data_for_ai and "No TRC20 transactions found" in enriched_data_for_ai :
+             # Heuristic: if all sections report errors or no data
+            await callback_query.message.answer("Could not fetch sufficient transaction data for AI analysis. Please try again later or check the address on an explorer.")
+            return
+
+        await callback_query.message.answer("Sending comprehensive data to AI for analysis...")
         
         try:
             vertex_ai_client = VertexAIClient() 
@@ -582,21 +752,29 @@ async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery
             return
 
         ai_prompt = (
-            "You are a cryptocurrency transaction analyst specializing in identifying suspicious or potentially scam-related activities. "
-            "Please analyze the following TRC20 transaction data for the address provided. "
-            "Focus on patterns that might indicate scams, such as unusual token transfers, "
-            "interactions with known scam contracts (if you have such knowledge, otherwise infer from patterns), "
-            "various known scam schemes (e.g., dusting attacks, Ponzi schemes, decimal point manipulation, "
-            "pig butchering, money laundering, Ponzi Schemes, Pump and Dump Schemes, Rug Pulls, Fake ICOs (Initial Coin Offerings), "
-            "Airdrop Scams, High-Yield Investment Programs (HYIPs), Phishing Scams, Impersonation Scams, Giveaway Scams, Romance Scams, "
-            "Pig Butchering Scams, Blackmail/Extortion Scams, Address Poisoning/Spoofing, Fake Exchanges/Platforms, Fake Wallets/Apps, "
-            "Cloud Mining Scams, Smurfing (Structuring), Mixing/Tumblers, Wash Trading), "
-            "high frequency of small dusting transactions, or other red flags. "
-            "Provide a brief summary of your findings and a risk assessment (e.g., Low, Medium, High Risk) with justification. "
-            "Report should not exceed 1000 symbols.\n\n"
-            "Transaction Data:\n"
-            f"{raw_transactions_summary}"
+            "You are a cryptocurrency transaction analyst specializing in identifying suspicious or potentially scam-related activities on the TRON blockchain. "
+            "Please analyze the following comprehensive data for the provided TRON address. "
+            "The data includes: Account Overview (TRX balance, creation time, etc.), Account Tags (e.g., Exchange, Scammer), "
+            "Top TRC20 Token Balances, a Summary of USD Fund Flows (In/Out), Top Related Accounts interacted with, and a list of Recent TRC20 Transactions. "
+            "Focus on patterns that might indicate scams, such as: \n"
+            "- Unusual token types or balances (e.g., many obscure tokens, sudden large influx of unknown token).\n"
+            "- Interactions with addresses having suspicious tags.\n"
+            "- Discrepancies in fund flow (e.g., large inflows followed by rapid outflows to multiple new addresses).\n"
+            "- Connections to known scam-related addresses or patterns in related accounts.\n"
+            "- Specific transaction patterns in TRC20 history (e.g., dusting, small initial test transactions followed by larger ones, specific scam contract interactions if identifiable from patterns).\n"
+            "- Consider various scam schemes: Ponzi, Pump and Dump, Rug Pulls, Fake ICOs, Airdrop Scams, HYIPs, Phishing, Impersonation, Giveaway Scams, Romance Scams, Pig Butchering, Blackmail/Extortion, Address Poisoning, Fake Platforms/Wallets, Cloud Mining Scams, Smurfing, Mixing, Wash Trading.\n"
+            "- High frequency of small dusting transactions, or other red flags based on the combined data.\n\n"
+            "Provide a concise summary of your findings, a risk assessment (e.g., Low, Medium, High, Very High Risk) with clear justification based on the provided data points, and if possible, suggest the type of suspicious activity if any is detected. "
+            "Your report should be analytical and directly reference the data sections if they contribute to your assessment. "
+            "The final report should not exceed 1000 symbols.\n\n"
+            "Comprehensive Data for Analysis:\n"
+            f"{enriched_data_for_ai}" # This is already HTML quoted by helper functions where needed
         )
+
+        # For debugging, print the length of the prompt
+        logging.info(f"Length of prompt for AI: {len(ai_prompt)} characters.")
+        # If prompt is too long, consider sending data as a file or further summarizing.
+        # For now, we assume it's within reasonable limits for the AI model.
 
         ai_analysis_text = await vertex_ai_client.generate_text(prompt=ai_prompt, max_output_tokens=1024) 
 
@@ -604,7 +782,10 @@ async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery
         if ai_analysis_text:
             report_title = f"<b>AI Scam Check Report for Address:</b> <code>{html.quote(address)}</code>\n"
             report_title += f"<i>Analysis requested on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}</i>\n\n"
-            response_message_text = report_title + "<b><u>AI Analysis:</u></b>\n" + html.quote(ai_analysis_text)
+            # The AI text itself should not be HTML quoted if it's meant to be formatted by AI.
+            # However, if the AI might return unsafe HTML, quoting is safer.
+            # For now, assuming AI returns plain text that we want to display as is.
+            response_message_text = report_title + "<b><u>AI Analysis:</u></b>\n" + html.quote(ai_analysis_text) # Use html.quote for safety
         else:
             response_message_text = (
                 f"<b>AI Scam Check Report for Address:</b> <code>{html.quote(address)}</code>\n"
@@ -618,7 +799,6 @@ async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery
             logging.warning(f"AI Scam Check report for {address} is too long ({len(response_message_text)} chars) for a single Telegram message. Truncating.") 
             response_message_text = response_message_text[:4090] + "\n<b>[Report Truncated]</b>"
         
-        # Prepare buttons for saving memo
         keyboard_buttons = [
             [
                 InlineKeyboardButton(text="✍️ Save As Public Memo", callback_data="ai_memo_action:save_public"),
@@ -632,17 +812,14 @@ async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery
 
         ai_response_message = await callback_query.message.answer(response_message_text, parse_mode="HTML", reply_markup=reply_markup)
         
-        # Store necessary info in FSM for the memo action handler
         await state.update_data(
-            ai_response_text_for_memo=ai_analysis_text, # Store the actual AI analysis
+            ai_response_text_for_memo=ai_analysis_text, 
             ai_response_message_id=ai_response_message.message_id,
-            # current_action_address and current_action_blockchain are already in state
-            # current_scan_db_message_id should also be in state from earlier flow
         )
 
     except Exception as e:
-        logging.error(f"Error during AI Scam Check for {address}: {e}", exc_info=True) # pylint:disable=logging-fstring-interpolation
-        await callback_query.message.answer(f"Sorry, an error occurred while performing the AI Scam Check for {address}.")
+        logging.error(f"Error during AI Scam Check for {address}: {e}", exc_info=True)
+        await callback_query.message.answer(f"Sorry, an error occurred while performing the AI Scam Check for {html.quote(address)}.")
     finally:
         await tron_api_client.close_session()
 

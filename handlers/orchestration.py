@@ -5,6 +5,8 @@ Contains the logic to orchestrate the different steps of address processing.
 import logging
 from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
+from aiogram.exceptions import AiogramError
+from sqlalchemy.exc import SQLAlchemyError
 
 from database import SessionLocal, save_crypto_address
 
@@ -74,14 +76,13 @@ async def _orchestrate_next_processing_step(
                 await state.clear()
         
         else: # No pending clarifications and no addresses ready for memo prompt
-            logging.info("Orchestration complete: No pending clarifications or memo prompts.")
-            await message_to_reply_to.answer("All detected addresses processed.")
             await state.clear()
             
-    except Exception as e:
+    except (SQLAlchemyError, AiogramError, ValueError, TypeError, KeyError, AttributeError) as e:
         logging.exception(f"Error in _orchestrate_next_processing_step: {e}") # pylint: disable=logging-fstring-interpolation 
         await message_to_reply_to.answer("An error occurred during processing orchestration.") 
         await state.clear() # Clear state on error
     finally:
+        await state.clear() # Clear state on error or successful completion (if not cleared elsewhere)
         if db.is_active:
             db.close()

@@ -17,7 +17,7 @@ from .callback_handlers import (
     handle_ai_scam_check_tron_callback, # New handler import
     handle_ai_language_choice_callback, # New handler import
     handle_ai_response_memo_action_callback, # New handler for AI response memo actions
-    handle_show_token_transfers_callback, # ADDED
+    handle_show_token_transfers_evm_callback, # ADDED
     handle_ai_scam_check_evm_callback, # ADDED
 )
 from .states import AddressProcessingStates
@@ -39,6 +39,6 @@ __all__ = [
     "handle_ai_scam_check_tron_callback", # New handler export
     "handle_ai_language_choice_callback", # New handler export
     "handle_ai_response_memo_action_callback", # New handler export
-    "handle_show_token_transfers_callback", # ADDED
+    "handle_show_token_transfers_evm_callback", # ADDED
     "handle_ai_scam_check_evm_callback", # ADDED
 ]

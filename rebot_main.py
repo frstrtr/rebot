@@ -35,7 +35,7 @@ from handlers import (
     handle_ai_scam_check_tron_callback,  # New handler import
     handle_ai_language_choice_callback,  # New handler import for AI language choice
     handle_ai_response_memo_action_callback,  # New handler import for AI memo actions
-    handle_show_token_transfers_callback,  # ADDED
+    handle_show_token_transfers_evm_callback,  # ADDED
     handle_ai_scam_check_evm_callback,  # ADDED
 )
 from handlers.states import AddressProcessingStates  # Import the missing states
@@ -263,7 +263,7 @@ class Rebot:
 
         # ADDED NEW HANDLERS FOR EVM
         self.rebot_dp.callback_query.register(
-            handle_show_token_transfers_callback,
+            handle_show_token_transfers_evm_callback,
             F.data == "show_token_transfers", # MODIFIED from startswith
         )
 

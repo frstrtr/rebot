@@ -170,5 +170,6 @@ synapsifier/webapp_url.txt
 synapsifier/bot_token.txt
 config/admins.txt
 config/tronscan_api_token.txt
+config/etherscan_api_token.txt
 test.txt
 data/cache/stablecoin_blacklist.json

@@ -20,8 +20,6 @@ class Config:
     GREEN = '\033[92m'
     RESET_COLOR = '\033[0m'  # Standardized name for reset
 
-    # External API Configurations
-    TRONSCAN_API_BASE_URL = "https://apilist.tronscanapi.com/api/"
 
     @staticmethod
     def _load_admins(filename="admins.txt"):
@@ -63,7 +61,24 @@ class Config:
             logging.error(f"Error reading API token file '{filename}': {e}")  # pylint: disable=logging-fstring-interpolation
         return token
 
+
+    # External API Configurations
+    ETHERSCAN_API_KEY = _load_api_token("etherscan_api_token.txt")  # Optional, can be None if not set
+    ETHERSCAN_API_BASE_URL = "https://api.etherscan.io/api" # For Ethereum Mainnet
+    ETHERSCAN_CHAIN_ID = "1" # Chain ID for Ethereum Mainnet
+
+    ETHERSCAN_RATE_LIMIT_CALLS = 5  # Max calls
+    ETHERSCAN_RATE_LIMIT_PERIOD = 1.0  # Per X seconds
+    ETHERSCAN_REQUEST_RETRIES = 3 # Default number of retries on rate limit
+    ETHERSCAN_REQUEST_BACKOFF_FACTOR = 0.5 # Default backoff factor for retries
+
+    # Example for Sepolia Testnet:
+    # ETHERSCAN_API_BASE_URL_SEPOLIA = "https://api-sepolia.etherscan.io/api"
+    # ETHERSCAN_CHAIN_ID_SEPOLIA = "11155111"
+
     TRONSCAN_API_KEY = _load_api_token("tronscan_api_token.txt")
+    TRONSCAN_API_BASE_URL = "https://apilist.tronscan.org/api/"
+
 
     # Groups of chains where addresses can have the same format,
     # potentially leading to ambiguity if the network isn't specified.

@@ -31,11 +31,8 @@ async def handle_blockchain_clarification_callback(
 ):
     """Handles blockchain clarification button presses."""
     await callback_query.answer()
-    data = await state.get_data()
+    data = await state.get_data() # Data fetched here should contain current_scan_db_message_id
     item_being_clarified = data.get("current_item_for_blockchain_clarification")
-    addresses_for_memo_prompt_details = data.get(
-        "addresses_for_memo_prompt_details", []
-    )
 
     if not item_being_clarified:
         logging.warning(
@@ -60,19 +57,31 @@ async def handle_blockchain_clarification_callback(
                 address_str,
             )
 
-            # Update FSM: this address is now the one to be actioned upon.
-            # The structure for addresses_for_memo_prompt_details should be a list of dicts.
-            # We are setting it directly for the current clarified address.
             addresses_for_memo_prompt_details_fsm = [
                 {"address": address_str, "blockchain": chosen_blockchain}
             ]
-            await state.update_data(
-                addresses_for_memo_prompt_details=addresses_for_memo_prompt_details_fsm,
-                current_item_for_blockchain_clarification=None,  # Clear the item being clarified
-                pending_blockchain_clarification=data.get("pending_blockchain_clarification", []), # Preserve pending
-                current_action_address=address_str,  # <--- ADD THIS
-                current_action_blockchain=chosen_blockchain  # <--- ADD THIS
-            )
+            
+            # Prepare data for FSM update, ensuring essential keys from 'data' are preserved
+            fsm_update_payload = {
+                "addresses_for_memo_prompt_details": addresses_for_memo_prompt_details_fsm,
+                "current_item_for_blockchain_clarification": None,  # Clear the item being clarified
+                "pending_blockchain_clarification": data.get("pending_blockchain_clarification", []), # Preserve pending
+                "current_action_address": address_str,
+                "current_action_blockchain": chosen_blockchain
+            }
+            
+            # Explicitly preserve current_scan_db_message_id if it was in the original data
+            # This is a safeguard; aiogram's update_data should merge, but this makes it explicit.
+            if "current_scan_db_message_id" in data:
+                fsm_update_payload["current_scan_db_message_id"] = data.get("current_scan_db_message_id")
+            else:
+                # This case would indicate current_scan_db_message_id was already lost before this handler
+                logging.error(
+                    f"CRITICAL: current_scan_db_message_id missing from FSM data at 'chosen' blockchain clarification for {address_str}. Data: {data}"
+                )
+                # Fallback or error handling might be needed here if it's missing
+
+            await state.update_data(**fsm_update_payload)
             
             # Edit the clarification message to show the choice and then send the action prompt.
             await callback_query.message.edit_text(
@@ -98,11 +107,10 @@ async def handle_blockchain_clarification_callback(
                 parse_mode="HTML",
                 reply_markup=None,
             )
-            await state.update_data(current_item_for_blockchain_clarification=None)
-            # Orchestrate to process next if any, or finish.
-            # Need to pass the original message that triggered the scan for reply context if orchestrator needs it.
-            # This might require storing the original message_id or chat_id in FSM if not already.
-            # For now, assuming callback_query.message can be used as a reply target.
+            # Only clear current_item_for_blockchain_clarification.
+            # Other essential FSM data like current_scan_db_message_id and pending_blockchain_clarification
+            # should be preserved for the orchestrator.
+            await state.update_data(current_item_for_blockchain_clarification=None) 
             await _orchestrate_next_processing_step(callback_query.message, state)
         else:
             logging.warning("Unknown action in blockchain clarification: %s", action)

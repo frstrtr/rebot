@@ -131,7 +131,7 @@ async def _send_action_prompt(
     # Check if the acting user is an admin
     is_admin = acting_telegram_user_id in ADMINS
 
-    if blockchain.lower() == "tron" and is_admin: # Show these buttons only for TRON and if user is admin
+    if blockchain.lower() == "tron": # and is_admin: # XXX Show these buttons only for TRON and if user is admin
         update_report_button = InlineKeyboardButton(
             text="📊 Get TRC20 Report",
             callback_data=f"update_report_tronscan" # No address needed, get from FSM

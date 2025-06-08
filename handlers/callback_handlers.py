@@ -114,6 +114,7 @@ async def handle_blockchain_clarification_callback(
         if db.is_active:
             db.close() # Close the session
 
+
 async def handle_show_previous_memos_callback(callback_query: types.CallbackQuery, state: FSMContext):
     """Handles the 'Show Previous Memos' button click."""
     await callback_query.answer()
@@ -157,6 +158,7 @@ async def handle_show_previous_memos_callback(callback_query: types.CallbackQuer
     # The original action prompt message (if any) remains, allowing other actions.
     # No further orchestration is typically needed here as this is a display action.
 
+
 async def handle_proceed_to_memo_stage_callback(callback_query: types.CallbackQuery, state: FSMContext):
     """Handles the 'Add/Manage Memo' button click from the action prompt."""
     await callback_query.answer("Loading memo options...")
@@ -177,6 +179,7 @@ async def handle_proceed_to_memo_stage_callback(callback_query: types.CallbackQu
         logging.warning("Could not edit message reply_markup on proceed_to_memo_stage: %s", e) # pylint:disable=logging-fstring-interpolation
 
     await _orchestrate_next_processing_step(callback_query.message, state)
+
 
 async def handle_skip_address_action_stage_callback(callback_query: types.CallbackQuery, state: FSMContext):
     """Handles skipping the entire address processing at the action prompt stage."""
@@ -249,6 +252,7 @@ async def handle_show_public_memos_callback(callback_query: types.CallbackQuery,
             db_session.close()
     # No FSM state change needed here, user can still interact with the action prompt
 
+
 async def handle_show_private_memos_callback(callback_query: types.CallbackQuery, state: FSMContext):
     """Handles the 'Show My Private Memos' button click."""
     await callback_query.answer()
@@ -290,6 +294,7 @@ async def handle_show_private_memos_callback(callback_query: types.CallbackQuery
         if db_session.is_active:
             db_session.close()
     # No FSM state change needed here
+
 
 async def handle_request_memo_callback(callback_query: types.CallbackQuery, state: FSMContext):
     """Handles 'Add Public Memo' or 'Add Private Memo' button clicks.

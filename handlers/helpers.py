@@ -2,8 +2,8 @@
 and forwarding them to an audit channel."""
 
 import logging
-from aiogram import html
-from aiogram.types import Message
+from aiogram import html, Bot # Added Bot
+from aiogram.types import Message, User # Added User
 from aiogram.exceptions import TelegramAPIError
 from .common import TARGET_AUDIT_CHANNEL_ID, AMBIGUOUS_CHAIN_GROUPS
 
@@ -66,3 +66,25 @@ async def _forward_to_audit_channel(message: Message):
             user.id,
             e
         )
+
+def format_user_info_for_audit(user: User) -> str:
+    """Formats user information for audit logs."""
+    user_info_parts = ["<b>👤 User Details:</b>"]
+    user_info_parts.append(f"ID: <code>{user.id}</code>")
+    name_parts = [html.quote(n) for n in [user.first_name, user.last_name] if n]
+    if name_parts:
+        user_info_parts.append(f"Name: {' '.join(name_parts)}")
+    if user.username:
+        user_info_parts.append(f"Username: @{html.quote(user.username)}")
+    return "\n".join(user_info_parts)
+
+async def send_text_to_audit_channel(bot: Bot, text: str, parse_mode: str = "HTML"):
+    """Sends a text message to the configured audit channel."""
+    if TARGET_AUDIT_CHANNEL_ID:
+        try:
+            await bot.send_message(TARGET_AUDIT_CHANNEL_ID, text, parse_mode=parse_mode)
+            logging.info(f"Sent audit text to channel {TARGET_AUDIT_CHANNEL_ID}") # pylint: disable=logging-fstring-interpolation
+        except Exception as e:
+            logging.error(f"Failed to send text to audit channel {TARGET_AUDIT_CHANNEL_ID}: {e}") # pylint: disable=logging-fstring-interpolation
+    else:
+        logging.warning("TARGET_AUDIT_CHANNEL_ID not set. Audit message not sent.")

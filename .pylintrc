@@ -1,3 +1,8 @@
 [TYPECHECK]
 # List of members which are set dynamically and missed by pylint inference system, and so shouldn't trigger E1101 when accessed.
 generated-members=twisted.internet.reactor.seconds
+
+[MESSAGES CONTROL]
+# Add 'logging-fstring-interpolation' to the list of disabled messages
+disable=...,logging-fstring-interpolation
+# Make sure to include any other messages you already have disabled, separated by commas.

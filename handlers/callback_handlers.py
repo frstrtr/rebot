@@ -23,6 +23,7 @@ from .address_processing import (
 )
 from .common import EXPLORER_CONFIG, TARGET_AUDIT_CHANNEL_ID # Added TARGET_AUDIT_CHANNEL_ID
 from .states import AddressProcessingStates  # Ensure this is imported if not already
+from .helpers import format_user_info_for_audit, send_text_to_audit_channel # ADDED/MODIFIED
 
 
 async def handle_blockchain_clarification_callback(
@@ -881,6 +882,22 @@ async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery
 
         response_message_text = ""
         if ai_analysis_text:
+            # Audit log for AI report generation - SEND FULL AI REPORT HERE
+            if TARGET_AUDIT_CHANNEL_ID and callback_query.from_user:
+                user_info_audit_str = format_user_info_for_audit(callback_query.from_user)
+                audit_report_text = (
+                    f"📊 <b>AI Analysis Generated</b>\n"
+                    f"{user_info_audit_str}\n"
+                    f"<b>Address:</b> <code>{html.quote(address)}</code>\n"
+                    f"<b>Blockchain:</b> TRON\n"  # Assuming this handler is TRON specific for AI check
+                    f"<b>Language:</b> {html.quote(chosen_lang_name)}\n\n"
+                    f"<b>Full AI Analysis:</b>\n{html.quote(ai_analysis_text)}" # Use html.escape for safety
+                )
+                try:
+                    await send_text_to_audit_channel(callback_query.bot, audit_report_text)
+                except Exception as e_audit:
+                    logging.error(f"Failed to send AI report generation audit log: {e_audit}")
+
             report_title = f"<b>AI Scam Check Report for Address:</b> <code>{html.quote(address)}</code> ({chosen_lang_name})\n"
             report_title += f"<i>Analysis requested on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}</i>\n\n"
             response_message_text = report_title + "<b><u>AI Analysis:</u></b>\n" + html.quote(ai_analysis_text)
@@ -959,6 +976,21 @@ async def handle_ai_response_memo_action_callback(callback_query: types.Callback
                 reply_markup=None
             )
             logging.info(f"User skipped saving AI analysis as memo for {address_text} on {blockchain_text}")
+            # Audit log for skipping memo
+            if TARGET_AUDIT_CHANNEL_ID and callback_query.from_user:
+                user_info_audit_str = format_user_info_for_audit(callback_query.from_user)
+                audit_skip_text = (
+                    f"⏭️ <b>AI Analysis Memo Action</b>\n"
+                    f"{user_info_audit_str}\n"
+                    f"<b>Address:</b> <code>{html.quote(address_text)}</code>\n"
+                    f"<b>Blockchain:</b> {html.quote(blockchain_text.capitalize())}\n"
+                    f"<b>Status:</b> AI Analysis Not Saved (Skipped by User)"
+                )
+                try:
+                    await send_text_to_audit_channel(callback_query.bot, audit_skip_text)
+                except Exception as e_audit:
+                    logging.error(f"Failed to send AI memo skip audit log: {e_audit}")
+
         elif action in ["save_public", "save_private"]:
             if not ai_response_text:
                 await callback_query.message.answer("Error: AI analysis text not found to save as memo.")
@@ -1017,25 +1049,19 @@ async def handle_ai_response_memo_action_callback(callback_query: types.Callback
 
                 # Audit Log
                 if callback_query.from_user and TARGET_AUDIT_CHANNEL_ID:
-                    user = callback_query.from_user
-                    user_info_parts = [f"ID: <code>{user.id}</code>"]
-                    name_parts = [html.quote(n) for n in [user.first_name, user.last_name] if n]
-                    if name_parts: user_info_parts.append(f"Name: {' '.join(name_parts)}")
-                    if user.username: user_info_parts.append(f"Username: @{html.quote(user.username)}")
-                    user_info_audit_str = "\n".join(["<b>👤 User Details:</b>"] + user_info_parts)
+                    user_info_audit_str = format_user_info_for_audit(callback_query.from_user) # Use helper
                     
-                    audit_message_text = f"""<b>📝 AI Analysis Saved as Memo</b>
+                    audit_message_text = f"""<b>📝 AI Analysis Memo Action</b>
 {user_info_audit_str}
 <b>Address:</b> <code>{html.quote(address_text)}</code>
 <b>Blockchain:</b> {html.quote(blockchain_text.capitalize())}
-<b>Memo Type:</b> {memo_type.value.capitalize()}
-<b>Memo (AI Analysis):</b> {html.quote(ai_response_text[:1000])}{'...' if len(ai_response_text) > 1000 else ''}"""
+<b>Status:</b> Saved as {memo_type.value.capitalize()} Memo""" # Removed AI report snippet
                     try:
-                        await callback_query.bot.send_message(TARGET_AUDIT_CHANNEL_ID, audit_message_text, parse_mode="HTML")
+                        await send_text_to_audit_channel(callback_query.bot, audit_message_text) # Use helper
                     except Exception as e_audit:
-                        logging.error(f"Failed to send AI memo audit log: {e_audit}")
+                        logging.error(f"Failed to send AI memo save audit log: {e_audit}") # pylint: disable=logging-fstring-interpolation
             else:
-                logging.error(f"Failed to update memo with AI analysis for address ID {crypto_address_entry.id}")
+                logging.error(f"Failed to update memo with AI analysis for address ID {crypto_address_entry.id}") # pylint: disable=logging-fstring-interpolation
                 await callback_query.message.answer("Error: Could not save the AI analysis as memo.")
         
         # Clear related FSM data
@@ -1045,10 +1071,10 @@ async def handle_ai_response_memo_action_callback(callback_query: types.Callback
         )
 
     except TelegramAPIError as e:
-        logging.error(f"Telegram API error in handle_ai_response_memo_action_callback: {e}")
+        logging.error(f"Telegram API error in handle_ai_response_memo_action_callback: {e}") # pylint: disable=logging-fstring-interpolation
         await callback_query.message.answer("An error occurred while processing your request. Buttons might still be visible.")
     except Exception as e:
-        logging.exception(f"Error in handle_ai_response_memo_action_callback: {e}")
+        logging.exception(f"Error in handle_ai_response_memo_action_callback: {e}") # pylint: disable=logging-fstring-interpolation
         await callback_query.message.answer("An unexpected error occurred.")
     finally:
         if db.is_active:

@@ -35,6 +35,7 @@ class EtherscanAPI:
                  api_key: Optional[str] = None, 
                  session: Optional[aiohttp.ClientSession] = None, 
                  chain_id: Optional[str] = None,
+                 base_url: Optional[str] = None, # Added base_url parameter
                  rate_limit_calls: Optional[int] = None,
                  rate_limit_period: Optional[float] = None,
                  default_retries: Optional[int] = None,
@@ -46,6 +47,7 @@ class EtherscanAPI:
             api_key: The Etherscan API key. Defaults to Config.ETHERSCAN_API_KEY.
             session: An optional aiohttp.ClientSession to use for requests.
             chain_id: The chain ID for the network. Defaults to Config.ETHERSCAN_CHAIN_ID.
+            base_url: The base URL for the Etherscan API. Defaults to Config.ETHERSCAN_API_BASE_URL or "https://api.etherscan.io/v2/api".
             rate_limit_calls: Max calls per rate_limit_period. Defaults to Config.ETHERSCAN_RATE_LIMIT_CALLS.
             rate_limit_period: The period in seconds for rate limiting. Defaults to Config.ETHERSCAN_RATE_LIMIT_PERIOD.
             default_retries: Default number of retries for rate-limited requests. Defaults to Config.ETHERSCAN_REQUEST_RETRIES.
@@ -53,7 +55,7 @@ class EtherscanAPI:
         """
         self.api_key = api_key if api_key is not None else getattr(Config, "ETHERSCAN_API_KEY", None)
         self._session = session
-        self.base_url = getattr(Config, "ETHERSCAN_API_BASE_URL", "https://api.etherscan.io/api")
+        self.base_url = base_url if base_url is not None else getattr(Config, "ETHERSCAN_API_BASE_URL", "https://api.etherscan.io/v2/api")
         self.chain_id = chain_id if chain_id is not None else getattr(Config, "ETHERSCAN_CHAIN_ID", None)
 
         self.rate_limit_calls = rate_limit_calls if rate_limit_calls is not None else getattr(Config, "ETHERSCAN_RATE_LIMIT_CALLS", 5)
@@ -390,28 +392,53 @@ class EtherscanAPI:
 
 
     # --- Stats Endpoints ---
-    async def get_total_eth_supply(self) -> Optional[str]:
+    async def get_native_currency_supply(self) -> Optional[str]: # Renamed from get_total_eth_supply
         """
-        Get Total Supply of Ether.
-        Module: stats, Action: ethsupply
+        Get Total Supply of the native currency (Ether for Ethereum, BNB for BSC).
+        Module: stats
         Result is in Wei.
         """
+        action = "ethsupply" # Default for Ethereum
+        if self.chain_id == getattr(Config, "BSC_CHAIN_ID", "56"): # Check if BSC
+            action = "bnbsupply"
+        # Add other chains here if needed, e.g.:
+        # elif self.chain_id == getattr(Config, "POLYGON_CHAIN_ID", "137"):
+        #     action = "maticcoinsupply" # Hypothetical, check actual Etherscan-family API for Polygon
+
         params = {
             "module": "stats",
-            "action": "ethsupply",
+            "action": action,
         }
         return await self._request(params)
 
-    async def get_eth_last_price(self) -> Optional[Dict[str, str]]:
+    async def get_native_currency_last_price(self) -> Optional[Dict[str, str]]: # Renamed from get_eth_last_price
         """
-        Get ETHER Last Price (ETH vs BTC and ETH vs USD).
-        Module: stats, Action: ethprice
+        Get Last Price of the native currency (e.g., ETH vs BTC/USD, BNB vs BTC/USD).
+        Module: stats
         """
+        action = "ethprice" # Default for Ethereum
+        price_keys = {'btc': 'ethbtc', 'usd': 'ethusd', 'btc_timestamp': 'ethbtc_timestamp', 'usd_timestamp': 'ethusd_timestamp'}
+        if self.chain_id == getattr(Config, "BSC_CHAIN_ID", "56"): # Check if BSC
+            action = "bnbprice"
+            price_keys = {'btc': 'bnbbtc', 'usd': 'bnbusd', 'btc_timestamp': 'bnbbtc_timestamp', 'usd_timestamp': 'bnbusd_timestamp'}
+        # Add other chains here if needed
+
         params = {
             "module": "stats",
-            "action": "ethprice",
+            "action": action,
         }
-        return await self._request(params)
+        # The result parsing might need to be more dynamic if keys change significantly per chain
+        # For now, assuming Etherscan-family APIs return similar structures for price with different prefixes
+        response = await self._request(params)
+        if response: # Ensure response is not None
+             # Etherscan API for ethprice returns keys like 'ethbtc', 'ethusd'
+             # BscScan API for bnbprice returns keys like 'bnbbtc', 'bnbusd'
+             # The self._request method returns the 'result' part of the JSON.
+             # The actual keys in the 'result' object are what we need.
+             # For simplicity, we'll return the raw dictionary.
+             # The caller (test_bsc_client.py) will need to know what keys to expect.
+            return response
+        return None
 
     # --- Geth/Parity Proxy Endpoints (Example) ---
     async def eth_get_block_by_number(self, block_number: int, is_full: bool = True) -> Optional[Dict[str, Any]]:

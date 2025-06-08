@@ -122,7 +122,7 @@ async def main_test():
 
     print(f"\n\033[93m--- Testing get_total_eth_supply ---\033[0m")
     try:
-        supply_wei = await api_client.get_total_eth_supply()
+        supply_wei = await api_client.get_native_currency_supply() # Changed to new method name
         if supply_wei:
             supply_eth = Decimal(supply_wei) / Decimal("1e18")
             print(f"Total ETH Supply: {supply_eth:,.2f} ETH ({supply_wei} Wei)")
@@ -137,7 +137,7 @@ async def main_test():
 
     print("\n\033[93m--- Testing get_eth_last_price ---\033[0m")
     try:
-        price_info = await api_client.get_eth_last_price()
+        price_info = await api_client.get_native_currency_last_price() # Changed to new method name
         if price_info:
             print(f"ETH Last Price: ETH/BTC = {price_info.get('ethbtc')}, ETH/USD = {price_info.get('ethusd')}")
             print(f"  Timestamp: ETH/BTC = {price_info.get('ethbtc_timestamp')}, ETH/USD = {price_info.get('ethusd_timestamp')}")

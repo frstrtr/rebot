@@ -64,8 +64,10 @@ class Config:
 
     # External API Configurations
     ETHERSCAN_API_KEY = _load_api_token("etherscan_api_token.txt")  # Optional, can be None if not set
-    ETHERSCAN_API_BASE_URL = "https://api.etherscan.io/api" # For Ethereum Mainnet
-    ETHERSCAN_CHAIN_ID = "1" # Chain ID for Ethereum Mainnet
+    # If targeting Etherscan API v2 specifically, it might be:
+    ETHERSCAN_API_BASE_URL = "https://api.etherscan.io/v2/api" 
+    ETHERSCAN_CHAIN_ID = "1" # Chain ID for Ethereum Mainnet (default for EtherscanAPI client)
+    BSC_CHAIN_ID = "56" # Chain ID for Binance Smart Chain
 
     ETHERSCAN_RATE_LIMIT_CALLS = 5  # Max calls
     ETHERSCAN_RATE_LIMIT_PERIOD = 1.0  # Per X seconds

@@ -26,15 +26,16 @@ async def _send_action_prompt(
     """Sends a message with action buttons for an identified address."""
     
     # Ensure the FSM state has the current address and blockchain for the action prompt's context
-    await state.update_data(
-        current_action_address=address,
-        current_action_blockchain=blockchain,
-        # Preserve other relevant state data if necessary, for example:
-        # addresses_for_memo_prompt_details=data.get("addresses_for_memo_prompt_details", []), 
-        # current_scan_db_message_id=data.get("current_scan_db_message_id")
-        # Be careful not to overwrite essential data if this function is called in various contexts.
-        # For now, focusing on setting the action address/blockchain.
-    )
+    # Also preserve current_scan_db_message_id if it exists in the current state data
+    current_state_data = await state.get_data()
+    update_payload = {
+        "current_action_address": address,
+        "current_action_blockchain": blockchain,
+    }
+    if "current_scan_db_message_id" in current_state_data:
+        update_payload["current_scan_db_message_id"] = current_state_data.get("current_scan_db_message_id")
+    
+    await state.update_data(**update_payload)
     
     prompt_text = (
         f"Address <code>{html.quote(address)}</code> identified for <b>{html.quote(blockchain.capitalize())}</b>.\n"
@@ -127,6 +128,8 @@ async def _send_action_prompt(
 
     update_report_button = None
     ai_scam_check_button = None 
+    token_transfers_button = None # New button
+    ai_scam_check_evm_button = None # New button
     
     # Check if the acting user is an admin
     is_admin = acting_telegram_user_id in ADMINS
@@ -140,10 +143,20 @@ async def _send_action_prompt(
             text="🤖 AI Scam Check (TRC20)",
             callback_data="ai_scam_check_tron" # Callback data for the new handler
         )
+    elif blockchain.lower() in ["ethereum", "bsc"]: # Conditional buttons for other EVM chains
+        token_transfers_button = InlineKeyboardButton(
+            text="📜 Token Transfers EVM", 
+            callback_data="show_token_transfers"  # MODIFIED
+        )
+        ai_scam_check_evm_button = InlineKeyboardButton(
+            text="🤖 AI Scam Check EVM",
+            callback_data="ai_scam_check_evm"  # MODIFIED
+        )
+
 
     skip_address_button = InlineKeyboardButton(
         text="⏭️ Skip Address",
-        callback_data="skip_address_action_stage" # Callback data for your handler
+        callback_data="skip_address_action_stage" # MODIFIED
     )
 
     keyboard_layout = [
@@ -168,14 +181,23 @@ async def _send_action_prompt(
         fourth_row_tron.append(skip_address_button)
         keyboard_layout.append(fourth_row_tron)
     else:
-        # Generic layout for other blockchains
-        third_row_generic = []
-        if explorer_button:
-            third_row_generic.append(explorer_button)
-        third_row_generic.append(skip_address_button) # Always add skip button
+        # Generic layout for other blockchains (including Ethereum, BSC)
+        third_row_other_evm = []
+        if token_transfers_button:
+            third_row_other_evm.append(token_transfers_button)
+        if ai_scam_check_evm_button:
+            third_row_other_evm.append(ai_scam_check_evm_button)
         
-        if third_row_generic: # Should always be true as skip is always there
-            keyboard_layout.append(third_row_generic)
+        if third_row_other_evm:
+            keyboard_layout.append(third_row_other_evm)
+
+        fourth_row_generic = []
+        if explorer_button:
+            fourth_row_generic.append(explorer_button)
+        fourth_row_generic.append(skip_address_button) # Always add skip button
+        
+        if fourth_row_generic: # Should always be true as skip is always there
+            keyboard_layout.append(fourth_row_generic)
 
 
     reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard_layout)

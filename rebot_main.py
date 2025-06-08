@@ -32,11 +32,13 @@ from handlers import (
     # handle_proceed_to_memo_stage_callback, # Updated
     handle_skip_address_action_stage_callback,
     handle_update_report_tronscan_callback,
-    handle_ai_scam_check_tron_callback, # New handler import
-    handle_ai_language_choice_callback, # New handler import for AI language choice
-    handle_ai_response_memo_action_callback, # New handler import for AI memo actions
+    handle_ai_scam_check_tron_callback,  # New handler import
+    handle_ai_language_choice_callback,  # New handler import for AI language choice
+    handle_ai_response_memo_action_callback,  # New handler import for AI memo actions
+    handle_show_token_transfers_callback,  # ADDED
+    handle_ai_scam_check_evm_callback,  # ADDED
 )
-from handlers.states import AddressProcessingStates # Import the missing states
+from handlers.states import AddressProcessingStates  # Import the missing states
 
 
 # 1. Define Context Variable for user_id
@@ -62,8 +64,11 @@ class AdminColorLogFormatter(logging.Formatter):
     Admins (from Config.ADMINS) will have their UserID colored purple.
     Other UserIDs will be colored yellow.
     """
+
     def format(self, record):
-        user_id_str = getattr(record, 'user_id', 'N/A') # user_id is added by UserIdContextFilter
+        user_id_str = getattr(
+            record, "user_id", "N/A"
+        )  # user_id is added by UserIdContextFilter
         is_admin = False
 
         # Config.ADMINS stores admin IDs as integers
@@ -71,21 +76,23 @@ class AdminColorLogFormatter(logging.Formatter):
         if user_id_str.isdigit():
             try:
                 user_id_int = int(user_id_str)
-                if hasattr(Config, 'ADMINS') and isinstance(Config.ADMINS, (list, set, tuple)):
+                if hasattr(Config, "ADMINS") and isinstance(
+                    Config.ADMINS, (list, set, tuple)
+                ):
                     if user_id_int in Config.ADMINS:
                         is_admin = True
             except ValueError:
                 # This case should ideally not be reached if user_id_str.isdigit() is true
-                pass # Not an admin if conversion fails
+                pass  # Not an admin if conversion fails
 
         # Determine color based on admin status
         # Ensure Config.PURPLE and Config.YELLOW are defined
         color_code = Config.PURPLE if is_admin else Config.YELLOW
-        reset_color_code = Config.RESET_COLOR # Ensure Config.RESET_COLOR is defined
-        
+        reset_color_code = Config.RESET_COLOR  # Ensure Config.RESET_COLOR is defined
+
         # Create a new field on the record for the colored user_id string
         record.colored_user_id = f"{color_code}{user_id_str}{reset_color_code}"
-        
+
         # Call the parent class's format method to complete the formatting.
         # This will use the format string provided during initialization of the formatter,
         # substituting %(colored_user_id)s with the value we just set.
@@ -235,7 +242,7 @@ class Rebot:
 
         self.rebot_dp.callback_query.register(
             handle_skip_address_action_stage_callback,
-            F.data == "skip_address_action_stage",
+            F.data == "skip_address_action_stage", # MODIFIED from startswith
         )
 
         self.rebot_dp.callback_query.register(
@@ -244,14 +251,25 @@ class Rebot:
         )
 
         self.rebot_dp.callback_query.register(
-            handle_ai_language_choice_callback, # New handler for AI language choice
-            AddressProcessingStates.awaiting_ai_language_choice, # Filter by state
+            handle_ai_language_choice_callback,  # New handler for AI language choice
+            AddressProcessingStates.awaiting_ai_language_choice,  # Filter by state
             F.data.startswith("ai_lang:"),
         )
-        
+
         self.rebot_dp.callback_query.register(
-            handle_ai_response_memo_action_callback, # Handler for AI response memo buttons
+            handle_ai_response_memo_action_callback,  # Handler for AI response memo buttons
             F.data.startswith("ai_memo_action:"),
+        )
+
+        # ADDED NEW HANDLERS FOR EVM
+        self.rebot_dp.callback_query.register(
+            handle_show_token_transfers_callback,
+            F.data == "show_token_transfers", # MODIFIED from startswith
+        )
+
+        self.rebot_dp.callback_query.register(
+            handle_ai_scam_check_evm_callback,
+            F.data == "ai_scam_check_evm", # MODIFIED from startswith
         )
 
         # Register other handlers if any
@@ -276,7 +294,7 @@ if __name__ == "__main__":
 
     # New format string for the console that uses the 'colored_user_id' field
     console_format_string = "%(asctime)s - %(levelname)s - %(name)s - UserID: %(colored_user_id)s - %(message)s"
-    
+
     # Instantiate AdminColorLogFormatter for console
     console_log_formatter = AdminColorLogFormatter(console_format_string)
 

@@ -112,7 +112,90 @@ async def handle_blockchain_clarification_callback(
             await callback_query.message.answer("Invalid action. Please try again.")
     finally:
         if db.is_active:
-            db.close() # Close the session
+            db.close() # Ensure db session is closed
+
+
+async def handle_show_token_transfers_callback(callback_query: types.CallbackQuery, state: FSMContext):
+    """Handles the 'Token Transfers' button click for EVM chains."""
+    await callback_query.answer("Fetching token transfers...")
+    try:
+        data = await state.get_data()
+        address = data.get("current_action_address")
+        blockchain = data.get("current_action_blockchain")
+
+        if not address or not blockchain:
+            logging.error("Could not get address/blockchain from state for token transfers.")
+            await callback_query.message.answer("Error: Missing context for token transfers. Please try again.")
+            return
+
+        logging.info(f"User {callback_query.from_user.id} requested token transfers for {address} on {blockchain}.")
+        # Placeholder: Implement actual logic to fetch and display token transfers
+        await callback_query.message.answer(
+            f"Token transfer display for <code>{html.quote(address)}</code> on {html.quote(blockchain.capitalize())} is not yet implemented.",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        logging.error(f"Error in handle_show_token_transfers_callback: {e}", exc_info=True)
+        await callback_query.message.answer("An error occurred while trying to show token transfers.")
+
+
+async def handle_ai_scam_check_evm_callback(callback_query: types.CallbackQuery, state: FSMContext):
+    """Handles the 'AI Scam Check (EVM)' button click."""
+    await callback_query.answer("Initiating EVM AI Scam Check...")
+    try:
+        data = await state.get_data()
+        address = data.get("current_action_address")
+        blockchain = data.get("current_action_blockchain")
+
+        if not address or not blockchain:
+            logging.error("Could not get address/blockchain from state for EVM AI scam check.")
+            await callback_query.message.answer("Error: Missing context for EVM AI scam check. Please try again.")
+            return
+        
+        logging.info(f"User {callback_query.from_user.id} requested EVM AI Scam Check for {address} on {blockchain}.")
+        
+        # FSM data current_action_address and current_action_blockchain are already set by _send_action_prompt
+        # We might want to preserve current_scan_db_message_id if it's part of 'data'
+        update_payload = {}
+        if "current_scan_db_message_id" in data:
+            update_payload["current_scan_db_message_id"] = data.get("current_scan_db_message_id")
+
+        enriched_data_for_ai = (
+            f"Comprehensive AI Scam Analysis Request for EVM Address: {html.quote(address)} "
+            f"on {html.quote(blockchain.capitalize())}\n"
+            f"Report requested on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
+            "[EVM-specific data would be gathered and formatted here... e.g., transaction history, contract source if available, token holder counts, etc.]\n"
+            "This is a placeholder for EVM data."
+        )
+        update_payload["ai_enriched_data"] = enriched_data_for_ai
+        # current_action_address and current_action_blockchain are already in state from _send_action_prompt
+        # No need to update them again unless they were cleared, which they shouldn't be.
+        await state.update_data(**update_payload)
+
+        language_buttons = [
+            [
+                InlineKeyboardButton(text="🇬🇧 English", callback_data="ai_lang:en"),
+                InlineKeyboardButton(text="🇷🇺 Русский", callback_data="ai_lang:ru"),
+            ]
+        ]
+        reply_markup_lang = InlineKeyboardMarkup(inline_keyboard=language_buttons)
+        
+        await callback_query.message.answer( 
+            text=(
+                f"Data gathering for EVM AI Scam Check on <code>{html.quote(address)}</code> is simulated.\n"
+                "📊 Please choose the report language:"
+            ),
+            parse_mode="HTML",
+            reply_markup=reply_markup_lang
+        )
+        await state.set_state(AddressProcessingStates.awaiting_ai_language_choice)
+
+    except ValueError:
+        logging.error(f"Invalid callback data for ai_scam_check_evm: {callback_query.data}")
+        await callback_query.message.answer("Error: Could not process AI scam check request due to invalid data.")
+    except Exception as e:
+        logging.error(f"Error in handle_ai_scam_check_evm_callback: {e}", exc_info=True)
+        await callback_query.message.answer("An error occurred while initiating the EVM AI scam check.")
 
 
 async def handle_show_previous_memos_callback(callback_query: types.CallbackQuery, state: FSMContext):
@@ -185,34 +268,44 @@ async def handle_skip_address_action_stage_callback(callback_query: types.Callba
     """Handles skipping the entire address processing at the action prompt stage."""
     await callback_query.answer()
     
-    try:
-        _prefix, address_skipped, blockchain_skipped = callback_query.data.split(":", 2)
-    except ValueError:
-        address_skipped = "the address" 
-        blockchain_skipped = "N/A"
-        logging.warning("Invalid callback data for skip_address_action_stage: %s", callback_query.data)
+    data = await state.get_data()
+    address_skipped = data.get("current_action_address")
+    blockchain_skipped = data.get("current_action_blockchain")
 
-    logging.info(f"User chose to skip further processing for address: {address_skipped} on {blockchain_skipped}") # pylint:disable=logging-fstring-interpolation
-    
-    # Clear this address from being prompted for a memo.
-    await state.update_data(addresses_for_memo_prompt_details=[]) 
+    if not address_skipped or not blockchain_skipped:
+        logging.warning(
+            f"User {callback_query.from_user.id} - SkipAction: Missing address/blockchain from FSM state. Callback data: {callback_query.data}. State data: {data}"
+        )
+        try:
+            await callback_query.message.edit_text(
+                "Could not determine which address to skip due to missing context. Continuing...",
+                reply_markup=None
+            )
+        except TelegramAPIError as e_edit:
+            logging.error(f"Failed to edit message on skip_address_action_stage context error: {e_edit}")
+        
+        await _orchestrate_next_processing_step(callback_query.message, state)
+        return
+
+    logging.info(f"User {callback_query.from_user.id} chose to skip further processing for address: {address_skipped} on {blockchain_skipped}")
     
     try:
         await callback_query.message.edit_text(
-            text=f"Skipped further actions for address: <code>{html.quote(address_skipped)}</code>.",
+            f"⏭️ Skipped further actions for address: <code>{html.quote(address_skipped)}</code> on {html.quote(blockchain_skipped.capitalize())}.",
             parse_mode="HTML",
-            reply_markup=None 
+            reply_markup=None,
         )
     except TelegramAPIError as e:
-        logging.warning("Could not edit message on skip_address_action_stage: %s", e)
-        # Fallback if edit fails
-        await callback_query.message.answer(
-             f"Skipped further actions for address: <code>{html.quote(address_skipped)}</code>.",
+        logging.warning(f"Failed to edit message on skip action: {e}")
+        await callback_query.message.answer( 
+            f"⏭️ Skipped further actions for address: <code>{html.quote(address_skipped)}</code> on {html.quote(blockchain_skipped.capitalize())}.",
             parse_mode="HTML"
         )
-
-    # Call orchestrator to see if other items (e.g., other pending clarifications) exist
-    # or if the initial scan had more addresses (though current logic focuses on one at a time post-scan).
+    
+    # Clear the addresses_for_memo_prompt_details from FSM state
+    # as we are skipping memo/action for this address.
+    await state.update_data(addresses_for_memo_prompt_details=[])
+    
     await _orchestrate_next_processing_step(callback_query.message, state)
 
 

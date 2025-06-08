@@ -83,6 +83,6 @@ async def _orchestrate_next_processing_step(
         await message_to_reply_to.answer("An error occurred during processing orchestration.") 
         await state.clear() # Clear state on error
     finally:
-        await state.clear() # Clear state on error or successful completion (if not cleared elsewhere)
+        # await state.clear() # Clear state on error or successful completion (if not cleared elsewhere)
         if db.is_active:
             db.close()

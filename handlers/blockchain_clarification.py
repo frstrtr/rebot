@@ -77,6 +77,14 @@ async def _ask_for_blockchain_clarification(
         prompt_text = prompt_text_base + "I couldn't auto-detect specific blockchain networks. If you know it, you might need to resend the address with more context. For now, you can skip."
 
     await message_to_reply_to.answer(prompt_text, reply_markup=keyboard, parse_mode="HTML")
+    # Store the item being clarified in the FSM state
+    if item_to_clarify: # Add a check to ensure item_to_clarify is not None
+        await state.update_data(current_item_for_blockchain_clarification=item_to_clarify.copy()) # Store a copy
+        logging.info(f"Stored for clarification (user {message_to_reply_to.from_user.id if message_to_reply_to.from_user else 'UnknownUser'}): {item_to_clarify}")
+    else:
+        logging.warning(f"item_to_clarify is None or empty, not storing in FSM for user {message_to_reply_to.from_user.id if message_to_reply_to.from_user else 'UnknownUser'}.")
+        # Handle cases where item_to_clarify might be None, perhaps by not proceeding or logging an error.
+        # For now, just logging and not setting if None.
     await state.set_state(AddressProcessingStates.awaiting_blockchain)
 
 

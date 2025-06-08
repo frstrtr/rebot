@@ -47,7 +47,7 @@ class CryptoAddressFinder:
                 r"|[bB][cC]1[qpzry9x8gf2tvdw0s3jn54khce6mua7lQPZRY9X8GF2TVDW0S3JN54KHCE6MUA7L]{11,87}"  # Bech32/Bech32m, 14-90 chars total
                 r")\b"
             ),
-            "ethereum": r"\b0x[a-fA-F0-9]{40}\b",  # Ethereum-compatible (Ethereum, BSC, Polygon, Avalanche, BASE)
+            "ethereum": r"\b(?:0x)?[a-fA-F0-9]{40}\b",  # Ethereum-compatible (Ethereum, BSC, Polygon, Avalanche, BASE), 0x is optional
             "solana": r"\b[A-HJ-NP-Za-km-z1-9]{32,44}\b",
             "tron": r"\bT[1-9A-HJ-NP-Za-km-z]{33}\b",  # MODIFIED: Stricter Base58 character set
             "ripple": r"\br[a-zA-Z0-9]{24,34}\b",
@@ -89,14 +89,31 @@ class CryptoAddressFinder:
                 except ValueError:
                     return False
         elif blockchain_name == "ethereum":
-            if address_to_validate.startswith("0x") and len(address_to_validate) == 42:
-                addr = address_to_validate[2:]
+            address_to_check = address_to_validate
+            # If '0x' is missing, the regex ensures address_to_validate consists of 40 hex characters.
+            if not address_to_validate.startswith("0x"):
+                try:
+                    # Ensure it's a valid hex string (though regex also implies this)
+                    int(address_to_validate, 16) 
+                    address_to_check = "0x" + address_to_validate
+                except ValueError:
+                    return False # Not a valid hex string
+
+            if address_to_check.startswith("0x") and len(address_to_check) == 42:
+                addr = address_to_check[2:]
+                # Check if all characters are hexadecimal
+                if not all(c in "0123456789abcdefABCDEF" for c in addr):
+                    return False
+                
+                # If the address is all lowercase or all uppercase, it's considered valid without checksum.
                 if addr.islower() or addr.isupper():
                     return True
+                
                 # Use Keccak-256 for EIP-55 checksum
                 k = keccak.new(digest_bits=256)
-                k.update(addr.lower().encode())
+                k.update(addr.lower().encode('utf-8')) # Ensure encoding for keccak
                 keccak_hash = k.hexdigest()
+                
                 checksum_address = "0x"
                 for i, c in enumerate(addr):
                     if c.isalpha():
@@ -105,7 +122,7 @@ class CryptoAddressFinder:
                         )
                     else:
                         checksum_address += c
-                return checksum_address == address_to_validate
+                return checksum_address == address_to_check
             return False
         elif blockchain_name == "solana":
             try:

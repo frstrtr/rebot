@@ -61,44 +61,39 @@ async def handle_blockchain_clarification_callback(
                 {"address": address_str, "blockchain": chosen_blockchain}
             ]
             
-            # Prepare data for FSM update, ensuring essential keys from 'data' are preserved
             fsm_update_payload = {
                 "addresses_for_memo_prompt_details": addresses_for_memo_prompt_details_fsm,
-                "current_item_for_blockchain_clarification": None,  # Clear the item being clarified
-                "pending_blockchain_clarification": data.get("pending_blockchain_clarification", []), # Preserve pending
+                "current_item_for_blockchain_clarification": None,
+                "pending_blockchain_clarification": data.get("pending_blockchain_clarification", []),
                 "current_action_address": address_str,
                 "current_action_blockchain": chosen_blockchain
             }
             
-            # Explicitly preserve current_scan_db_message_id if it was in the original data
-            # This is a safeguard; aiogram's update_data should merge, but this makes it explicit.
             if "current_scan_db_message_id" in data:
                 fsm_update_payload["current_scan_db_message_id"] = data.get("current_scan_db_message_id")
             else:
-                # This case would indicate current_scan_db_message_id was already lost before this handler
                 logging.error(
                     f"CRITICAL: current_scan_db_message_id missing from FSM data at 'chosen' blockchain clarification for {address_str}. Data: {data}"
                 )
-                # Fallback or error handling might be needed here if it's missing
 
             await state.update_data(**fsm_update_payload)
             
-            # Edit the clarification message to show the choice and then send the action prompt.
             await callback_query.message.edit_text(
                 f"✅ Blockchain for <code>{html.quote(address_str)}</code> set to <b>{html.quote(chosen_blockchain.capitalize())}</b>.",
                 parse_mode="HTML",
-                reply_markup=None, # Remove inline keyboard from clarification message
+                reply_markup=None,
             )
-            # Send the action prompt for this address
             await _send_action_prompt(
                 target_message=callback_query.message,
                 address=address_str,
                 blockchain=chosen_blockchain,
                 state=state,
                 db=db,
-                acting_telegram_user_id=callback_query.from_user.id # Pass acting user's telegram_id
+                acting_telegram_user_id=callback_query.from_user.id
             )
-            # No need to call orchestrator here, user will interact with the new action prompt.
+            # After sending the action prompt, the bot is no longer awaiting blockchain clarification for this item.
+            # Clear the specific state name. FSM data is preserved.
+            await state.set_state(None) # ADDED LINE
 
         elif action == "skip":
             logging.info("User skipped blockchain clarification for address %s", address_str)

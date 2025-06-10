@@ -37,6 +37,9 @@ from handlers import (
     handle_ai_response_memo_action_callback,  # New handler import for AI memo actions
     handle_show_token_transfers_evm_callback,  # ADDED
     handle_ai_scam_check_evm_callback,  # ADDED
+    handle_admin_cancel_delete_memo_callback,  # ADDED for admin memo deletion cancellation
+    handle_admin_request_delete_memo_callback,  # ADDED for admin memo deletion request
+    handle_admin_confirm_delete_memo_callback,  # ADDED for admin memo deletion confirmatio
 )
 from handlers.states import AddressProcessingStates  # Import the missing states
 
@@ -242,7 +245,7 @@ class Rebot:
 
         self.rebot_dp.callback_query.register(
             handle_skip_address_action_stage_callback,
-            F.data == "skip_address_action_stage", # MODIFIED from startswith
+            F.data == "skip_address_action_stage",  # MODIFIED from startswith
         )
 
         self.rebot_dp.callback_query.register(
@@ -264,12 +267,27 @@ class Rebot:
         # ADDED NEW HANDLERS FOR EVM
         self.rebot_dp.callback_query.register(
             handle_show_token_transfers_evm_callback,
-            F.data == "show_token_transfers", # MODIFIED from startswith
+            F.data == "show_token_transfers",  # MODIFIED from startswith
         )
 
         self.rebot_dp.callback_query.register(
             handle_ai_scam_check_evm_callback,
-            F.data == "ai_scam_check_evm", # MODIFIED from startswith
+            F.data == "ai_scam_check_evm",  # MODIFIED from startswith
+        )
+
+        self.rebot_dp.callback_query.register(
+            handle_admin_request_delete_memo_callback,
+            F.data.startswith("admin_request_delete_memo:"),
+        )
+
+        self.rebot_dp.callback_query.register(
+            handle_admin_confirm_delete_memo_callback,
+            F.data.startswith("admin_confirm_delete_memo:"),
+        )
+        
+        self.rebot_dp.callback_query.register(
+            handle_admin_cancel_delete_memo_callback,
+            F.data.startswith("admin_cancel_delete_memo:"),
         )
 
         # Register other handlers if any

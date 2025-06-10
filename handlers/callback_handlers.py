@@ -172,8 +172,12 @@ async def handle_show_public_memos_callback(callback_query: types.CallbackQuery,
     db_session = SessionLocal()
     try:
         await _display_memos_for_address_blockchain(
-            message_target=callback_query.message, address=address, blockchain=blockchain,
-            db=db_session, memo_scope="public"
+            message_target=callback_query.message, 
+            address=address, 
+            blockchain=blockchain,
+            db=db_session, 
+            memo_scope="public",
+            requesting_telegram_user_id=callback_query.from_user.id # Added this line
         )
     finally:
         if db_session.is_active: db_session.close()

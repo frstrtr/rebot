@@ -3,7 +3,7 @@ memo_management.py
 Deals with displaying, adding, and processing memos for addresses.
 """
 import logging
-from typing import Optional
+from typing import Optional, List
 from aiogram import html, types
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
@@ -16,9 +16,12 @@ from database import (
     CryptoAddress,
     CryptoAddressStatus,
 )
-from database.models import MemoType # Assuming MemoType is in database.models
-from database.queries import update_crypto_address_memo # For saving memos
+from database.models import MemoType
+from database.queries import update_crypto_address_memo
 from .common import MAX_TELEGRAM_MESSAGE_LENGTH, TARGET_AUDIT_CHANNEL_ID
+from .helpers import markdown_to_html # Ensure this helper is available and imported
+from config.config import Config # Import Config for admin check
+
 # from .states import AddressProcessingStates # Not directly setting states here, but might be needed by callers
 
 async def _display_memos_for_address_blockchain(
@@ -27,7 +30,8 @@ async def _display_memos_for_address_blockchain(
     blockchain: str,
     db: Session,
     memo_scope: str = "public",
-    requesting_user_db_id: Optional[int] = None,
+    requesting_user_db_id: Optional[int] = None, # For fetching user's private memos
+    requesting_telegram_user_id: Optional[int] = None, # For admin checks
 ):
     query = db.query(CryptoAddress).filter(
         func.lower(CryptoAddress.address) == address.lower(),
@@ -41,7 +45,7 @@ async def _display_memos_for_address_blockchain(
         if not requesting_user_db_id:
             logging.error("User ID not provided for private memos in _display_memos.")
             await message_target.answer(
-                "[_display_memos] Error: User ID missing for private memo display.", parse_mode="HTML"
+                "[_display_memos] Error: User ID missing for private memo display.", parse_mode="HTML", disable_web_page_preview=True
             )
             return
         query = query.filter(
@@ -53,37 +57,77 @@ async def _display_memos_for_address_blockchain(
         query = query.filter(
             or_(
                 CryptoAddress.memo_type == MemoType.PUBLIC.value,
-                CryptoAddress.memo_type.is_(None),
+                CryptoAddress.memo_type.is_(None), # Treat None as public for legacy if any
             )
         )
 
-    existing_memos_specific = query.order_by(CryptoAddress.id.desc()).all() # Show newest first
+    existing_memos_specific: List[CryptoAddress] = query.order_by(CryptoAddress.id.desc()).all() # Show newest first
 
     if not existing_memos_specific:
         no_memos_message = f"ℹ️ No {header_scope_text.lower()} found for <code>{html.quote(address)}</code> on {html.quote(blockchain.capitalize())}."
         if memo_scope == "private_own":
             no_memos_message = f"ℹ️ You have no private memos for <code>{html.quote(address)}</code> on {html.quote(blockchain.capitalize())}."
-        await message_target.answer(no_memos_message, parse_mode="HTML")
+        await message_target.answer(no_memos_message, parse_mode="HTML", disable_web_page_preview=True)
         return
 
     list_header = f"📜 <b>{header_scope_text} for <code>{html.quote(address)}</code> on {html.quote(blockchain.capitalize())}:</b>"
-    memo_item_lines = []
+    # Send the overall header for the memo list first
+    await message_target.answer(list_header, parse_mode="HTML", disable_web_page_preview=True)
+
+    # Now, iterate and send each memo individually
     for memo_item in existing_memos_specific:
         status_display = memo_item.status.value if isinstance(memo_item.status, CryptoAddressStatus) else str(memo_item.status or "N/A")
-        # Consider adding timestamp: html.quote(memo_item.timestamp.strftime('%Y-%m-%d %H:%M'))
-        memo_item_lines.append(f"  • (<i>{status_display}</i>): {html.quote(memo_item.notes)}")
+        processed_notes = markdown_to_html(memo_item.notes if memo_item.notes else "")
+        
+        # Prepare the text for this specific memo item
+        # Using a bullet point for visual separation as each memo is a new message.
+        individual_memo_text = f"  • ID <code>{memo_item.id}</code> (<i>{status_display}</i>):\n{processed_notes}"
 
-    # Message splitting logic (simplified for brevity, original logic was complex)
-    current_message = list_header
-    for line in memo_item_lines:
-        if len(current_message) + len(line) + 1 > MAX_TELEGRAM_MESSAGE_LENGTH:
-            await message_target.answer(current_message, parse_mode="HTML")
-            current_message = line # Start new message with the line itself
-        else:
-            current_message += "\n" + line
-    
-    if current_message: # Send the last part
-        await message_target.answer(current_message, parse_mode="HTML")
+        admin_button_markup = None
+        if memo_scope == "public" and requesting_telegram_user_id and requesting_telegram_user_id in Config.ADMINS:
+            buttons = [[
+                InlineKeyboardButton(
+                    text=f"🗑️ Del Memo {memo_item.id}",
+                    callback_data=f"admin_request_delete_memo:{memo_item.id}"
+                )
+            ]]
+            admin_button_markup = InlineKeyboardMarkup(inline_keyboard=buttons)
+        
+        try:
+            # Attempt to send the individual memo
+            # Note: If individual_memo_text (mainly processed_notes) is too long, this will fail.
+            # A more robust solution would split oversized processed_notes here.
+            await message_target.answer(
+                individual_memo_text,
+                parse_mode="HTML",
+                reply_markup=admin_button_markup,
+                disable_web_page_preview=True
+            )
+        except Exception as e: # Catch generic Exception which includes TelegramAPIError
+            if "message is too long" in str(e).lower():
+                logging.warning(f"Individual memo ID {memo_item.id} content is too long. Sending truncated placeholder.")
+                # Fallback for oversized memo content
+                truncated_text = (
+                    f"  • ID <code>{memo_item.id}</code> (<i>{status_display}</i>):\n"
+                    f"[Content for this memo is too long to display in a single message part. "
+                    f"The first part of the notes: {html.quote(processed_notes[:500])}...] "
+                    f"You can still attempt to delete it using the button below if you are an admin."
+                )
+                await message_target.answer(
+                    truncated_text[:MAX_TELEGRAM_MESSAGE_LENGTH], # Ensure even the error message fits
+                    parse_mode="HTML",
+                    reply_markup=admin_button_markup, # Still offer delete
+                    disable_web_page_preview=True
+                )
+            else:
+                logging.error(f"Error sending individual memo ID {memo_item.id}: {e}")
+                await message_target.answer(
+                    f"⚠️ Error displaying memo ID {memo_item.id}. Please check logs.",
+                    reply_markup=admin_button_markup, # Still offer delete if admin
+                    disable_web_page_preview=True
+                )
+
+    # The block that previously added a collective list of admin buttons at the end is no longer needed
 
 
 async def _prompt_for_next_memo( # This is more like _prompt_for_action_on_saved_address

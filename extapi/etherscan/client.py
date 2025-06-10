@@ -150,7 +150,7 @@ class EtherscanAPI:
             session = await self._get_session()
             try:
                 logging.debug(f"Etherscan request (attempt {attempt + 1}): URL={self.base_url}, Params={request_params}")
-                async with session.get(self.base_url, params=request_params, timeout=15) as response:
+                async with session.get(self.base_url, params=request_params, timeout=30) as response:
                     if not response.ok:
                         error_body = await response.text()
                         logging.error(

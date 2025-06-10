@@ -9,6 +9,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramAPIError
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
+from typing import Optional
 
 from extapi.etherscan.client import EtherscanAPI, EtherscanAPIError
 from config.config import Config
@@ -20,6 +21,7 @@ from .states import AddressProcessingStates # If EVM AI check sets states
 
 # --- EVM AI Data Formatting Helpers ---
 async def _format_evm_balance_for_ai(address: str, blockchain_name: str, api_client: EtherscanAPI) -> str:
+    """Formats the native currency balance for AI processing."""
     balance_summary = f"Section: Native Currency Balance ({blockchain_name.upper()})\n--------------------------\n"
     try:
         balance_wei = await api_client.get_ether_balance_single(address=address)
@@ -41,6 +43,7 @@ async def _format_evm_balance_for_ai(address: str, blockchain_name: str, api_cli
     return balance_summary
 
 async def _format_evm_normal_transactions_for_ai(address: str, blockchain_name: str, api_client: EtherscanAPI, max_tx: int = 5) -> str:
+    """Formats recent normal transactions for AI processing."""
     tx_summary = f"Section: Recent Normal Transactions (Max {max_tx} shown, newest first)\n--------------------------\n"
     try:
         transactions = await api_client.get_normal_transactions(
@@ -74,13 +77,49 @@ async def _format_evm_normal_transactions_for_ai(address: str, blockchain_name: 
     return tx_summary
 
 async def _format_evm_erc20_transfers_for_ai(address: str, blockchain_name: str, api_client: EtherscanAPI, max_tx: int = 10) -> str:
-    erc20_summary = f"Section: Recent ERC20 Token Transfers (Max {max_tx} shown, newest first)\n--------------------------\n"
+    """Formats recent ERC20 token transfers for AI processing, excluding USDC and USDT."""
+    erc20_summary = f"Section: Recent Other ERC20 Token Transfers (Max {max_tx} shown, newest first, excluding common stables like USDC/USDT)\n--------------------------\n"
+    
+    # Get USDC and USDT contract addresses for the current blockchain to exclude them
+    chain_config_lower = blockchain_name.lower()
+    explorer_chain_config = EXPLORER_CONFIG.get(chain_config_lower, {})
+    
+    usdc_contract_to_exclude = explorer_chain_config.get("usdc_contract")
+    if not usdc_contract_to_exclude:
+        if chain_config_lower == "ethereum": usdc_contract_to_exclude = Config.ETH_USDC_CONTRACT_ADDRESS
+        elif chain_config_lower == "bsc": usdc_contract_to_exclude = Config.BSC_USDC_CONTRACT_ADDRESS
+        elif chain_config_lower == "polygon": usdc_contract_to_exclude = Config.POLYGON_USDC_CONTRACT_ADDRESS
+        # Add other chains as needed
+
+    usdt_contract_to_exclude = explorer_chain_config.get("usdt_contract")
+    if not usdt_contract_to_exclude:
+        if chain_config_lower == "ethereum": usdt_contract_to_exclude = Config.ETH_USDT_CONTRACT_ADDRESS
+        elif chain_config_lower == "bsc": usdt_contract_to_exclude = Config.BSC_USDT_CONTRACT_ADDRESS
+        elif chain_config_lower == "polygon": usdt_contract_to_exclude = Config.POLYGON_USDT_CONTRACT_ADDRESS
+        # Add other chains as needed
+
+    excluded_contracts = []
+    if usdc_contract_to_exclude:
+        excluded_contracts.append(usdc_contract_to_exclude.lower())
+    if usdt_contract_to_exclude:
+        excluded_contracts.append(usdt_contract_to_exclude.lower())
+
     try:
         transfers = await api_client.get_erc20_token_transfers(
-            address=address, page=1, offset=max_tx, sort="desc"
+            address=address, page=1, offset=max_tx * 2, sort="desc" # Fetch more initially to allow filtering
         )
+        
+        filtered_transfers = []
         if transfers:
             for tx in transfers:
+                tx_contract_address = tx.get('contractAddress', '').lower()
+                if tx_contract_address not in excluded_contracts:
+                    filtered_transfers.append(tx)
+                if len(filtered_transfers) >= max_tx:
+                    break 
+        
+        if filtered_transfers:
+            for tx in filtered_transfers: # Iterate over the filtered list
                 tx_timestamp = int(tx.get("timeStamp", "0"))
                 tx_date = datetime.utcfromtimestamp(tx_timestamp).strftime('%Y-%m-%d %H:%M:%S UTC')
                 token_symbol = tx.get("tokenSymbol", "N/A")
@@ -98,10 +137,13 @@ async def _format_evm_erc20_transfers_for_ai(address: str, blockchain_name: str,
                     f"  Amount: {value_token} {token_symbol}\n"
                     "  ---\n"
                 )
-        elif transfers == []:
-            erc20_summary += "No ERC20 token transfers found.\n"
-        else:
-            erc20_summary += "Could not fetch ERC20 transfer data. The API might be temporarily unavailable or the address is invalid.\n"
+            if len(transfers) == max_tx * 2 and len(filtered_transfers) == max_tx : # Check if we hit the initial fetch limit and filtered limit
+                 erc20_summary += f"Note: Displaying up to {max_tx} other ERC20 transactions. More may exist.\n"
+        elif not transfers: # API returned None or error implied by None
+             erc20_summary += "Could not fetch ERC20 transfer data. The API might be temporarily unavailable or the address is invalid.\n"
+        else: # transfers was an empty list or all were filtered out
+            erc20_summary += "No other ERC20 token transfers found (excluding common stables like USDC/USDT).\n"
+
     except EtherscanAPIError as e:
         erc20_summary += f"API Error fetching ERC20 transfers: {html.quote(str(e.etherscan_message or e))}\n"
     except Exception as e:
@@ -109,6 +151,111 @@ async def _format_evm_erc20_transfers_for_ai(address: str, blockchain_name: str,
         erc20_summary += f"Unexpected error fetching ERC20 transfers: {html.quote(str(e))}\n"
     erc20_summary += "--------------------------\n\n"
     return erc20_summary
+
+async def _format_specific_erc20_transfers_for_ai(
+    address: str,
+    blockchain_name: str,
+    api_client: EtherscanAPI,
+    token_symbol: str, # e.g., "USDC" or "USDT"
+    token_contract_address: Optional[str],
+    max_tx: int = 10
+) -> str:
+    """
+    Formats recent transfers for a specific ERC20 token for AI processing.
+    """
+    if not token_contract_address:
+        return f"Section: Recent {token_symbol} Transfers\n--------------------------\n{token_symbol} contract address not configured for {blockchain_name}.\n--------------------------\n\n"
+
+    summary = f"Section: Recent {token_symbol} Transfers (Max {max_tx} shown, newest first, Contract: {token_contract_address})\n--------------------------\n"
+    try:
+        transfers = await api_client.get_erc20_token_transfers(
+            address=address,
+            contract_address=token_contract_address, # Changed 'contractaddress' to 'contract_address'
+            page=1,
+            offset=max_tx,
+            sort="desc"
+        )
+        if transfers:
+            for tx in transfers:
+                tx_timestamp = int(tx.get("timeStamp", "0"))
+                tx_date = datetime.utcfromtimestamp(tx_timestamp).strftime('%Y-%m-%d %H:%M:%S UTC')
+                # Token symbol and name should ideally match the specific token, but API might return its own
+                fetched_token_symbol = tx.get("tokenSymbol", token_symbol)
+                fetched_token_name = tx.get("tokenName", token_symbol)
+                try:
+                    decimals = int(tx.get("tokenDecimal", "18")) # Default to 18 if not present, USDC often 6
+                    if token_symbol == "USDC" and blockchain_name.lower() in ["ethereum", "polygon", "bsc"]: # Common chains where USDC has 6 decimals
+                        decimals = int(tx.get("tokenDecimal", "6")) # More specific default for USDC
+                    
+                    value_token = Decimal(tx.get("value", "0")) / (Decimal("10") ** decimals)
+                except (ValueError, TypeError, InvalidOperation):
+                    value_token = "N/A (parse error)"
+                
+                direction = "OUT" if tx.get("from", "").lower() == address.lower() else "IN"
+                summary += (
+                    f"Date: {tx_date}, Hash: {tx.get('hash')}\n"
+                    f"  Token: {fetched_token_name} ({fetched_token_symbol})\n"
+                    f"  Direction: {direction}, From: {tx.get('from')}, To: {tx.get('to')}\n"
+                    f"  Amount: {value_token} {fetched_token_symbol}\n"
+                    "  ---\n"
+                )
+            if len(transfers) == max_tx:
+                summary += f"Note: Displaying up to {max_tx} {token_symbol} transactions. More may exist.\n"
+        elif transfers == []:
+            summary += f"No {token_symbol} transfers found for this address and contract.\n"
+        else:
+            summary += f"Could not fetch {token_symbol} transfer data. The API might be temporarily unavailable, the address is invalid, or the token contract is incorrect for this chain.\n"
+    except EtherscanAPIError as e:
+        summary += f"API Error fetching {token_symbol} transfers: {html.quote(str(e.etherscan_message or e))}\n"
+    except Exception as e:
+        logging.error(f"Error formatting EVM {token_symbol} transfers for AI ({address} on {blockchain_name}): {e}", exc_info=True)
+        summary += f"Unexpected error fetching {token_symbol} transfers: {html.quote(str(e))}\n"
+    summary += "--------------------------\n\n"
+    return summary
+
+async def _format_evm_USDC_transfers_for_ai(address: str, blockchain_name: str, api_client: EtherscanAPI, max_tx: int = 50) -> str:
+    """Formats recent USDC transfers for AI processing."""
+    chain_config = EXPLORER_CONFIG.get(blockchain_name.lower(), {})
+    usdc_contract = chain_config.get("usdc_contract") # Assumes 'usdc_contract' key in your EXPLORER_CONFIG
+    
+    # Fallback or more direct config lookup if not in EXPLORER_CONFIG
+    if not usdc_contract:
+        if blockchain_name.lower() == "ethereum":
+            usdc_contract = Config.ETH_USDC_CONTRACT_ADDRESS
+        elif blockchain_name.lower() == "bsc":
+            usdc_contract = Config.BSC_USDC_CONTRACT_ADDRESS
+        elif blockchain_name.lower() == "polygon":
+            usdc_contract = Config.POLYGON_USDC_CONTRACT_ADDRESS
+        # Add other chains as needed
+
+    if not usdc_contract:
+        logging.warning(f"USDC contract address not found for blockchain: {blockchain_name} in config.")
+    
+    return await _format_specific_erc20_transfers_for_ai(
+        address, blockchain_name, api_client, "USDC", usdc_contract, max_tx
+    )
+
+async def _format_evm_USDT_transfers_for_ai(address: str, blockchain_name: str, api_client: EtherscanAPI, max_tx: int = 50) -> str:
+    """Formats recent USDT transfers for AI processing."""
+    chain_config = EXPLORER_CONFIG.get(blockchain_name.lower(), {})
+    usdt_contract = chain_config.get("usdt_contract") # Assumes 'usdt_contract' key in your EXPLORER_CONFIG
+
+    # Fallback or more direct config lookup if not in EXPLORER_CONFIG
+    if not usdt_contract:
+        if blockchain_name.lower() == "ethereum":
+            usdt_contract = Config.ETH_USDT_CONTRACT_ADDRESS
+        elif blockchain_name.lower() == "bsc":
+            usdt_contract = Config.BSC_USDT_CONTRACT_ADDRESS
+        elif blockchain_name.lower() == "polygon":
+            usdt_contract = Config.POLYGON_USDT_CONTRACT_ADDRESS
+        # Add other chains as needed
+        
+    if not usdt_contract:
+        logging.warning(f"USDT contract address not found for blockchain: {blockchain_name} in config.")
+
+    return await _format_specific_erc20_transfers_for_ai(
+        address, blockchain_name, api_client, "USDT", usdt_contract, max_tx
+    )
 
 async def handle_show_token_transfers_evm_callback(callback_query: types.CallbackQuery, state: FSMContext):
     """Handles the 'Token Transfers' button click for EVM chains."""
@@ -261,8 +408,11 @@ async def handle_ai_scam_check_evm_callback(callback_query: types.CallbackQuery,
 
     try:
         enriched_data_for_ai += await _format_evm_balance_for_ai(address, blockchain, evm_api_client)
-        enriched_data_for_ai += await _format_evm_normal_transactions_for_ai(address, blockchain, evm_api_client, max_tx=5)
-        enriched_data_for_ai += await _format_evm_erc20_transfers_for_ai(address, blockchain, evm_api_client, max_tx=10)
+        enriched_data_for_ai += await _format_evm_normal_transactions_for_ai(address, blockchain, evm_api_client, max_tx=10)
+        enriched_data_for_ai += await _format_evm_erc20_transfers_for_ai(address, blockchain, evm_api_client, max_tx=20) # General ERC20
+        enriched_data_for_ai += await _format_evm_USDC_transfers_for_ai(address, blockchain, evm_api_client, max_tx=20) # Specific USDC
+        enriched_data_for_ai += await _format_evm_USDT_transfers_for_ai(address, blockchain, evm_api_client, max_tx=20) # Specific USDT
+        
     except Exception as e:
         logging.error(f"Error during EVM data aggregation for AI ({address} on {blockchain}): {e}", exc_info=True)
         enriched_data_for_ai += f"\nAn error occurred during data aggregation: {html.quote(str(e))}\n"
@@ -273,6 +423,7 @@ async def handle_ai_scam_check_evm_callback(callback_query: types.CallbackQuery,
     if "current_scan_db_message_id" in user_fsm_data:
          update_payload["current_scan_db_message_id"] = user_fsm_data.get("current_scan_db_message_id")
 
+    logging.info(f"AI enriched data for {address} on {blockchain} prepared for AI processing.\nAI enriched data: {enriched_data_for_ai}")
     await state.update_data(**update_payload)
 
     # This part will be handled by ai_callbacks.py after this function sets the state

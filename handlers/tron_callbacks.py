@@ -325,7 +325,14 @@ async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery
         )
     except TelegramAPIError as e:
         logging.warning(f"Could not edit message text/markup in handle_ai_scam_check_tron_callback: {e}")
+        # If edit fails, send a new message
         await callback_query.message.answer(f"🔄 Gathering comprehensive data for <code>{html.quote(address)}</code> for AI analysis. This may take a moment...", parse_mode="HTML")
+
+    # Send "typing..." action as a progress indicator for data gathering
+    try:
+        await callback_query.bot.send_chat_action(chat_id=callback_query.from_user.id, action="typing")
+    except TelegramAPIError as e_chat_action:
+        logging.warning(f"Could not send typing action during Tron data gathering: {e_chat_action}")
 
     tron_api_client = TronScanAPI()
     enriched_data_for_ai = f"Comprehensive AI Scam Analysis Request for TRON Address: {html.quote(address)}\n"
@@ -433,8 +440,3 @@ async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery
         await callback_query.message.answer(f"Sorry, an error occurred while gathering data for {html.quote(address)}.")
     finally:
         await tron_api_client.close_session()
-
-# Register these handlers with your dispatcher:
-# from .tron_callbacks import handle_update_report_tronscan_callback, handle_ai_scam_check_tron_callback
-# dp.callback_query.register(handle_update_report_tronscan_callback, F.data == "update_report_tronscan")
-# dp.callback_query.register(handle_ai_scam_check_tron_callback, F.data == "ai_scam_check_tron")

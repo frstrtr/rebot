@@ -3,7 +3,7 @@ ai_callbacks.py
 Handles AI-related callbacks common to different blockchain analyses.
 """
 import logging
-from aiogram import html, types
+from aiogram import html, types, Bot
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramAPIError
@@ -16,11 +16,12 @@ from database.models import MemoType
 from database.queries import update_crypto_address_memo
 from .common import MAX_TELEGRAM_MESSAGE_LENGTH, TARGET_AUDIT_CHANNEL_ID
 from .states import AddressProcessingStates # For setting state if needed
-from .helpers import manual_escape_markdown_v2, format_user_info_for_audit, send_text_to_audit_channel
+# Ensure markdown_to_html is imported from helpers
+from .helpers import format_user_info_for_audit, send_text_to_audit_channel, replace_addresses_with_deeplinks, markdown_to_html 
 from .address_processing import _orchestrate_next_processing_step
 
 
-async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery, state: FSMContext):
+async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery, state: FSMContext, bot: Bot): # Added bot parameter
     """Handles AI report language selection and triggers AI analysis."""
     await callback_query.answer()
     chosen_lang_code = callback_query.data.split(":")[1]
@@ -35,7 +36,7 @@ async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery
     if not enriched_data_for_ai or not address:
         logging.error("Missing enriched_data_for_ai or address in FSM for AI language choice.")
         await callback_query.message.answer("Error: Missing data for AI analysis. Please try again.")
-        await state.set_state(None) 
+        await state.set_state(None)
         return
 
     await callback_query.message.edit_text(
@@ -44,7 +45,13 @@ async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery
         reply_markup=None
     )
 
-    ai_analysis_text = "Error: AI analysis could not be performed." 
+    # Send "typing..." action as a progress indicator for the AI analysis
+    try:
+        await bot.send_chat_action(chat_id=callback_query.from_user.id, action="typing")
+    except TelegramAPIError as e_chat_action:
+        logging.warning(f"Could not send typing action due to Telegram API error: {e_chat_action}")
+
+    final_html_report = "Error: AI analysis could not be performed."
 
     try:
         if not Config.VERTEX_AI_PROJECT_ID or not Config.VERTEX_AI_LOCATION or not Config.VERTEX_AI_MODEL_NAME:
@@ -62,50 +69,74 @@ async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery
             f"1. Overall risk level (e.g., Low, Medium, High, Very High, Suspicious).\n"
             f"2. Key observations and red flags (e.g., interactions with known scam addresses, unusual transaction patterns, token characteristics if applicable, lack of activity, etc.).\n"
             f"3. A brief summary conclusion.\n"
-            f"Present the output clearly. Use Markdown for formatting if it helps readability (bold for headers, bullet points for lists)."
+            # Instruct AI to use Markdown for formatting
+            f"Present the output clearly. Use Markdown for formatting (e.g. **bold**, *italic*, `code`, lists, tables if appropriate)."
         )
         
+        # generated_text_from_ai is expected to be Markdown
         generated_text_from_ai = await vertex_ai_client.generate_text(prompt_template)
 
         if generated_text_from_ai:
-            ai_analysis_text = generated_text_from_ai
+            # Get bot username for deeplinks
+            bot_info = await bot.get_me()
+            bot_username = bot_info.username
+            
+            # Step 1: Insert HTML deeplinks into the AI's (Markdown) text
+            text_with_html_deeplinks = replace_addresses_with_deeplinks(generated_text_from_ai, bot_username)
+            
+            # Step 2: Convert the Markdown (which now contains HTML deeplinks) to final HTML
+            final_html_report = markdown_to_html(text_with_html_deeplinks)
         else:
-            ai_analysis_text = f"AI analysis did not return content for {html.quote(address)}. This could be due to safety filters or other issues."
+            final_html_report = f"AI analysis did not return content for {html.quote(address)}. This could be due to safety filters or other issues."
             logging.warning(f"Vertex AI returned no content for address {address} on {blockchain if blockchain != 'N/A' else 'TRON'}.")
 
     except RuntimeError as e: 
         logging.error(f"VertexAIClient runtime error: {e}", exc_info=True)
-        ai_analysis_text = "Error: AI analysis client is not properly configured (library missing)."
+        final_html_report = "Error: AI analysis client is not properly configured (library missing)."
     except ValueError as e: 
         logging.error(f"VertexAIClient configuration error: {e}", exc_info=True)
-        ai_analysis_text = f"Error: AI analysis client configuration is incomplete. Details: {html.quote(str(e))}"
+        final_html_report = f"Error: AI analysis client configuration is incomplete. Details: {html.quote(str(e))}"
     except Exception as e:
         logging.error(f"Error during Vertex AI call for {address} on {blockchain if blockchain != 'N/A' else 'TRON'}: {e}", exc_info=True)
-        ai_analysis_text = f"An unexpected error occurred during AI analysis for {html.quote(address)}."
+        final_html_report = f"An unexpected error occurred during AI analysis for {html.quote(address)}."
     
-    await state.update_data(ai_report_text=ai_analysis_text)
+    await state.update_data(ai_report_text=final_html_report) # final_html_report now contains the fully processed HTML
 
-    escaped_text_for_mdv2 = manual_escape_markdown_v2(ai_analysis_text)
-
-    if len(escaped_text_for_mdv2) > MAX_TELEGRAM_MESSAGE_LENGTH:
+    # Send the report using HTML parse mode
+    if len(final_html_report) > MAX_TELEGRAM_MESSAGE_LENGTH:
         parts = []
         current_pos = 0
-        while current_pos < len(escaped_text_for_mdv2):
-            parts.append(escaped_text_for_mdv2[current_pos : current_pos + MAX_TELEGRAM_MESSAGE_LENGTH])
-            current_pos += MAX_TELEGRAM_MESSAGE_LENGTH
+        while current_pos < len(final_html_report):
+            split_at = current_pos + MAX_TELEGRAM_MESSAGE_LENGTH
+            if split_at < len(final_html_report):
+                last_newline = final_html_report.rfind('\n', current_pos, split_at)
+                if last_newline != -1 and last_newline > current_pos:
+                    split_at = last_newline + 1 
+                # else, split at MAX_TELEGRAM_MESSAGE_LENGTH
+            
+            parts.append(final_html_report[current_pos:split_at])
+            current_pos = split_at
+            
         for part_idx, part_content in enumerate(parts):
             try:
                 await callback_query.message.answer(
-                    f"AI Report (Part {part_idx + 1}/{len(parts)}):\n{part_content}", parse_mode="MarkdownV2" )
+                    f"<b>AI Report (Part {part_idx + 1}/{len(parts)}):</b>\n{part_content}", 
+                    parse_mode="HTML", 
+                    disable_web_page_preview=True
+                )
             except TelegramAPIError as e_split: 
-                logging.error(f"Error sending AI report part with MarkdownV2 (manual escape): {e_split}. Falling back to no parse_mode.")
-                await callback_query.message.answer(f"AI Report (Part {part_idx + 1}/{len(parts)}):\n{part_content}")
+                logging.error(f"Error sending AI report part with HTML: {e_split}. Falling back to no parse_mode for this part.")
+                await callback_query.message.answer(f"AI Report (Part {part_idx + 1}/{len(parts)} - display error, raw content):\n{part_content}")
     else:
         try:
-            await callback_query.message.answer(escaped_text_for_mdv2, parse_mode="MarkdownV2")
-        except TelegramAPIError as e_md:
-            logging.error(f"Error sending AI report with MarkdownV2 (manual escape): {e_md}. Falling back to no parse_mode.")
-            await callback_query.message.answer(ai_analysis_text)
+            await callback_query.message.answer(
+                final_html_report, 
+                parse_mode="HTML", 
+                disable_web_page_preview=True
+            )
+        except TelegramAPIError as e_html:
+            logging.error(f"Error sending AI report with HTML: {e_html}. Falling back to no parse_mode.")
+            await callback_query.message.answer(final_html_report) # Send raw if HTML fails
 
     memo_action_buttons = [
         [
@@ -208,8 +239,3 @@ async def handle_ai_response_memo_action_callback(callback_query: types.Callback
         ai_enriched_data=None, ai_report_text=None, addresses_for_memo_prompt_details=[]
     )
     await _orchestrate_next_processing_step(callback_query.message, state)
-
-# Register these handlers:
-# from .ai_callbacks import handle_ai_language_choice_callback, handle_ai_response_memo_action_callback
-# dp.callback_query.register(handle_ai_language_choice_callback, AddressProcessingStates.awaiting_ai_language_choice, F.data.startswith("ai_lang:"))
-# dp.callback_query.register(handle_ai_response_memo_action_callback, F.data.startswith("ai_memo_action:"))

@@ -2,10 +2,12 @@
 and forwarding them to an audit channel."""
 
 import logging, re
-from aiogram import html, Bot # Added Bot
-from aiogram.types import Message, User # Added User
+from aiogram import html, Bot 
+from aiogram.types import Message, User 
 from aiogram.exceptions import TelegramAPIError
-from .common import TARGET_AUDIT_CHANNEL_ID, AMBIGUOUS_CHAIN_GROUPS
+import markdown as  markdown2 # Added for Markdown to HTML conversion
+from bs4 import BeautifulSoup # Added for HTML sanitization
+from .common import TARGET_AUDIT_CHANNEL_ID, AMBIGUOUS_CHAIN_GROUPS, crypto_finder 
 
 def get_ambiguity_group_members(chain_name: str) -> set | None:
     """
@@ -88,6 +90,144 @@ async def send_text_to_audit_channel(bot: Bot, text: str, parse_mode: str = "HTM
             logging.error(f"Failed to send text to audit channel {TARGET_AUDIT_CHANNEL_ID}: {e}") # pylint: disable=logging-fstring-interpolation
     else:
         logging.warning("TARGET_AUDIT_CHANNEL_ID not set. Audit message not sent.")
+
+def _create_bot_deeplink_html(address: str, bot_username: str) -> str:
+    """
+    Creates an HTML deeplink for a given address that starts a chat with the bot
+    and passes the address via the start parameter.
+    """
+    deeplink_url = f"https://t.me/{bot_username}?start={address}"
+    return f'<a href="{deeplink_url}">{html.quote(address)}</a>' # Address in link text is HTML quoted
+
+def replace_addresses_with_deeplinks(report_text: str, bot_username: str) -> str:
+    """
+    Finds all cryptocurrency addresses in the report_text and replaces them
+    with HTML deeplinks that point back to the bot.
+    This function expects plain text or Markdown text as input, and will output
+    text with HTML <a> tags embedded.
+
+    Args:
+        report_text: The AI-generated report text (plain or Markdown).
+        bot_username: The username of the bot (without '@').
+
+    Returns:
+        The report text with address occurrences replaced by HTML deeplink tags.
+    """
+    if not report_text:
+        return ""
+    if not bot_username:
+        logging.warning("Bot username not provided for deeplink creation. Addresses will not be linked.")
+        return report_text # Return original text if no bot_username
+
+    detected_addresses_map = crypto_finder.find_addresses(report_text)
+    
+    unique_addresses = set()
+    for blockchain_addresses in detected_addresses_map.values():
+        for addr in blockchain_addresses:
+            unique_addresses.add(addr)
+    
+    if not unique_addresses:
+        return report_text # No addresses found, return original text
+
+    # Sort addresses by length in descending order to avoid issues with
+    # shorter addresses being substrings of longer ones during replacement.
+    sorted_addresses = sorted(list(unique_addresses), key=len, reverse=True)
+    
+    modified_report_text = report_text # Start with the original report text
+
+    for address in sorted_addresses:
+        deeplink_html = _create_bot_deeplink_html(address, bot_username)
+        # Regex to find the plain address as a whole word.
+        # This will replace the plain address string with its HTML link version.
+        # Ensure 'address' itself doesn't contain regex special characters or escape them.
+        # For crypto addresses, direct string replacement or a simple \b might be okay.
+        try:
+            # Using re.escape on the address to handle any special characters it might contain,
+            # though typical crypto addresses don't have many.
+            pattern = rf"\b{re.escape(address)}\b" 
+            modified_report_text = re.sub(pattern, deeplink_html, modified_report_text)
+        except re.error as e:
+            logging.error(f"Regex error while replacing address {address}: {e}")
+            # Continue without replacing this specific address if regex fails
+            
+    return modified_report_text
+
+def markdown_to_html(markdown_text: str) -> str:
+    """
+    Converts a Markdown string to HTML using the markdown2 library,
+    then sanitizes it to keep only Telegram-supported HTML tags.
+    Allows raw HTML pass-through for our embedded deeplinks during markdown conversion.
+    """
+    if not markdown_text:
+        return ""
+    try:
+        # Step 1: Convert Markdown to HTML
+        # 'markdown2' allows HTML pass-through by default.
+        html_output_from_markdown = markdown2.markdown(
+            markdown_text,
+            extras=["fenced-code-blocks", "tables", "smarty-pants", "break-on-newline", "code-friendly"]
+        )
+
+        if not html_output_from_markdown:
+            return ""
+
+        # Step 2: Sanitize HTML for Telegram
+        # Define Telegram-supported tags
+        # Note: <tg-spoiler> is a special Telegram tag.
+        # <pre><code class="language-python"> is also supported.
+        supported_tags = {
+            'b', 'strong', 'i', 'em', 'u', 'ins', 's', 'strike', 'del',
+            'a', 'code', 'pre', 'tg-spoiler'
+        }
+        # Attributes supported for <a> tag
+        supported_attrs = {
+            'a': ['href'],
+            'code': ['class'] # For <code class="language-..."> inside <pre>
+        }
+
+        soup = BeautifulSoup(html_output_from_markdown, 'lxml')
+
+        for tag in soup.find_all(True): # Find all tags
+            if tag.name not in supported_tags:
+                # If tag is not supported, unwrap it (remove tag, keep content)
+                tag.unwrap()
+            else:
+                # If tag is supported, remove any unsupported attributes
+                attrs = dict(tag.attrs)
+                for attr_name in attrs:
+                    if tag.name in supported_attrs and attr_name in supported_attrs[tag.name]:
+                        # Special handling for tg://user?id= links if needed, but general href is fine
+                        if tag.name == 'a' and attr_name == 'href':
+                            if not (tag['href'].startswith('http://') or \
+                                    tag['href'].startswith('https://') or \
+                                    tag['href'].startswith('tg://')):
+                                # Potentially unsafe href, remove attribute or tag
+                                # For simplicity, let's assume replace_addresses_with_deeplinks creates safe links
+                                pass 
+                        continue # Attribute is supported
+                    del tag[attr_name] # Remove unsupported attribute
+
+        # Get the sanitized HTML string
+        # Using .decode_contents() or str(soup) might be slightly different.
+        # str(soup) usually gives the full HTML document structure.
+        # We want the content of the body if soup added html/body tags,
+        # or just the processed string if it didn't.
+        # If markdown2 produces a fragment, str(soup) is fine.
+        sanitized_html = str(soup)
+        
+        # Telegram expects newlines to be <br> or actual newlines.
+        # markdown2 with "break-on-newline" might handle this, but ensure consistency.
+        # Often, replacing \n with <br /> (if not already done by markdown2) is needed
+        # AFTER sanitization if newlines are meant to be line breaks.
+        # However, Telegram's HTML parser usually respects actual newline characters too.
+        # Let's assume markdown2 handles newlines appropriately for now.
+
+        return sanitized_html.strip()
+
+    except Exception as e:
+        logging.error(f"Error converting Markdown to HTML or sanitizing: {e}", exc_info=True)
+        # Fallback to HTML quoting the original Markdown text if conversion/sanitization fails
+        return html.quote(markdown_text)
 
 # Helper function for manual MarkdownV2 escaping
 def manual_escape_markdown_v2(text: str) -> str:

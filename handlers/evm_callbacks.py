@@ -385,6 +385,12 @@ async def handle_ai_scam_check_evm_callback(callback_query: types.CallbackQuery,
     except TelegramAPIError as e:
         logging.warning(f"Failed to edit message for AI EVM check data gathering: {e}")
 
+    # Send "typing..." action as a progress indicator for data gathering
+    try:
+        await callback_query.bot.send_chat_action(chat_id=callback_query.from_user.id, action="typing")
+    except TelegramAPIError as e_chat_action: # More specific error for Telegram API calls
+        logging.warning(f"Could not send typing action during EVM data gathering: {e_chat_action}")
+
     chain_config = EXPLORER_CONFIG.get(blockchain.lower())
     if not chain_config:
         logging.error(f"No EXPLORER_CONFIG found for blockchain: {blockchain}")
@@ -452,8 +458,3 @@ async def handle_ai_scam_check_evm_callback(callback_query: types.CallbackQuery,
         reply_markup=reply_markup_lang
     )
     await state.set_state(AddressProcessingStates.awaiting_ai_language_choice)
-
-# Register these handlers with your dispatcher, e.g., in __init__.py or main bot file:
-# from .evm_callbacks import handle_show_token_transfers_evm_callback, handle_ai_scam_check_evm_callback
-# dp.callback_query.register(handle_show_token_transfers_evm_callback, F.data == "show_token_transfers_evm")
-# dp.callback_query.register(handle_ai_scam_check_evm_callback, F.data == "ai_scam_check_evm")

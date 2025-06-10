@@ -25,3 +25,8 @@ requests>=2.32.3
 # GenAI
 google_cloud_aiplatform>=1.96.0
 google-genai>=1.19.0
+
+# markdown
+markdown>=3.8
+beautifulsoup4>=4.13.4
+lxml>=5.4.0

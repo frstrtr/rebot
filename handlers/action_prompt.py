@@ -9,10 +9,11 @@ from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramAPIError
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
 
 from database import get_or_create_user, CryptoAddress
 from database.models import MemoType
-from .common import EXPLORER_CONFIG, ADMINS
+from .common import EXPLORER_CONFIG #, ADMINS
 
 async def _send_action_prompt(
     target_message: Message,
@@ -68,9 +69,10 @@ async def _send_action_prompt(
             )
             .scalar()
         ) or 0
-    except Exception as e:
+    except SQLAlchemyError as e:
         logging.error(f"Error counting public memos for action prompt button: {e}") # pylint: disable=logging-fstring-interpolation
 
+    show_public_memos_button_text = "📜 Show Public Memos"
     show_public_memos_button_text = "📜 Show Public Memos"
     if public_memo_count > 0:
         show_public_memos_button_text += f" ({public_memo_count})"
@@ -108,8 +110,8 @@ async def _send_action_prompt(
                 )
                 .scalar()
             ) or 0
-        except Exception as e:
-            logging.error(f"Error counting private memos for action prompt button: {e}") # pylint: disable=logging-fstring-interpolation
+        except SQLAlchemyError as e:
+            logging.error(f"Error counting private memos for action prompt button: {e}")
 
 
     show_private_memos_button_text = "🔒 Show My Private Memos"
@@ -131,13 +133,16 @@ async def _send_action_prompt(
     token_transfers_button = None # New button
     ai_scam_check_evm_button = None # New button
     
-    # Check if the acting user is an admin
-    is_admin = acting_telegram_user_id in ADMINS
+    # Check if the acting user is an admin XXX for the future, if needed
+    # For now, we assume all users can see the buttons, but you can uncomment this if needed
+    # acting_telegram_user_id = target_message.from_user.id
+    # ADMINS is a list of Telegram user IDs who are admins
+    # is_admin = acting_telegram_user_id in ADMINS
 
     if blockchain.lower() == "tron": # and is_admin: # XXX Show these buttons only for TRON and if user is admin
         update_report_button = InlineKeyboardButton(
             text="📊 Get TRC20 Report",
-            callback_data=f"update_report_tronscan" # No address needed, get from FSM
+            callback_data="update_report_tronscan" # No address needed, get from FSM
         )
         ai_scam_check_button = InlineKeyboardButton( # New button definition
             text="🤖 AI Scam Check (TRC20)",

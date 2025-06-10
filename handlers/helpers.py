@@ -84,9 +84,9 @@ async def send_text_to_audit_channel(bot: Bot, text: str, parse_mode: str = "HTM
     """Sends a text message to the configured audit channel."""
     if TARGET_AUDIT_CHANNEL_ID:
         try:
-            await bot.send_message(TARGET_AUDIT_CHANNEL_ID, text, parse_mode=parse_mode)
+            await bot.send_message(TARGET_AUDIT_CHANNEL_ID, text, parse_mode=parse_mode, disable_web_page_preview=True)
             logging.info(f"Sent audit text to channel {TARGET_AUDIT_CHANNEL_ID}") # pylint: disable=logging-fstring-interpolation
-        except Exception as e:
+        except TelegramAPIError as e:
             logging.error(f"Failed to send text to audit channel {TARGET_AUDIT_CHANNEL_ID}: {e}") # pylint: disable=logging-fstring-interpolation
     else:
         logging.warning("TARGET_AUDIT_CHANNEL_ID not set. Audit message not sent.")
@@ -224,7 +224,7 @@ def markdown_to_html(markdown_text: str) -> str:
 
         return sanitized_html.strip()
 
-    except Exception as e:
+    except (TypeError, ValueError, AttributeError, LookupError, RecursionError) as e:
         logging.error(f"Error converting Markdown to HTML or sanitizing: {e}", exc_info=True)
         # Fallback to HTML quoting the original Markdown text if conversion/sanitization fails
         return html.quote(markdown_text)

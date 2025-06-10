@@ -326,19 +326,29 @@ async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery
         enriched_data_for_ai += await _format_account_transfer_amounts_for_ai(address, tron_api_client, max_details_to_show=3)
         enriched_data_for_ai += await _format_related_accounts_for_ai(address, tron_api_client, full_blacklist_entries, max_to_show=5)
         
-        trc20_history_summary = f"Section: Recent TRC20 Transactions (Limit {fetch_limit_trc20_history})\n--------------------------\n"
+        trc20_history_summary = f"Section: Recent TRC20 Transactions (Analysis based on up to {fetch_limit_trc20_history} most recent transactions)\n--------------------------\n"
         history_data = await tron_api_client.get_trc20_transaction_history(
             address=address, limit=fetch_limit_trc20_history, start=0
         )
         if history_data and history_data.get("token_transfers"):
             transactions = history_data.get("token_transfers", [])
-            total_found_api = history_data.get("total", len(transactions))
-            trc20_history_summary += f"Found {len(transactions)} transactions in this batch (API reports total: {total_found_api}).\n"
-            if total_found_api > len(transactions) and len(transactions) == fetch_limit_trc20_history:
-                trc20_history_summary += f"Note: Analyzing the latest {fetch_limit_trc20_history} transactions. More transactions might exist.\n"
+            total_found_api = history_data.get("total", len(transactions)) # Total transactions API claims to have for this address/query
+            
+            trc20_history_summary += f"Fetched {len(transactions)} TRC20 transactions for analysis.\n"
+            trc20_history_summary += f"The API reports a total of {total_found_api} TRC20 transactions for this address.\n"
+
             if not transactions:
-                 trc20_history_summary += "No TRC20 transactions found in the fetched batch.\n"
+                trc20_history_summary += "No TRC20 transactions were found in the fetched batch.\n"
             else:
+                if len(transactions) < total_found_api:
+                    trc20_history_summary += f"Note: The transaction list below is partial, showing the {len(transactions)} most recent ones due to the fetch limit of {fetch_limit_trc20_history}. More older transactions exist.\n"
+                elif len(transactions) == total_found_api and total_found_api > 0 :
+                    trc20_history_summary += "Note: The transaction list below should represent all TRC20 transactions for this address as reported by the API for this query.\n"
+                elif total_found_api == 0 and len(transactions) == 0:
+                    trc20_history_summary += "No TRC20 transactions reported by the API for this address.\n"
+                else: # len(transactions) > 0 and (total_found_api might be less than len(transactions) or 0, which is unusual)
+                    trc20_history_summary += f"Displaying {len(transactions)} fetched. API total count is {total_found_api} (interpret with caution if inconsistent).\n"
+
                 for tx_idx, tx in enumerate(transactions):
                     raw_timestamp_ms = tx.get('block_ts')
                     human_readable_timestamp = "N/A"
@@ -359,10 +369,12 @@ async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery
                         f"  Time: {human_readable_timestamp}, TxID: {html.quote(tx.get('transaction_id', 'N/A'))}\n"
                         f"  From: {html.quote(tx.get('from_address', 'N/A'))}, To: {html.quote(tx.get('to_address', 'N/A'))}\n"
                         f"  Token: {html.quote(token_name)} ({html.quote(token_abbr)}), Amount: {html.quote(amount_formatted)} {html.quote(token_abbr)}\n"
-                        f"   Confirmed: {tx.get('confirmed', 'N/A')}\n---\n"
+                        f"  Confirmed: {tx.get('confirmed', 'N/A')}\n---\n"
                     )
-        elif history_data: trc20_history_summary += "No TRC20 transactions found or response format unexpected for history.\n"
-        else: trc20_history_summary += "Failed to fetch TRC20 transaction history from TronScan.\n"
+        elif history_data: 
+            trc20_history_summary += "No TRC20 transactions found (API returned data but no 'token_transfers' list) or response format unexpected for history.\n"
+        else: 
+            trc20_history_summary += "Failed to fetch TRC20 transaction history from TronScan. Completeness of transaction data cannot be determined.\n"
         trc20_history_summary += "--------------------------\n\n"
         enriched_data_for_ai += trc20_history_summary
         

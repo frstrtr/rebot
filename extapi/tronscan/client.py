@@ -71,7 +71,7 @@ class TronScanAPI:
             logging.info("TronScanAPI session closed.")
 
     async def _request(self, method: str, endpoint: str, params: Optional[Dict[str, Any]] = None,
-                       data: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+                       data: Optional[Dict[str, Any]] = None, timeout_override: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """
         Makes an asynchronous HTTP request to the TronScan API.
         """
@@ -81,8 +81,10 @@ class TronScanAPI:
         if self.api_key:
             headers["TRON-PRO-API-KEY"] = self.api_key
 
+        current_timeout = timeout_override if timeout_override is not None else 30 # Default to 30 if no override
+
         try:
-            async with session.request(method, url, params=params, json=data, headers=headers, timeout=30) as response: # Increased timeout to 30 seconds
+            async with session.request(method, url, params=params, json=data, headers=headers, timeout=current_timeout) as response:
                 if not response.ok: 
                     error_body = await response.text() 
                     logging.error(
@@ -453,7 +455,7 @@ class TronScanAPI:
         endpoint = "deep/account/transferAmount"
         params = {"address": address}
         logging.info(f"Fetching account transfer amounts for address: {address}") 
-        return await self._request("GET", endpoint, params=params)
+        return await self._request("GET", endpoint, params=params, timeout_override=60) # Increased timeout for this specific call
 
     async def get_account_token_big_amounts(
         self,

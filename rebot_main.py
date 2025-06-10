@@ -293,14 +293,14 @@ if __name__ == "__main__":
     custom_filter = UserIdContextFilter()
 
     # New format string for the console that uses the 'colored_user_id' field
-    console_format_string = "%(asctime)s - %(levelname)s - %(name)s - UserID: %(colored_user_id)s - %(message)s"
+    console_format_string = "%(asctime)s - [%(filename)s:%(lineno)d] - UserID: %(colored_user_id)s - %(message)s"
 
     # Instantiate AdminColorLogFormatter for console
     console_log_formatter = AdminColorLogFormatter(console_format_string)
 
     # Formatter for file (no color)
     file_log_formatter = logging.Formatter(
-        "%(asctime)s - %(levelname)s - %(name)s - UserID: %(user_id)s - %(message)s"
+        "%(asctime)s - %(name)s - [%(filename)s:%(lineno)d] - UserID: %(user_id)s - %(message)s"
     )
 
     # 2. Configure the root logger

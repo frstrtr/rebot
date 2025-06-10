@@ -151,37 +151,63 @@ async def _format_account_tags_for_ai(address: str, api_client: TronScanAPI) -> 
     tags_summary += "(Note: Tags can indicate exchange, scammer, whale, etc.)\n--------------------------\n\n"
     return tags_summary
 
-async def _format_trc20_balances_for_ai(address: str, api_client: TronScanAPI, max_to_show: int = 5) -> str:
+async def _format_trc20_balances_for_ai(address: str, api_client: TronScanAPI, max_to_show: int = 50)-> str:
     balances_summary = f"Section: Top TRC20 Token Balances (Max {max_to_show} shown)\n--------------------------\n"
     try:
         balances_data = await api_client.get_account_trc20_balances(address, limit=50)
-        if balances_data and balances_data.get('trc20token_balances'):
-            tokens = balances_data['trc20token_balances']
+        # XXX
+        logging.info(f"Fetched TRC20 balances for {address}: {str(balances_data)[:500]}") # Log the fetched data for debugging 500 chars
+        if balances_data and isinstance(balances_data.get('data'), list): # Changed 'trc20token_balances' to 'data'
+            tokens = balances_data['data'] # Changed 'trc20token_balances' to 'data'
             if tokens:
-                for i, token in enumerate(tokens[:max_to_show]):
+                # Filter out the TRX entry if present, as it's often included but not a TRC20 token
+                trc20_tokens = [token for token in tokens if token.get('tokenId') != '_']
+
+                for i, token in enumerate(trc20_tokens[:max_to_show]):
                     token_name = token.get('tokenName', 'N/A')
                     token_abbr = token.get('tokenAbbr', 'N/A')
-                    balance_raw = token.get('balance')
+                    balance_raw = token.get('balance') # This is the raw balance string
                     token_decimals = int(token.get('tokenDecimal', 0))
                     balance_formatted = "N/A"
+                    
+                    # The 'quantity' field seems to be the already decimal-adjusted balance as a float or string
+                    # The 'balance' field is the raw integer amount
                     if balance_raw is not None:
                         try:
-                            balance_formatted = f"{int(balance_raw) / (10**token_decimals):.6f}"
-                        except: balance_formatted = f"{balance_raw} (raw)"
+                            # Use 'quantity' if available and seems more reliable, otherwise parse 'balance'
+                            if 'quantity' in token:
+                                balance_formatted = f"{float(token['quantity']):.6f}" # Assuming quantity is already adjusted
+                            else:
+                                balance_formatted = f"{int(balance_raw) / (10**token_decimals):.6f}"
+                        except (ValueError, TypeError, KeyError):
+                             # Fallback to raw balance if formatting fails
+                            try:
+                                balance_formatted = f"{int(balance_raw) / (10**token_decimals):.6f}"
+                            except (ValueError, TypeError):
+                                balance_formatted = f"{balance_raw} (raw)"
+                    
                     balances_summary += f"  - {html.quote(token_name)} ({html.quote(token_abbr)}): {html.quote(balance_formatted)}\n"
-                if len(tokens) > max_to_show:
-                    balances_summary += f"(Showing top {max_to_show} balances out of {len(tokens)} found in API batch of up to 50)\n"
-            else: # This case was missing, added for completeness
-                balances_summary += "No TRC20 token balances found.\n"
+                
+                if len(trc20_tokens) > max_to_show:
+                    balances_summary += f"(Showing top {max_to_show} TRC20 balances out of {len(trc20_tokens)} found in API batch of up to {balances_data.get('total', 50)})\n"
+                elif not trc20_tokens: # If after filtering, no TRC20 tokens remain
+                    balances_summary += "No TRC20 token balances found (excluding TRX if present).\n"
+
+            else: # This case means balances_data['data'] was an empty list
+                balances_summary += "No token balances found in the API response data list.\n"
+        elif balances_data and 'total' in balances_data and balances_data.get('total') == 0:
+            balances_summary += "No TRC20 token balances found (API reports total: 0).\n"
         else:
-            balances_summary += "Could not retrieve TRC20 token balances.\n"
+            balances_summary += "Could not retrieve TRC20 token balances or response format was unexpected.\n"
+            if balances_data:
+                 balances_summary += f"API Response (first 200 chars): {str(balances_data)[:200]}...\n"
     except Exception as e:
-        logging.error(f"Error fetching TRC20 balances for AI for {address}: {e}")
+        logging.error(f"Error fetching TRC20 balances for AI for {address}: {e}", exc_info=True)
         balances_summary += f"Error fetching TRC20 balances: {html.quote(str(e))}\n"
     balances_summary += "--------------------------\n\n"
     return balances_summary
 
-async def _format_account_transfer_amounts_for_ai(address: str, api_client: TronScanAPI, max_details_to_show: int = 2) -> str:
+async def _format_account_transfer_amounts_for_ai(address: str, api_client: TronScanAPI, max_details_to_show: int = 10) -> str:
     amounts_summary = "Section: Account Fund Flow Summary (USD)\n--------------------------\n"
     try:
         transfer_amounts = await api_client.get_account_transfer_amounts(address)
@@ -252,7 +278,7 @@ async def _format_blacklist_status_for_ai(address_to_check: str, full_blacklist_
     blacklist_summary += "--------------------------\n\n"
     return blacklist_summary
 
-async def _format_related_accounts_for_ai(address: str, api_client: TronScanAPI, full_blacklist_entries: list, max_to_show: int = 5) -> str:
+async def _format_related_accounts_for_ai(address: str, api_client: TronScanAPI, full_blacklist_entries: list, max_to_show: int = 10) -> str:
     related_summary = f"Section: Top Related Accounts (Interacted With - Max {max_to_show} shown)\n--------------------------\n"
     try:
         related_data = await api_client.get_account_related_accounts(address)
@@ -322,9 +348,9 @@ async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery
         enriched_data_for_ai += await _format_account_info_for_ai(address, tron_api_client)
         enriched_data_for_ai += await _format_blacklist_status_for_ai(address, full_blacklist_entries)
         enriched_data_for_ai += await _format_account_tags_for_ai(address, tron_api_client)
-        enriched_data_for_ai += await _format_trc20_balances_for_ai(address, tron_api_client, max_to_show=5)
-        enriched_data_for_ai += await _format_account_transfer_amounts_for_ai(address, tron_api_client, max_details_to_show=3)
-        enriched_data_for_ai += await _format_related_accounts_for_ai(address, tron_api_client, full_blacklist_entries, max_to_show=5)
+        enriched_data_for_ai += await _format_trc20_balances_for_ai(address, tron_api_client, max_to_show=10)
+        enriched_data_for_ai += await _format_account_transfer_amounts_for_ai(address, tron_api_client, max_details_to_show=10)
+        enriched_data_for_ai += await _format_related_accounts_for_ai(address, tron_api_client, full_blacklist_entries, max_to_show=10)
         
         trc20_history_summary = f"Section: Recent TRC20 Transactions (Analysis based on up to {fetch_limit_trc20_history} most recent transactions)\n--------------------------\n"
         history_data = await tron_api_client.get_trc20_transaction_history(
@@ -381,7 +407,7 @@ async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery
         if "Could not retrieve" in enriched_data_for_ai and "Failed to fetch" in enriched_data_for_ai and "No TRC20 transactions found" in enriched_data_for_ai: # Basic check
             await callback_query.message.answer("Could not fetch sufficient transaction data for AI analysis. Please try again later or check the address on an explorer.")
             return
-
+        logging.debug(f"Gathered AI Scam Check data for {address}:\n{enriched_data_for_ai}...")
         await state.update_data(
             ai_enriched_data=enriched_data_for_ai,
             current_action_address=address

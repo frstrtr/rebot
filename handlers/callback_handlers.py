@@ -1,177 +1,49 @@
 """callback_handlers.py
-Handles callbacks from inline buttons related to blockchain clarifications.
+Handles general callbacks, blockchain clarifications, and memo interactions.
 """
-
-import logging # Ensure logging is imported
+import logging
 from aiogram import html, types
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramAPIError
-from datetime import datetime # Ensure datetime is imported
-from decimal import Decimal, InvalidOperation # For handling token amounts
-import io # For sending text as a file
-# Removed: from aiogram.utils.markdown import MarkdownV2 as md 
-import re # Import re for manual escaping
+from datetime import datetime # Keep if used by any remaining handlers
 
-from database import SessionLocal, get_or_create_user, save_crypto_address # Add get_or_create_user, MemoType
+from database import SessionLocal, get_or_create_user, save_crypto_address
 from database.models import MemoType
-from database.queries import update_crypto_address_memo # For saving memos
-from extapi.tronscan.client import TronScanAPI
-from extapi.etherscan.client import EtherscanAPI, EtherscanAPIError, EtherscanRateLimitError # Ensure EtherscanAPI is imported
-from genai import VertexAIClient # Import VertexAIClient
+from database.queries import update_crypto_address_memo
+# from .common import EXPLORER_CONFIG # Keep if used by any remaining handlers
+from .states import AddressProcessingStates
 from .address_processing import (
     _display_memos_for_address_blockchain,
     _orchestrate_next_processing_step,
-    _prompt_for_next_memo,
-    _send_action_prompt,  # Import the new helper
+    # _prompt_for_next_memo, # This is likely called by _orchestrate_next_processing_step
+    _send_action_prompt,
 )
-from .common import EXPLORER_CONFIG, TARGET_AUDIT_CHANNEL_ID, MAX_TELEGRAM_MESSAGE_LENGTH # Added TARGET_AUDIT_CHANNEL_ID and MAX_TELEGRAM_MESSAGE_LENGTH
-from .states import AddressProcessingStates  # Ensure this is imported if not already
-from .helpers import format_user_info_for_audit, send_text_to_audit_channel # ADDED/MODIFIED
-from config.config import Config # Import the Config class
-
-
-# --- EVM AI Data Formatting Helpers ---
-async def _format_evm_balance_for_ai(address: str, blockchain_name: str, api_client: EtherscanAPI) -> str:
-    balance_summary = f"Section: Native Currency Balance ({blockchain_name.upper()})\n--------------------------\n"
-    try:
-        # EtherscanAPI get_ether_balance_single returns the balance directly as a string (Wei)
-        balance_wei = await api_client.get_ether_balance_single(address=address)
-        if balance_wei is not None: # Check if balance_wei is not None
-            try:
-                balance_native = Decimal(balance_wei) / Decimal("1e18")
-                balance_summary += f"Address: {html.quote(address)}\n"
-                balance_summary += f"Balance: {balance_native:.8f} {blockchain_name.upper()} ({balance_wei} Wei)\n"
-            except (ValueError, TypeError, InvalidOperation):
-                balance_summary += f"Could not parse balance: {balance_wei}\n"
-        else:
-            # This case might occur if _request returned None due to repeated failures or non-dict response
-            # The EtherscanAPI client's _request method is designed to return the 'result' field from the JSON.
-            # For the 'balance' action, 'result' is the balance string. If the API call fails (e.g. status "0"),
-            # EtherscanAPIError should be raised by _request. If it returns None, it means all retries failed without specific API error.
-            balance_summary += f"Could not fetch balance data for {html.quote(address)}. The API might be temporarily unavailable or the address is invalid.\n"
-
-    except EtherscanAPIError as e:
-        balance_summary += f"API Error fetching balance: {html.quote(str(e.etherscan_message or e))}\n"
-    except Exception as e:
-        logging.error(f"Error formatting EVM balance for AI ({address} on {blockchain_name}): {e}", exc_info=True)
-        balance_summary += f"Unexpected error fetching balance: {html.quote(str(e))}\n"
-    balance_summary += "--------------------------\n\n"
-    return balance_summary
-
-
-async def _format_evm_normal_transactions_for_ai(address: str, blockchain_name: str, api_client: EtherscanAPI, max_tx: int = 5) -> str:
-    tx_summary = f"Section: Recent Normal Transactions (Max {max_tx} shown, newest first)\n--------------------------\n"
-    try:
-        # get_normal_transactions returns a list of dicts or None
-        transactions = await api_client.get_normal_transactions(
-            address=address, page=1, offset=max_tx, sort="desc"
-        )
-        if transactions: # Check if transactions is not None and not empty
-            for tx in transactions:
-                tx_timestamp = int(tx.get("timeStamp", "0"))
-                tx_date = datetime.utcfromtimestamp(tx_timestamp).strftime('%Y-%m-%d %H:%M:%S UTC')
-                value_native = Decimal(tx.get("value", "0")) / Decimal("1e18")
-                direction = "OUT" if tx.get("from", "").lower() == address.lower() else "IN"
-                tx_summary += (
-                    f"Date: {tx_date}, Hash: {tx.get('hash')}\n"
-                    f"  Direction: {direction}, From: {tx.get('from')}, To: {tx.get('to')}\n"
-                    f"  Value: {value_native:.8f} {blockchain_name.upper()}\n"
-                    f"  GasUsed: {tx.get('gasUsed')}, GasPrice: {tx.get('gasPrice')} Wei\n"
-                    # txreceipt_status '1' for success, '0' for failure.
-                    f"  Status: {'Success' if tx.get('txreceipt_status') == '1' else 'Failed' if tx.get('txreceipt_status') == '0' else 'N/A (check isError)'}\n"
-                    f"  IsError: {tx.get('isError', 'N/A')} (0=No Error, 1=Error)\n"
-                    "  ---\n"
-                )
-        elif transactions == []: # Explicitly no transactions found
-            tx_summary += "No normal transactions found.\n"
-        else: # transactions is None, indicating an issue with the API call itself
-            tx_summary += "Could not fetch normal transaction data. The API might be temporarily unavailable or the address is invalid.\n"
-    except EtherscanAPIError as e:
-        tx_summary += f"API Error fetching normal transactions: {html.quote(str(e.etherscan_message or e))}\n"
-    except Exception as e:
-        logging.error(f"Error formatting EVM normal transactions for AI ({address} on {blockchain_name}): {e}", exc_info=True)
-        tx_summary += f"Unexpected error fetching normal transactions: {html.quote(str(e))}\n"
-    tx_summary += "--------------------------\n\n"
-    return tx_summary
-
-
-async def _format_evm_erc20_transfers_for_ai(address: str, blockchain_name: str, api_client: EtherscanAPI, max_tx: int = 10) -> str:
-    erc20_summary = f"Section: Recent ERC20 Token Transfers (Max {max_tx} shown, newest first)\n--------------------------\n"
-    try:
-        # get_erc20_token_transfers returns a list of dicts or None
-        transfers = await api_client.get_erc20_token_transfers(
-            address=address, page=1, offset=max_tx, sort="desc"
-        )
-        if transfers: # Check if transfers is not None and not empty
-            for tx in transfers:
-                tx_timestamp = int(tx.get("timeStamp", "0"))
-                tx_date = datetime.utcfromtimestamp(tx_timestamp).strftime('%Y-%m-%d %H:%M:%S UTC')
-                token_symbol = tx.get("tokenSymbol", "N/A")
-                token_name = tx.get("tokenName", "Unknown Token")
-                try:
-                    decimals = int(tx.get("tokenDecimal", "18"))
-                    value_token = Decimal(tx.get("value", "0")) / (Decimal("10") ** decimals)
-                except (ValueError, TypeError, InvalidOperation):
-                    value_token = "N/A" # Or some other placeholder if parsing fails
-                
-                direction = "OUT" if tx.get("from", "").lower() == address.lower() else "IN"
-                erc20_summary += (
-                    f"Date: {tx_date}, Hash: {tx.get('hash')}\n"
-                    f"  Token: {token_name} ({token_symbol}), Contract: {tx.get('contractAddress')}\n"
-                    f"  Direction: {direction}, From: {tx.get('from')}, To: {tx.get('to')}\n"
-                    f"  Amount: {value_token} {token_symbol}\n"
-                    "  ---\n"
-                )
-        elif transfers == []: # Explicitly no transfers found
-            erc20_summary += "No ERC20 token transfers found.\n"
-        else: # transfers is None
-            erc20_summary += "Could not fetch ERC20 transfer data. The API might be temporarily unavailable or the address is invalid.\n"
-    except EtherscanAPIError as e:
-        erc20_summary += f"API Error fetching ERC20 transfers: {html.quote(str(e.etherscan_message or e))}\n"
-    except Exception as e:
-        logging.error(f"Error formatting EVM ERC20 transfers for AI ({address} on {blockchain_name}): {e}", exc_info=True)
-        erc20_summary += f"Unexpected error fetching ERC20 transfers: {html.quote(str(e))}\n"
-    erc20_summary += "--------------------------\n\n"
-    return erc20_summary
-# --- END EVM AI Data Formatting Helpers ---
-
+# Import new callback modules if they are called from here (unlikely for this structure)
 
 async def handle_blockchain_clarification_callback(
     callback_query: types.CallbackQuery, state: FSMContext
 ):
     """Handles blockchain clarification button presses."""
     await callback_query.answer()
-    data = await state.get_data() # Data fetched here should contain current_scan_db_message_id
+    data = await state.get_data()
     item_being_clarified = data.get("current_item_for_blockchain_clarification")
 
     if not item_being_clarified:
-        logging.warning(
-            "Blockchain clarification callback received but no item_being_clarified in state."
-        )
-        await callback_query.message.answer(
-            "Error: Could not determine which address to clarify. Please try scanning again."
-        )
+        logging.warning("Blockchain clarification callback but no item_being_clarified in state.")
+        await callback_query.message.answer("Error: Could not determine address to clarify. Try scanning again.")
         await state.clear()
         return
 
     action = callback_query.data.split(":")[1]
     address_str = item_being_clarified["address"]
-    db = SessionLocal() # Create a new session
+    db = SessionLocal()
 
     try:
         if action == "chosen":
             chosen_blockchain = callback_query.data.split(":")[2]
-            logging.info(
-                "User chose blockchain '%s' for address '%s'",
-                chosen_blockchain,
-                address_str,
-            )
-
-            addresses_for_memo_prompt_details_fsm = [
-                {"address": address_str, "blockchain": chosen_blockchain}
-            ]
-            
+            logging.info("User chose blockchain '%s' for address '%s'", chosen_blockchain, address_str)
+            addresses_for_memo_prompt_details_fsm = [{"address": address_str, "blockchain": chosen_blockchain}]
             fsm_update_payload = {
                 "addresses_for_memo_prompt_details": addresses_for_memo_prompt_details_fsm,
                 "current_item_for_blockchain_clarification": None,
@@ -179,510 +51,44 @@ async def handle_blockchain_clarification_callback(
                 "current_action_address": address_str,
                 "current_action_blockchain": chosen_blockchain
             }
-            
             if "current_scan_db_message_id" in data:
                 fsm_update_payload["current_scan_db_message_id"] = data.get("current_scan_db_message_id")
             else:
-                logging.error(
-                    f"CRITICAL: current_scan_db_message_id missing from FSM data at 'chosen' blockchain clarification for {address_str}. Data: {data}"
-                )
-
+                logging.error(f"CRITICAL: current_scan_db_message_id missing for {address_str}. Data: {data}")
             await state.update_data(**fsm_update_payload)
-            
             await callback_query.message.edit_text(
                 f"✅ Blockchain for <code>{html.quote(address_str)}</code> set to <b>{html.quote(chosen_blockchain.capitalize())}</b>.",
-                parse_mode="HTML",
-                reply_markup=None,
+                parse_mode="HTML", reply_markup=None,
             )
             await _send_action_prompt(
-                target_message=callback_query.message,
-                address=address_str,
-                blockchain=chosen_blockchain,
-                state=state,
-                db=db,
+                target_message=callback_query.message, address=address_str,
+                blockchain=chosen_blockchain, state=state, db=db,
                 acting_telegram_user_id=callback_query.from_user.id
             )
-            # After sending the action prompt, the bot is no longer awaiting blockchain clarification for this item.
-            # Clear the specific state name. FSM data is preserved.
-            await state.set_state(None) # ADDED LINE
-
+            await state.set_state(None)
         elif action == "skip":
             logging.info("User skipped blockchain clarification for address %s", address_str)
             await callback_query.message.edit_text(
                 f"⏭️ Skipped blockchain clarification for <code>{html.quote(address_str)}</code>.",
-                parse_mode="HTML",
-                reply_markup=None,
+                parse_mode="HTML", reply_markup=None,
             )
-            # Only clear current_item_for_blockchain_clarification.
-            # Other essential FSM data like current_scan_db_message_id and pending_blockchain_clarification
-            # should be preserved for the orchestrator.
             await state.update_data(current_item_for_blockchain_clarification=None) 
             await _orchestrate_next_processing_step(callback_query.message, state)
         else:
             logging.warning("Unknown action in blockchain clarification: %s", action)
             await callback_query.message.answer("Invalid action. Please try again.")
     finally:
-        if db.is_active:
-            db.close() # Ensure db session is closed
-
-
-async def handle_show_token_transfers_evm_callback(callback_query: types.CallbackQuery, state: FSMContext):
-    """Handles the 'Token Transfers' button click for EVM chains."""
-    await callback_query.answer("Fetching token transfers...")
-    try:
-        data = await state.get_data() # Get data from FSM
-        address = data.get("current_action_address")
-        blockchain = data.get("current_action_blockchain")
-
-        if not address or not blockchain:
-            logging.error("Could not get address/blockchain from state for token transfers.")
-            await callback_query.message.answer("Error: Missing context for token transfers. Please try again.")
-            return
-
-        logging.info(f"User {callback_query.from_user.id} requested token transfers for {address} on {blockchain}.")
-
-        chain_config = EXPLORER_CONFIG.get(blockchain.lower())
-        if not chain_config:
-            logging.error(f"No EXPLORER_CONFIG found for blockchain: {blockchain}")
-            await callback_query.message.answer(f"Configuration error: Explorer details for {blockchain.capitalize()} not found.")
-            return
-
-        api_base_url = chain_config.get("api_base_url")
-        api_key_name_in_config = chain_config.get("api_key_name_in_config") 
-        api_key = getattr(Config, api_key_name_in_config, None) if api_key_name_in_config else None
-        
-        if not api_base_url:
-            logging.error(f"API base URL not configured for {blockchain} in EXPLORER_CONFIG.")
-            await callback_query.message.answer(f"Configuration error: API URL for {blockchain.capitalize()} not set.")
-            return
-        
-        chain_id_for_client = chain_config.get("chain_id")
-
-
-        api_client = EtherscanAPI(api_key=api_key, base_url=api_base_url, chain_id=str(chain_id_for_client) if chain_id_for_client is not None else None)
-        report_content = f"ERC20 Token Transfer Report for Address: {address}\n"
-        report_content += f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
-        all_transactions = []
-        current_start = 0
-        # TronScan API limit is often 50, but some allow up to 200. Let's use a reasonable limit.
-        # For a full report, pagination is needed. This example fetches a large batch.
-        # A more robust solution would paginate until all transactions are fetched.
-        # For now, let's fetch up to 200 as an example, or a configurable high number.
-        # The TronScan API for transfers has a 'total' field in response, which can be used for pagination.
-        # This simplified version fetches one large batch.
-        fetch_limit = 50 # Max usually allowed by TRON & Etherscan-like APIs for transfers per request.
-
-        try:
-            # Send an initial message to the user
-            await callback_query.message.answer(f"Querying {chain_config.get('name', 'Explorer')} for ERC20 transfers of <code>{address}</code> (limit {fetch_limit})...", parse_mode="HTML")
-            
-            transactions = await api_client.get_erc20_token_transfers(
-                address=address,
-                page=1,
-                offset=fetch_limit,
-                sort="desc"
-            )
-
-            transactions_found_in_batch = False
-            if transactions is not None: # Check if transactions is not None (it could be an empty list or list with data)
-                transactions_found_in_batch = bool(transactions) # True if list is not empty
-                report_content += f"Found {len(transactions)} ERC20 token transfers in this batch.\n"
-                # Note: Etherscan API for tokentx doesn't typically return a 'total' count in the same response.
-                # If len(transactions) == fetch_limit, it's possible more exist.
-                if len(transactions) == fetch_limit:
-                    report_content += f"Note: Displaying up to {fetch_limit} transactions. More may exist if the limit was reached.\n"
-                report_content += "--------------------------------------------------\n"
-
-                for tx in transactions:
-                    tx_timestamp = int(tx.get("timeStamp", "0"))
-                    tx_date = datetime.utcfromtimestamp(tx_timestamp).strftime('%Y-%m-%d %H:%M:%S UTC')
-                    token_symbol = tx.get("tokenSymbol", "N/A")
-                    token_name = tx.get("tokenName", "Unknown Token")
-                    from_addr = tx.get("from", "N/A")
-                    to_addr = tx.get("to", "N/A")
-                    
-                    try:
-                        value = int(tx.get("value", "0"))
-                        decimals = int(tx.get("tokenDecimal", "18")) # Default to 18 if not present
-                        amount = Decimal(value) / (Decimal("10") ** decimals)
-                        amount_str = f"{amount:.8f}".rstrip('0').rstrip('.') # Format nicely
-                    except (ValueError, TypeError, InvalidOperation):
-                        amount_str = "N/A (error parsing amount)"
-
-                    direction = "OUT" if from_addr.lower() == address.lower() else "IN"
-                    
-                    report_content += (
-                        f"Date: {tx_date}\n"
-                        f"Direction: {direction}\n"
-                        f"From: {from_addr}\n"
-                        f"To: {to_addr}\n"
-                        f"Token: {token_name} ({token_symbol})\n"
-                        f"Amount: {amount_str} {token_symbol}\n"
-                        f"Hash: {tx.get('hash', 'N/A')}\n"
-                        f"Contract: {tx.get('contractAddress', 'N/A')}\n"
-                        f"----------------------------\n"
-                    )
-            
-            if not transactions_found_in_batch: # This covers both transactions being None or an empty list
-                report_content += "No ERC20 token transfers found for this address in the fetched batch.\n"
-
-            # Send the report as a text file
-            file_name = f"{address}_{blockchain}_token_transfers.txt"
-            report_file = BufferedInputFile(report_content.encode('utf-8'), filename=file_name)
-            await callback_query.message.answer_document(report_file)
-            await callback_query.message.answer(f"Token transfer report for <code>{html.quote(address)}</code> on {html.quote(blockchain.capitalize())} sent as a file.", parse_mode="HTML")
-
-        except EtherscanAPIError as e_api:
-            logging.error(f"Etherscan API error in handle_show_token_transfers_evm_callback for {address} on {blockchain}: {e_api}", exc_info=True)
-            await callback_query.message.answer(f"Sorry, an API error occurred while generating the report for {address}: {html.quote(str(e_api.etherscan_message or e_api))}")
-        except Exception as e:
-            logging.error(f"Error generating Etherscan report for {address}: {e}", exc_info=True)
-            await callback_query.message.answer(f"Sorry, an unexpected error occurred while generating the report for {address}.")
-    finally:
-        if 'api_client' in locals() and api_client: # Ensure api_client was initialized
-            await api_client.close_session() # Ensure the session is closed
-
-
-async def handle_ai_scam_check_evm_callback(callback_query: types.CallbackQuery, state: FSMContext):
-    """Handles the 'AI Scam Check (EVM)' button click. Gathers EVM data and prompts for language."""
-    await callback_query.answer("Initiating EVM AI Scam Check...")
-    user_fsm_data = await state.get_data()
-    address = user_fsm_data.get("current_action_address")
-    blockchain = user_fsm_data.get("current_action_blockchain")
-
-    if not address or not blockchain:
-        logging.error("Could not get address/blockchain from state for EVM AI scam check.")
-        await callback_query.message.answer("Error: Missing context for EVM AI scam check. Please try again.")
-        return
-    
-    logging.info(f"User {callback_query.from_user.id} requested EVM AI Scam Check for {address} on {blockchain}.")
-
-    try:
-        await callback_query.message.edit_text(
-            text=f"🤖 Gathering data for EVM AI Scam Check on <code>{html.quote(address)}</code> ({html.quote(blockchain.capitalize())})... Please wait.",
-            parse_mode="HTML",
-            reply_markup=None
-        )
-    except TelegramAPIError as e:
-        logging.warning(f"Failed to edit message for AI EVM check data gathering: {e}")
-        # Continue anyway, user will see the next message
-
-    chain_config = EXPLORER_CONFIG.get(blockchain.lower())
-    if not chain_config:
-        logging.error(f"No EXPLORER_CONFIG found for blockchain: {blockchain}")
-        await callback_query.message.answer(f"Configuration error: Explorer details for {blockchain.capitalize()} not found.")
-        return
-
-    api_base_url = chain_config.get("api_base_url")
-    api_key_name_in_config = chain_config.get("api_key_name_in_config")
-    api_key = getattr(Config, api_key_name_in_config, None) if api_key_name_in_config else None
-    chain_id_for_client = chain_config.get("chain_id") 
-
-    if not api_base_url:
-        logging.error(f"API base URL not configured for {blockchain} in EXPLORER_CONFIG.")
-        await callback_query.message.answer(f"Configuration error: API URL for {blockchain.capitalize()} not set.")
-        return
-
-    evm_api_client = EtherscanAPI(api_key=api_key, base_url=api_base_url, chain_id=str(chain_id_for_client) if chain_id_for_client is not None else None)
-    
-    enriched_data_for_ai = f"Comprehensive AI Scam Analysis Request for EVM Address: {html.quote(address)} on Blockchain: {html.quote(blockchain.capitalize())}\n"
-    enriched_data_for_ai += f"Report requested on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
-
-    try:
-        enriched_data_for_ai += await _format_evm_balance_for_ai(address, blockchain, evm_api_client)
-        enriched_data_for_ai += await _format_evm_normal_transactions_for_ai(address, blockchain, evm_api_client, max_tx=5) # Fetch 5 normal tx
-        enriched_data_for_ai += await _format_evm_erc20_transfers_for_ai(address, blockchain, evm_api_client, max_tx=10) # Fetch 10 ERC20 tx
-        # TODO: Consider adding ERC721 transfers, contract source/ABI if it's a contract address
-    except Exception as e:
-        logging.error(f"Error during EVM data aggregation for AI ({address} on {blockchain}): {e}", exc_info=True)
-        enriched_data_for_ai += f"\nAn error occurred during data aggregation: {html.quote(str(e))}\n"
-    finally:
-        await evm_api_client.close_session()
-
-    update_payload = {"ai_enriched_data": enriched_data_for_ai}
-    if "current_scan_db_message_id" in user_fsm_data:
-         update_payload["current_scan_db_message_id"] = user_fsm_data.get("current_scan_db_message_id")
-
-    await state.update_data(**update_payload)
-
-    language_buttons = [
-        [
-            InlineKeyboardButton(text="🇬🇧 English", callback_data="ai_lang:en"),
-            InlineKeyboardButton(text="🇷🇺 Русский", callback_data="ai_lang:ru"),
-        ]
-    ]
-    reply_markup_lang = InlineKeyboardMarkup(inline_keyboard=language_buttons)
-    
-    await callback_query.message.answer( 
-        text=(
-            f"Data gathering for EVM AI Scam Check on <code>{html.quote(address)}</code> complete.\n"
-            "📊 Please choose the report language:"
-        ),
-        parse_mode="HTML",
-        reply_markup=reply_markup_lang
-    )
-    await state.set_state(AddressProcessingStates.awaiting_ai_language_choice)
-
-
-# Helper function for manual MarkdownV2 escaping
-def manual_escape_markdown_v2(text: str) -> str:
-    """Manually escapes characters for Telegram MarkdownV2."""
-    # Characters to escape: _ * [ ] ( ) ~ ` > # + - = | { } . !
-    # Note: Order might matter if some characters are part of others (e.g., escaping '-' before '--').
-    # For simplicity, we'll escape them one by one.
-    # A more robust way is to use re.sub with a pattern that matches all special characters.
-    escape_chars = r"[_*\[\]()~`>#+\-=|{}.!]" # Raw string for regex
-    return re.sub(escape_chars, r"\\\g<0>", text)
-
-
-async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery, state: FSMContext):
-    """Handles AI report language selection and triggers AI analysis for both TRON and EVM."""
-    await callback_query.answer()
-    chosen_lang_code = callback_query.data.split(":")[1]
-    lang_map = {"en": "English", "ru": "Russian"}
-    chosen_lang_name = lang_map.get(chosen_lang_code, "the selected language")
-
-    user_fsm_data = await state.get_data()
-    enriched_data_for_ai = user_fsm_data.get("ai_enriched_data")
-    address = user_fsm_data.get("current_action_address") 
-    blockchain = user_fsm_data.get("current_action_blockchain", "N/A") 
-
-    if not enriched_data_for_ai or not address:
-        logging.error("Missing enriched_data_for_ai or address in FSM for AI language choice.")
-        await callback_query.message.answer("Error: Missing data for AI analysis. Please try again.")
-        await state.set_state(None) 
-        return
-
-    await callback_query.message.edit_text(
-        text=f"Got it! Preparing AI analysis in {chosen_lang_name} for <code>{html.quote(address)}</code> ({html.quote(blockchain.capitalize())})... This may take a moment.",
-        parse_mode="HTML",
-        reply_markup=None
-    )
-
-    vertex_ai_client = None
-    ai_analysis_text = "Error: AI analysis could not be performed." 
-
-    try:
-        # Ensure VertexAIClient is initialized within the try block if it can raise config errors
-        if not Config.VERTEX_AI_PROJECT_ID or not Config.VERTEX_AI_LOCATION or not Config.VERTEX_AI_MODEL_NAME:
-            raise ValueError("Vertex AI Project ID, Location, or Model Name is not configured in Config.")
-        
-        vertex_ai_client = VertexAIClient() 
-
-        prompt_template = (
-            f"You are a cryptocurrency scam and risk analysis expert. "
-            f"Analyze the following data for the address {html.quote(address)} on the {html.quote(blockchain.capitalize())} blockchain. "
-            f"Provide a concise risk assessment and identify any potential red flags or suspicious activities. "
-            f"The user has requested the report in {chosen_lang_name}.\n\n"
-            f"Data:\n{enriched_data_for_ai}\n\n"
-            f"Based on this data, please provide your analysis in {chosen_lang_name}, focusing on:\n"
-            f"1. Overall risk level (e.g., Low, Medium, High, Very High, Suspicious).\n"
-            f"2. Key observations and red flags (e.g., interactions with known scam addresses, unusual transaction patterns, token characteristics if applicable, lack of activity, etc.).\n"
-            f"3. A brief summary conclusion.\n"
-            f"Present the output clearly. Use Markdown for formatting if it helps readability (bold for headers, bullet points for lists)."
-        )
-        
-        generated_text_from_ai = await vertex_ai_client.generate_text(prompt_template)
-
-        if generated_text_from_ai:
-            ai_analysis_text = generated_text_from_ai
-        else:
-            ai_analysis_text = f"AI analysis did not return content for {html.quote(address)}. This could be due to safety filters or other issues. Please review the raw data if available."
-            logging.warning(f"Vertex AI returned no content for address {address} on {blockchain}.")
-
-    except RuntimeError as e: 
-        logging.error(f"VertexAIClient runtime error (e.g., library missing): {e}", exc_info=True)
-        ai_analysis_text = "Error: AI analysis client is not properly configured (library missing)."
-    except ValueError as e: 
-        logging.error(f"VertexAIClient configuration error: {e}", exc_info=True)
-        ai_analysis_text = f"Error: AI analysis client configuration is incomplete. Details: {html.quote(str(e))}"
-    except Exception as e:
-        logging.error(f"Error during Vertex AI call for {address} on {blockchain}: {e}", exc_info=True)
-        ai_analysis_text = f"An unexpected error occurred during AI analysis for {html.quote(address)}. Please check logs."
-    
-    await state.update_data(ai_report_text=ai_analysis_text) # Unified FSM key
-
-    # Manually escape the AI-generated text to be safe for MarkdownV2.
-    escaped_text_for_mdv2 = manual_escape_markdown_v2(ai_analysis_text)
-
-    if len(escaped_text_for_mdv2) > MAX_TELEGRAM_MESSAGE_LENGTH:
-        parts = []
-        current_pos = 0
-        while current_pos < len(escaped_text_for_mdv2):
-            parts.append(escaped_text_for_mdv2[current_pos : current_pos + MAX_TELEGRAM_MESSAGE_LENGTH])
-            current_pos += MAX_TELEGRAM_MESSAGE_LENGTH
-        
-        for part_idx, part_content in enumerate(parts):
-            try:
-                await callback_query.message.answer(
-                    f"AI Report (Part {part_idx + 1}/{len(parts)}):\n{part_content}", 
-                    parse_mode="MarkdownV2" 
-                )
-            except TelegramAPIError as e_split: 
-                logging.error(f"Error sending AI report part with MarkdownV2 (manual escape): {e_split}. Falling back to no parse_mode for this part.")
-                # Fallback: send the current (manually escaped) part as plain text.
-                await callback_query.message.answer(
-                     f"AI Report (Part {part_idx + 1}/{len(parts)}):\n{part_content}" 
-                )
-    else:
-        try:
-            await callback_query.message.answer(escaped_text_for_mdv2, parse_mode="MarkdownV2")
-        except TelegramAPIError as e_md:
-            logging.error(f"Error sending AI report with MarkdownV2 (manual escape): {e_md}. Falling back to no parse_mode.")
-            # Fallback: send the original, unescaped AI text as plain text.
-            await callback_query.message.answer(ai_analysis_text)
-
-
-    memo_action_buttons = [
-        [
-            InlineKeyboardButton(text="💾 Save as Public Memo", callback_data="ai_memo_action:public"),
-            InlineKeyboardButton(text="🔐 Save as Private Memo", callback_data="ai_memo_action:private"),
-        ],
-        [
-            InlineKeyboardButton(text="⏩ Skip Saving Memo", callback_data="ai_memo_action:skip")
-        ]
-    ]
-    reply_markup_memo_actions = InlineKeyboardMarkup(inline_keyboard=memo_action_buttons)
-    await callback_query.message.answer(
-        f"What would you like to do with this AI report for <code>{html.quote(address)}</code>?",
-        reply_markup=reply_markup_memo_actions,
-        parse_mode="HTML"
-    )
-    await state.set_state(None) # Clear specific state, FSM data remains for next step
-
-
-async def handle_ai_response_memo_action_callback(callback_query: types.CallbackQuery, state: FSMContext):
-    """Handles user's choice to save or skip saving the AI-generated report as a memo."""
-    await callback_query.answer()
-    action = callback_query.data.split(":")[1] 
-
-    user_fsm_data = await state.get_data()
-    ai_report_text = user_fsm_data.get("ai_report_text") 
-    address_to_update = user_fsm_data.get("current_action_address")
-    blockchain_for_update = user_fsm_data.get("current_action_blockchain")
-    current_scan_db_message_id = user_fsm_data.get("current_scan_db_message_id")
-
-    if not ai_report_text or not address_to_update or not blockchain_for_update:
-        logging.error("Missing AI report text or address/blockchain context for saving memo.")
-        await callback_query.message.answer("Error: Could not process memo action due to missing context. Please try again.")
-        # Consider not clearing state fully here, to allow potential recovery or next step in orchestrator
-        # await state.clear() 
-        return
-
-    # Prepare audit log text (can be Markdown or HTML based on your audit channel preferences)
-    # For consistency with other audit logs, let's use HTML.
-    # The AI report itself might be Markdown, so we might need to quote it or send as a file if too complex.
-    audit_report_header = (
-        f"<b>🤖 AI Scam Analysis Report</b>\n"
-        f"<b>Address:</b> <code>{html.quote(address_to_update)}</code>\n"
-        f"<b>Blockchain:</b> {html.quote(blockchain_for_update.capitalize())}\n"
-        f"<b>Requested by:</b> {format_user_info_for_audit(callback_query.from_user)}\n"
-        f"------------------------------------\n"
-    )
-    # If ai_report_text is Markdown, it might be better to send it as a file or quote it for HTML audit.
-    # For simplicity, let's quote it for the audit log.
-    full_audit_text = audit_report_header + html.quote(ai_report_text) 
-    
-    # Send to audit channel
-    if len(full_audit_text) > MAX_TELEGRAM_MESSAGE_LENGTH:
-        audit_intro_text = audit_report_header + "Report is too long to display fully here. See user chat or logs. First part:\n" + html.quote(ai_report_text[:MAX_TELEGRAM_MESSAGE_LENGTH - len(audit_report_header) - 100]) + "..."
-        await send_text_to_audit_channel(callback_query.bot, audit_intro_text, parse_mode="HTML")
-        # Optionally send the full report as a file to the audit channel
-        try:
-            report_file = BufferedInputFile(ai_report_text.encode('utf-8'), filename=f"AI_Report_{address_to_update}_{blockchain_for_update}.txt")
-            await callback_query.bot.send_document(TARGET_AUDIT_CHANNEL_ID, report_file, caption=f"Full AI Report for {address_to_update}")
-        except Exception as e_audit_file:
-            logging.error(f"Failed to send full AI report as file to audit channel: {e_audit_file}")
-    else:
-        await send_text_to_audit_channel(callback_query.bot, full_audit_text, parse_mode="HTML")
-
-
-    if action == "skip":
-        await callback_query.message.edit_text(
-            f"AI report for <code>{html.quote(address_to_update)}</code> was not saved as a memo. The report has been logged to the audit channel.",
-            parse_mode="HTML",
-            reply_markup=None
-        )
-    else: 
-        memo_type_to_save = MemoType.PUBLIC.value if action == "public" else MemoType.PRIVATE.value
-        
-        db = SessionLocal()
-        try:
-            # Ensure current_scan_db_message_id is valid; if not, this address might not be in scan_messages
-            # However, save_crypto_address should handle creating it if it's not tied to a specific scan message.
-            # For AI reports, it's possible current_scan_db_message_id is None if the flow started differently.
-            # Let's pass it, save_crypto_address can handle if it's None.
-            db_crypto_address = save_crypto_address(db, current_scan_db_message_id, address_to_update, blockchain_for_update)
-            
-            if not db_crypto_address or db_crypto_address.id is None:
-                logging.error(f"Failed to save/retrieve address {address_to_update} on {blockchain_for_update} for AI memo.")
-                await callback_query.message.answer("Error: Could not save the address to database before adding memo.")
-                db.close()
-                # Don't clear state here, let orchestrator handle it or user retry.
-                return # Exit if address cannot be saved
-
-            memo_user_db_id = None
-            if memo_type_to_save == MemoType.PRIVATE.value:
-                db_user = get_or_create_user(db, callback_query.from_user)
-                if db_user:
-                    memo_user_db_id = db_user.id
-                if not memo_user_db_id:
-                    logging.warning(f"Cannot save private AI memo for {address_to_update}: user identification failed.")
-                    await callback_query.message.answer("Error: Could not identify user to save private memo. Memo not saved as private.")
-                    # Fallback: save as public or don't save? For now, let's not save if private fails this way.
-                    db.close()
-                    return # Exit if private memo user ID fails
-
-            ai_memo_prefix = f"[AI Analysis - {datetime.now().strftime('%Y-%m-%d %H:%M')}]\n"
-            final_memo_text = ai_memo_prefix + ai_report_text # ai_report_text is already potentially Markdown
-
-            updated_address = update_crypto_address_memo(
-                db=db,
-                address_id=db_crypto_address.id,
-                notes=final_memo_text,
-                memo_type=memo_type_to_save,
-                user_id=memo_user_db_id, # This is memo_added_by_user_id
-                # status_update=None # No status change from AI memo
-            )
-
-            if updated_address:
-                await callback_query.message.edit_text(
-                    f"✅ AI report for <code>{html.quote(address_to_update)}</code> saved as a {action} memo.",
-                    parse_mode="HTML",
-                    reply_markup=None
-                )
-            else:
-                logging.error(f"Failed to update AI memo for address ID {db_crypto_address.id}")
-                await callback_query.message.answer("Error: Could not save the AI report as a memo.")
-        except Exception as e:
-            logging.error(f"Error saving AI memo for {address_to_update}: {e}", exc_info=True)
-            await callback_query.message.answer("An unexpected error occurred while saving the AI memo.")
-        finally:
-            if db.is_active:
-                db.close()
-
-    # Clear AI-specific data and also the addresses_for_memo_prompt_details
-    # to prevent the orchestrator from re-prompting for this address.
-    await state.update_data(
-        ai_enriched_data=None, 
-        ai_report_text=None,
-        addresses_for_memo_prompt_details=[] # Add this to clear the queue for the orchestrator
-    )
-    await _orchestrate_next_processing_step(callback_query.message, state)
-
+        if db.is_active: db.close()
 
 async def handle_show_previous_memos_callback(callback_query: types.CallbackQuery, state: FSMContext):
     """Handles the 'Show Previous Memos' button click."""
     await callback_query.answer()
-    
     data = await state.get_data()
     action_details_list = data.get("addresses_for_memo_prompt_details")
 
     if not action_details_list or not isinstance(action_details_list, list) or not action_details_list[0]:
-        logging.warning("Could not retrieve address/blockchain from state for show_prev_memos. State: %s", data) # pylint:disable=logging-fstring-interpolation
-        await callback_query.message.answer("Error: Context lost. Please try scanning the address again.")
-        # Optionally, clear state fully if context is truly lost for subsequent actions
-        # await state.clear() 
+        logging.warning("Could not retrieve context for show_prev_memos. State: %s", data)
+        await callback_query.message.answer("Error: Context lost. Please try scanning again.")
         return
 
     current_action_info = action_details_list[0]
@@ -690,8 +96,8 @@ async def handle_show_previous_memos_callback(callback_query: types.CallbackQuer
     blockchain = current_action_info.get("blockchain")
 
     if not address or not blockchain:
-        logging.warning("Missing address or blockchain in state for show_prev_memos. Info: %s", current_action_info)
-        await callback_query.message.answer("Error: Could not retrieve full address details. Please try again.")
+        logging.warning("Missing address/blockchain for show_prev_memos. Info: %s", current_action_info)
+        await callback_query.message.answer("Error: Could not retrieve full address details.")
         return
 
     db_session = SessionLocal()
@@ -700,191 +106,124 @@ async def handle_show_previous_memos_callback(callback_query: types.CallbackQuer
             callback_query.message, address, blockchain, db_session
         )
     finally:
-        if db_session.is_active:
-            db_session.close()
+        if db_session.is_active: db_session.close()
     
-    # After displaying memos, set the FSM state to None.
-    # This ensures the bot is not stuck in a previous state like 'awaiting_blockchain'.
-    # FSM data (like addresses_for_memo_prompt_details) will be preserved.
     current_fsm_state = await state.get_state()
     if current_fsm_state is not None:
         logging.debug(f"Clearing FSM state from {current_fsm_state} after showing memos.")
         await state.set_state(None)
-    
-    # The original action prompt message (if any) remains, allowing other actions.
-    # No further orchestration is typically needed here as this is a display action.
-
 
 async def handle_proceed_to_memo_stage_callback(callback_query: types.CallbackQuery, state: FSMContext):
     """Handles the 'Add/Manage Memo' button click from the action prompt."""
     await callback_query.answer("Loading memo options...")
-    
-    # The FSM state 'addresses_for_memo_prompt_details' should have been set
-    # before _send_action_prompt was called.
-    # _orchestrate_next_processing_step will pick it up.
     try:
-        # Optionally edit the message to indicate loading, or remove buttons
         await callback_query.message.edit_reply_markup(reply_markup=None)
-        # Or edit text:
-        # await callback_query.message.edit_text(
-        #     text=f"{callback_query.message.text}\n\nProceeding to memo options...",
-        #     parse_mode="HTML",
-        #     reply_markup=None 
-        # )
     except TelegramAPIError as e:
-        logging.warning("Could not edit message reply_markup on proceed_to_memo_stage: %s", e) # pylint:disable=logging-fstring-interpolation
-
+        logging.warning("Could not edit message reply_markup on proceed_to_memo_stage: %s", e)
     await _orchestrate_next_processing_step(callback_query.message, state)
-
 
 async def handle_skip_address_action_stage_callback(callback_query: types.CallbackQuery, state: FSMContext):
     """Handles skipping the entire address processing at the action prompt stage."""
     await callback_query.answer()
-    
     data = await state.get_data()
     address_skipped = data.get("current_action_address")
     blockchain_skipped = data.get("current_action_blockchain")
 
     if not address_skipped or not blockchain_skipped:
-        logging.warning(
-            f"User {callback_query.from_user.id} - SkipAction: Missing address/blockchain from FSM state. Callback data: {callback_query.data}. State data: {data}"
-        )
+        logging.warning(f"User {callback_query.from_user.id} - SkipAction: Missing context. Callback: {callback_query.data}. State: {data}")
         try:
-            await callback_query.message.edit_text(
-                "Could not determine which address to skip due to missing context. Continuing...",
-                reply_markup=None
-            )
+            await callback_query.message.edit_text("Could not determine address to skip. Continuing...", reply_markup=None)
         except TelegramAPIError as e_edit:
             logging.error(f"Failed to edit message on skip_address_action_stage context error: {e_edit}")
-        
         await _orchestrate_next_processing_step(callback_query.message, state)
         return
 
-    logging.info(f"User {callback_query.from_user.id} chose to skip further processing for address: {address_skipped} on {blockchain_skipped}")
-    
+    logging.info(f"User {callback_query.from_user.id} skipped further processing for {address_skipped} on {blockchain_skipped}")
     try:
         await callback_query.message.edit_text(
-            f"⏭️ Skipped further actions for address: <code>{html.quote(address_skipped)}</code> on {html.quote(blockchain_skipped.capitalize())}.",
-            parse_mode="HTML",
-            reply_markup=None,
+            f"⏭️ Skipped actions for <code>{html.quote(address_skipped)}</code> on {html.quote(blockchain_skipped.capitalize())}.",
+            parse_mode="HTML", reply_markup=None,
         )
     except TelegramAPIError as e:
         logging.warning(f"Failed to edit message on skip action: {e}")
         await callback_query.message.answer( 
-            f"⏭️ Skipped further actions for address: <code>{html.quote(address_skipped)}</code> on {html.quote(blockchain_skipped.capitalize())}.",
+            f"⏭️ Skipped actions for <code>{html.quote(address_skipped)}</code> on {html.quote(blockchain_skipped.capitalize())}.",
             parse_mode="HTML"
         )
-    
-    # Clear the addresses_for_memo_prompt_details from FSM state
-    # as we are skipping memo/action for this address.
     await state.update_data(addresses_for_memo_prompt_details=[])
-    
     await _orchestrate_next_processing_step(callback_query.message, state)
-
 
 async def handle_show_public_memos_callback(callback_query: types.CallbackQuery, state: FSMContext):
     """Handles the 'Show Public Memos' button click."""
     await callback_query.answer()
     data = await state.get_data()
-    # Assuming 'addresses_for_memo_prompt_details' holds the current address context
-    # This might need adjustment if the FSM data structure for current address changes.
     action_details_list = data.get("addresses_for_memo_prompt_details")
-
     if not action_details_list or not isinstance(action_details_list, list) or not action_details_list[0]:
-        logging.warning("Could not retrieve address/blockchain from state for show_public_memos. State: %s", data)
-        await callback_query.message.answer("Error: Context lost for showing memos. Please try scanning the address again.")
+        logging.warning("Context lost for show_public_memos. State: %s", data)
+        await callback_query.message.answer("Error: Context lost. Please try scanning again.")
         return
-
     current_action_info = action_details_list[0]
     address = current_action_info.get("address")
     blockchain = current_action_info.get("blockchain")
-
     if not address or not blockchain:
-        logging.warning("Missing address or blockchain in state for show_public_memos. Info: %s", current_action_info)
-        await callback_query.message.answer("Error: Could not retrieve full address details for memos. Please try again.")
+        logging.warning("Missing address/blockchain for show_public_memos. Info: %s", current_action_info)
+        await callback_query.message.answer("Error: Could not retrieve full address details.")
         return
-
     db_session = SessionLocal()
     try:
         await _display_memos_for_address_blockchain(
-            message_target=callback_query.message,
-            address=address,
-            blockchain=blockchain,
-            db=db_session,
-            memo_scope="public" # Explicitly public
+            message_target=callback_query.message, address=address, blockchain=blockchain,
+            db=db_session, memo_scope="public"
         )
     finally:
-        if db_session.is_active:
-            db_session.close()
-    # No FSM state change needed here, user can still interact with the action prompt
-
+        if db_session.is_active: db_session.close()
 
 async def handle_show_private_memos_callback(callback_query: types.CallbackQuery, state: FSMContext):
     """Handles the 'Show My Private Memos' button click."""
     await callback_query.answer()
     data = await state.get_data()
     action_details_list = data.get("addresses_for_memo_prompt_details")
-
     if not action_details_list or not isinstance(action_details_list, list) or not action_details_list[0]:
-        logging.warning("Could not retrieve address/blockchain from state for show_private_memos. State: %s", data)
-        await callback_query.message.answer("Error: Context lost for showing private memos. Please try scanning the address again.")
+        logging.warning("Context lost for show_private_memos. State: %s", data)
+        await callback_query.message.answer("Error: Context lost. Please try scanning again.")
         return
-
     current_action_info = action_details_list[0]
     address = current_action_info.get("address")
     blockchain = current_action_info.get("blockchain")
-    requesting_telegram_id = callback_query.from_user.id
-
     if not address or not blockchain:
-        logging.warning("Missing address or blockchain in state for show_private_memos. Info: %s", current_action_info)
-        await callback_query.message.answer("Error: Could not retrieve full address details for private memos. Please try again.")
+        logging.warning("Missing address/blockchain for show_private_memos. Info: %s", current_action_info)
+        await callback_query.message.answer("Error: Could not retrieve full address details.")
         return
-
     db_session = SessionLocal()
     try:
-        # Get internal DB user ID
-        db_user = get_or_create_user(db_session, callback_query.from_user) # Use the callback_query.from_user
+        db_user = get_or_create_user(db_session, callback_query.from_user)
         if not db_user:
             await callback_query.message.answer("Error: Could not identify user for private memos.")
             return
-        
         await _display_memos_for_address_blockchain(
-            message_target=callback_query.message,
-            address=address,
-            blockchain=blockchain,
-            db=db_session,
-            memo_scope="private_own",
-            requesting_user_db_id=db_user.id
+            message_target=callback_query.message, address=address, blockchain=blockchain,
+            db=db_session, memo_scope="private_own", requesting_user_db_id=db_user.id
         )
     finally:
-        if db_session.is_active:
-            db_session.close()
-    # No FSM state change needed here
-
+        if db_session.is_active: db_session.close()
 
 async def handle_request_memo_callback(callback_query: types.CallbackQuery, state: FSMContext):
-    """Handles 'Add Public Memo' or 'Add Private Memo' button clicks.
-    Callback data format: "request_memo:public" or "request_memo:private"
-    """
+    """Handles 'Add Public Memo' or 'Add Private Memo' button clicks."""
     await callback_query.answer()
-
     try:
         _prefix, memo_type_str = callback_query.data.split(":", 1)
         if memo_type_str not in [MemoType.PUBLIC.value, MemoType.PRIVATE.value]:
             raise ValueError("Invalid memo type")
     except ValueError:
-        logging.warning(f"Invalid callback data for request_memo: {callback_query.data}") # pylint:disable=logging-fstring-interpolation
+        logging.warning(f"Invalid callback data for request_memo: {callback_query.data}")
         await callback_query.message.answer("Error processing memo request. Please try again.")
         return
 
     data = await state.get_data()
-    # Ensure 'addresses_for_memo_prompt_details' is populated correctly before this stage
-    # This list should contain the single address/blockchain pair we are currently focused on.
     current_address_details_list = data.get("addresses_for_memo_prompt_details")
-
     if not current_address_details_list or not isinstance(current_address_details_list, list) or not current_address_details_list[0]:
-        logging.error("State 'addresses_for_memo_prompt_details' is not set correctly for memo request.")
-        await callback_query.message.answer("Error: Critical context missing for adding memo. Please restart the process.")
+        logging.error("State 'addresses_for_memo_prompt_details' not set correctly for memo request.")
+        await callback_query.message.answer("Error: Critical context missing. Please restart.")
         await state.clear()
         return
         
@@ -892,56 +231,31 @@ async def handle_request_memo_callback(callback_query: types.CallbackQuery, stat
     address_text = current_address_info.get("address")
     blockchain_text = current_address_info.get("blockchain", "N/A").capitalize()
     
-    # We need to save the crypto_address to DB first to get its ID for FSM state,
-    # if it hasn't been saved yet (e.g. if user directly clicks "Add Memo" after clarification
-    # without going through an explicit save step in orchestrator for this specific purpose).
-    # The _orchestrate_next_processing_step usually handles saving.
-    # For now, let's assume current_scan_db_message_id is in state.
-    # And that the address is saved when _orchestrate_next_processing_step is called
-    # by handle_proceed_to_memo_stage_callback.
-    # The `_prompt_for_next_memo` function (called by orchestrator) sets:
-    # current_address_for_memo_id, current_address_for_memo_text, current_address_for_memo_blockchain
-
-    # The `proceed_to_memo_stage` callback should have called `_orchestrate_next_processing_step`,
-    # which in turn calls `_prompt_for_next_memo` if `addresses_for_memo_prompt_details` is set.
-    # `_prompt_for_next_memo` shows "Add Memo" / "Skip" buttons which call `handle_memo_action_callback`.
-    # This new `request_memo:public/private` comes from `_send_action_prompt`.
-    # So, if user clicks "Add Public/Private Memo" from `_send_action_prompt`, we need to:
-    # 1. Save the address to DB to get an ID (if not already done for this specific intent).
-    # 2. Store this ID, address, blockchain, and intended_memo_type in FSM.
-    # 3. Set state to awaiting_memo.
-
     db_session = SessionLocal()
     try:
         current_scan_db_message_id = data.get("current_scan_db_message_id")
         if not current_scan_db_message_id:
-            logging.error("Cannot save address for memo: current_scan_db_message_id missing from FSM.")
-            await callback_query.message.answer("Error: Missing message context. Cannot proceed.")
+            logging.error("Cannot save address for memo: current_scan_db_message_id missing.")
+            await callback_query.message.answer("Error: Missing message context.")
             await state.clear()
             return
-
-        # Save (or get existing) CryptoAddress to ensure we have an ID
         db_crypto_address = save_crypto_address(
-            db_session,
-            current_scan_db_message_id,
-            address_text,
-            current_address_info.get("blockchain")
+            db_session, current_scan_db_message_id,
+            address_text, current_address_info.get("blockchain")
         )
         if not db_crypto_address or not db_crypto_address.id:
-            logging.error(f"Failed to save/retrieve crypto address {address_text} for memo.") # pylint:disable=logging-fstring-interpolation
-            await callback_query.message.answer("Error: Could not prepare address for memo. Please try again.")
+            logging.error(f"Failed to save/retrieve crypto address {address_text} for memo.")
+            await callback_query.message.answer("Error: Could not prepare address for memo.")
             return
-        
         await state.update_data(
             current_address_for_memo_id=db_crypto_address.id,
             current_address_for_memo_text=address_text,
             current_address_for_memo_blockchain=current_address_info.get("blockchain"),
             intended_memo_type=memo_type_str,
-            pending_addresses_for_memo=[] # Clear any old pending list from other flows
+            pending_addresses_for_memo=[]
         )
     finally:
-        if db_session.is_active:
-            db_session.close()
+        if db_session.is_active: db_session.close()
 
     prompt_message_text = (
         f"Please reply with your {memo_type_str} memo for: <code>{html.quote(address_text)}</code> ({html.quote(blockchain_text)}).\n"
@@ -949,458 +263,9 @@ async def handle_request_memo_callback(callback_query: types.CallbackQuery, stat
     )
     try:
         await callback_query.message.edit_text(
-            text=prompt_message_text,
-            parse_mode="HTML",
-            reply_markup=None,  # Remove buttons
+            text=prompt_message_text, parse_mode="HTML", reply_markup=None,
         )
     except Exception as e:
-        logging.warning(f"Failed to edit message for memo prompt, sending new: {e}") # pylint:disable=logging-fstring-interpolation
-        await callback_query.message.answer(
-            text=prompt_message_text,
-            parse_mode="HTML",
-        )
+        logging.warning(f"Failed to edit message for memo prompt, sending new: {e}")
+        await callback_query.message.answer(text=prompt_message_text, parse_mode="HTML")
     await state.set_state(AddressProcessingStates.awaiting_memo)
-
-
-async def handle_update_report_tronscan_callback(callback_query: types.CallbackQuery, state: FSMContext):
-    """Handles the 'Update Report (TRC20)' button click for TronScan."""
-    await callback_query.answer("Fetching TRC20 report from TronScan...")
-    user_data = await state.get_data()
-    address = user_data.get("current_action_address")
-    # blockchain = user_data.get("current_action_blockchain") # This is implicitly TRON for this handler
-
-    if not address:
-        logging.warning(f"Could not retrieve address from state for TronScan report. UserID: {callback_query.from_user.id}") # pylint:disable=logging-fstring-interpolation
-        await callback_query.message.answer("Error: Could not retrieve address for the report. Please try again.", show_alert=True)
-        return
-
-    api_client = TronScanAPI() # Uses API key from config by default
-    report_content = f"TRC20 Transaction Report for Address: {address}\n"
-    report_content += f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
-    all_transactions = []
-    current_start = 0
-    # TronScan API limit is often 50, but some allow up to 200. Let's use a reasonable limit.
-    # For a full report, pagination is needed. This example fetches a large batch.
-    # A more robust solution would paginate until all transactions are fetched.
-    # For now, let's fetch up to 200 as an example, or a configurable high number.
-    # The TronScan API for transfers has a 'total' field in response, which can be used for pagination.
-    # This simplified version fetches one large batch.
-    fetch_limit = 200 # Max usually allowed by Tronscan for transfers per request.
-
-    try:
-        await callback_query.message.answer(f"Querying TronScan for TRC20 transfers of <code>{address}</code> (limit {fetch_limit})...", parse_mode="HTML")
-        
-        # Fetching all TRC20 transactions (no specific contract_address)
-        # To get ALL transactions, you'd typically paginate.
-        # For this example, we'll fetch a large batch (e.g., limit 200, which is often max for this endpoint)
-        # and inform the user if more might exist.
-        
-        history_data = await api_client.get_trc20_transaction_history(
-            address=address,
-            limit=fetch_limit, # Fetch a large number of transactions
-            start=0
-        )
-
-        if history_data and history_data.get("token_transfers"):
-            transactions = history_data.get("token_transfers", [])
-            total_found_api = history_data.get("total", len(transactions)) # Get total from API if available
-            
-            report_content += f"Found {len(transactions)} transactions in this batch (API reports total: {total_found_api}).\n"
-            if total_found_api > len(transactions):
-                report_content += "Note: More transactions might exist than shown in this batch due to API limits.\n"
-            report_content += "--------------------------------------------------\n"
-
-            for tx in transactions:
-                raw_timestamp_ms = tx.get('block_ts')
-                human_readable_timestamp = "N/A"
-                if raw_timestamp_ms is not None:
-                    try:
-                        timestamp_seconds = float(raw_timestamp_ms) / 1000.0
-                        dt_object = datetime.fromtimestamp(timestamp_seconds)
-                        human_readable_timestamp = dt_object.strftime("%Y-%m-%d %H:%M:%S")
-                    except (ValueError, TypeError):
-                        human_readable_timestamp = "Invalid Timestamp"
-                
-                token_info = tx.get('tokenInfo', {})
-                token_abbr = token_info.get('tokenAbbr', 'N/A')
-                token_name = token_info.get('tokenName', 'Unknown Token')
-                token_decimals = int(token_info.get('tokenDecimal', 0))
-                
-                quant_raw = tx.get('quant')
-                amount_formatted = "N/A"
-                if quant_raw is not None:
-                    try:
-                        amount_formatted = str(int(quant_raw) / (10**token_decimals))
-                    except (ValueError, TypeError):
-                        amount_formatted = f"{quant_raw} (raw)"
-
-
-                report_content += (
-                    f"Timestamp: {human_readable_timestamp} (Raw: {raw_timestamp_ms})\n"
-                    f"TxID: {tx.get('transaction_id', 'N/A')}\n"
-                    f"From: {tx.get('from_address', 'N/A')}\n"
-                    f"To: {tx.get('to_address', 'N/A')}\n"
-                    f"Token: {token_name} ({token_abbr})\n"
-                    f"Amount: {amount_formatted} {token_abbr} (Raw Quant: {quant_raw})\n"
-                    f"Confirmed: {tx.get('confirmed', 'N/A')}\n"
-                    f"--------------------------------------------------\n"
-                )
-        elif history_data: # Response received but no token_transfers key or it's empty
-            report_content += "No TRC20 transactions found or response format unexpected.\n"
-            report_content += f"API Response: {str(history_data)[:500]}...\n" # Log part of the response
-        else:
-            report_content += "Failed to fetch TRC20 transaction history from TronScan.\n"
-
-        # Send the report as a text file
-        report_file = BufferedInputFile(report_content.encode('utf-8'), filename=f"tronscan_report_{address}.txt")
-        await callback_query.message.answer_document(report_file)
-
-    except Exception as e:
-        logging.error(f"Error generating TronScan report for {address}: {e}", exc_info=True) # pylint:disable=logging-fstring-interpolation
-        await callback_query.message.answer(f"Sorry, an error occurred while generating the report for {address}.")
-    finally:
-        await api_client.close_session() # Ensure the session is closed
-
-
-async def _format_account_info_for_ai(address: str, api_client: TronScanAPI) -> str:
-    info_summary = "Section: Account Overview\n--------------------------\n"
-    try:
-        account_info = await api_client.get_account_info(address)
-        if account_info:
-            trx_balance_sun = account_info.get('balance', 0)
-            trx_balance = trx_balance_sun / 1_000_000
-            account_name = account_info.get('account_name', 'N/A')
-            create_time_ms = account_info.get('create_time')
-            creation_time_str = "N/A"
-            if create_time_ms:
-                try:
-                    creation_time_str = datetime.fromtimestamp(create_time_ms / 1000).strftime('%Y-%m-%d %H:%M:%S UTC')
-                except: # pylint: disable=bare-except
-                    pass # Keep N/A
-            total_tx_count = account_info.get('total_transaction_count', 'N/A')
-            
-            info_summary += (
-                f"Address: {html.quote(address)}\n"
-                f"TRX Balance: {trx_balance:.6f} TRX\n"
-                f"Account Name: {html.quote(account_name)}\n"
-                f"Creation Time: {creation_time_str}\n"
-                f"Total Transactions: {total_tx_count}\n"
-            )
-        else:
-            info_summary += "Could not retrieve basic account information.\n"
-    except Exception as e:
-        logging.error(f"Error fetching account info for AI for {address}: {e}")
-        info_summary += f"Error fetching account info: {html.quote(str(e))}\n"
-    info_summary += "--------------------------\n\n"
-    return info_summary
-
-
-async def _format_account_tags_for_ai(address: str, api_client: TronScanAPI) -> str:
-    tags_summary = "Section: Account Tags\n--------------------------\n"
-    try:
-        tags_data = await api_client.get_account_tags(address)
-        found_tags = []
-        if tags_data:
-            if isinstance(tags_data.get('tags'), list) and tags_data['tags']:
-                for tag_info in tags_data['tags']:
-                    found_tags.append(tag_info.get('tag', 'Unknown Tag'))
-            elif tags_data.get('tag'): # Single tag structure
-                found_tags.append(tags_data.get('tag'))
-            elif address in tags_data and isinstance(tags_data[address], dict) and tags_data[address].get('tag'): # Address as key
-                found_tags.append(tags_data[address]['tag'])
-
-        if found_tags:
-            tags_summary += f"Tags: {html.quote(', '.join(list(set(found_tags))))}\n"
-        else:
-            tags_summary += "No specific tags found for this address.\n"
-    except Exception as e:
-        logging.error(f"Error fetching account tags for AI for {address}: {e}")
-        tags_summary += f"Error fetching account tags: {html.quote(str(e))}\n"
-    tags_summary += "(Note: Tags can indicate exchange, scammer, whale, etc.)\n--------------------------\n\n"
-    return tags_summary
-
-
-async def _format_trc20_balances_for_ai(address: str, api_client: TronScanAPI, max_to_show: int = 5) -> str:
-    balances_summary = f"Section: Top TRC20 Token Balances (Max {max_to_show} shown)\n--------------------------\n"
-    try:
-        balances_data = await api_client.get_account_trc20_balances(address, limit=50) # Fetch up to 50
-        if balances_data and balances_data.get('trc20token_balances'):
-            tokens = balances_data['trc20token_balances']
-            if tokens:
-                for i, token in enumerate(tokens[:max_to_show]):
-                    token_name = token.get('tokenName', 'N/A')
-                    token_abbr = token.get('tokenAbbr', 'N/A')
-                    balance_raw = token.get('balance') # Using 'balance' which is typically unscaled
-                    token_decimals = int(token.get('tokenDecimal', 0))
-                    balance_formatted = "N/A"
-                    if balance_raw is not None:
-                        try:
-                            balance_formatted = f"{int(balance_raw) / (10**token_decimals):.6f}"
-                        except: # pylint: disable=bare-except
-                            balance_formatted = f"{balance_raw} (raw)"
-                    balances_summary += f"  - {html.quote(token_name)} ({html.quote(token_abbr)}): {html.quote(balance_formatted)}\n"
-                if len(tokens) > max_to_show:
-                    balances_summary += f"(Showing top {max_to_show} balances out of {len(tokens)} found in API batch of up to 50)\n"
-                elif not tokens:
-                    balances_summary += "No TRC20 token balances found.\n"
-            else:
-                balances_summary += "No TRC20 token balances found.\n"
-        else:
-            balances_summary += "Could not retrieve TRC20 token balances.\n"
-    except Exception as e:
-        logging.error(f"Error fetching TRC20 balances for AI for {address}: {e}")
-        balances_summary += f"Error fetching TRC20 balances: {html.quote(str(e))}\n"
-    balances_summary += "--------------------------\n\n"
-    return balances_summary
-
-
-async def _format_account_transfer_amounts_for_ai(address: str, api_client: TronScanAPI, max_details_to_show: int = 2) -> str:
-    amounts_summary = "Section: Account Fund Flow Summary (USD)\n--------------------------\n"
-    try:
-        transfer_amounts = await api_client.get_account_transfer_amounts(address)
-        if transfer_amounts:
-            if transfer_amounts.get('transfer_in'):
-                in_data = transfer_amounts['transfer_in']
-                amounts_summary += "Transfer In:\n"
-                amounts_summary += f"  Total Records: {in_data.get('total', 'N/A')}\n"
-                amounts_summary += f"  Total USD Amount: {in_data.get('amountTotal', 'N/A')}\n"
-                if isinstance(in_data.get('data'), list) and in_data['data']:
-                    amounts_summary += f"  Top Senders (Max {max_details_to_show} shown):\n"
-                    for item in in_data['data'][:max_details_to_show]:
-                        amounts_summary += f"    - Address: {html.quote(item.get('address','N/A'))}, Amount USD: {item.get('amountInUsd','N/A')}, Tag: {html.quote(item.get('addressTag','N/A'))}\n"
-            else:
-                amounts_summary += "No 'transfer_in' data found.\n"
-            
-            amounts_summary += "\n"
-            if transfer_amounts.get('transfer_out'):
-                out_data = transfer_amounts['transfer_out']
-                amounts_summary += "Transfer Out:\n"
-                amounts_summary += f"  Total Records: {out_data.get('total', 'N/A')}\n"
-                amounts_summary += f"  Total USD Amount: {out_data.get('amountTotal', 'N/A')}\n"
-                if isinstance(out_data.get('data'), list) and out_data['data']:
-                    amounts_summary += f"  Top Receivers (Max {max_details_to_show} shown):\n"
-                    for item in out_data['data'][:max_details_to_show]:
-                        amounts_summary += f"    - Address: {html.quote(item.get('address','N/A'))}, Amount USD: {item.get('amountInUsd','N/A')}, Tag: {html.quote(item.get('addressTag','N/A'))}\n"
-            else:
-                amounts_summary += "No 'transfer_out' data found.\n"
-        else:
-            amounts_summary += "Could not retrieve account fund flow summary.\n"
-    except Exception as e:
-        logging.error(f"Error fetching account transfer amounts for AI for {address}: {e}")
-        amounts_summary += f"Error fetching account fund flow summary: {html.quote(str(e))}\n"
-    amounts_summary += "--------------------------\n\n"
-    return amounts_summary
-
-
-async def _format_blacklist_status_for_ai(address_to_check: str, full_blacklist_entries: list, for_related: bool = False) -> str:
-    """
-    Checks a given address against a pre-fetched list of blacklisted entries.
-    Returns a formatted string for AI consumption.
-    If for_related is True, the output is more concise.
-    """
-    if not full_blacklist_entries:
-        if not for_related:
-            return f"Section: Blacklist Status for {html.quote(address_to_check)}\n--------------------------\nCould not check blacklist (no data provided).\n--------------------------\n\n"
-        return "" # No data to check against for related account
-
-    found_on_blacklist = False
-    blacklist_details = ""
-
-    for entry in full_blacklist_entries:
-        if entry.get('blackAddress') == address_to_check:
-            token_name = entry.get('tokenName', 'N/A')
-            reason = entry.get('remark', 'No specific reason provided')
-            entry_time_ms = entry.get('time')
-            entry_time_str = "N/A"
-            if entry_time_ms:
-                try:
-                    entry_time_str = datetime.fromtimestamp(entry_time_ms / 1000).strftime('%Y-%m-%d %H:%M:%S UTC')
-                except: # pylint: disable=bare-except
-                    pass
-            
-            if for_related:
-                blacklist_details = f" (<b>WARNING: ON STABLECOIN BLACKLIST</b> - Token: {html.quote(token_name)})"
-            else:
-                blacklist_details = (
-                    f"WARNING: Address is ON the stablecoin blacklist.\n"
-                    f"  Token: {html.quote(token_name)}\n"
-                    f"  Reason/Remark: {html.quote(reason)}\n"
-                    f"  Blacklisted On: {entry_time_str}\n"
-                    f"  Transaction Hash (related to blacklisting): {html.quote(entry.get('transHash', 'N/A'))}\n"
-                )
-            found_on_blacklist = True
-            break 
-    
-    if for_related:
-        return blacklist_details # Return only the concise note for related accounts
-
-    # For primary address check:
-    blacklist_summary = f"Section: Stablecoin Blacklist Status for {html.quote(address_to_check)}\n--------------------------\n"
-    if found_on_blacklist:
-        blacklist_summary += blacklist_details
-    else:
-        blacklist_summary += "Address is NOT found on the stablecoin blacklist.\n"
-    blacklist_summary += "--------------------------\n\n"
-    return blacklist_summary
-
-
-async def _format_related_accounts_for_ai(address: str, api_client: TronScanAPI, full_blacklist_entries: list, max_to_show: int = 5) -> str:
-    related_summary = f"Section: Top Related Accounts (Interacted With - Max {max_to_show} shown)\n--------------------------\n"
-    try:
-        related_data = await api_client.get_account_related_accounts(address)
-        if related_data and isinstance(related_data.get('data'), list):
-            accounts = related_data['data']
-            if accounts:
-                for acc_data in accounts[:max_to_show]:
-                    related_address = acc_data.get('related_address', 'N/A')
-                    # Get concise blacklist status for the related address
-                    blacklist_note = await _format_blacklist_status_for_ai(related_address, full_blacklist_entries, for_related=True)
-                    
-                    related_summary += (
-                        f"  - Address: {html.quote(related_address)}{blacklist_note}, "
-                        f"Tag: {html.quote(acc_data.get('addressTag', 'N/A'))}, "
-                        f"In USD: {acc_data.get('inAmountUsd', 'N/A')}, "
-                        f"Out USD: {acc_data.get('outAmountUsd', 'N/A')}\n"
-                    )
-                if len(accounts) > max_to_show:
-                    related_summary += f"(Showing top {max_to_show} related accounts out of {len(accounts)} found)\n"
-            else:
-                related_summary += "No related accounts found.\n"
-        else:
-            related_summary += "Could not retrieve related accounts information.\n"
-    except Exception as e:
-        logging.error(f"Error fetching related accounts for AI for {address}: {e}")
-        related_summary += f"Error fetching related accounts: {html.quote(str(e))}\n"
-    related_summary += "--------------------------\n\n"
-    return related_summary
-
-
-async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery, state: FSMContext):
-    """Handles the 'AI Scam Check (TRC20)' button click. Gathers data and prompts for language."""
-    await callback_query.answer("Performing AI Scam Check for TRC20 transactions...")
-    user_data = await state.get_data()
-    address = user_data.get("current_action_address")
-
-    if not address:
-        logging.warning(f"Could not retrieve address from state for AI Scam Check. UserID: {callback_query.from_user.id}")
-        await callback_query.message.answer("Error: Could not retrieve address for the AI report. Please try again.", show_alert=True)
-        return
-
-    # Edit the message from which the button was pressed to remove buttons and show "Gathering data..."
-    try:
-        await callback_query.message.edit_text(
-            text=f"{callback_query.message.text}\n\n🔄 Gathering comprehensive data for <code>{html.quote(address)}</code>. This may take a moment...",
-            parse_mode="HTML",
-            reply_markup=None # Remove original buttons
-        )
-    except TelegramAPIError as e:
-        logging.warning(f"Could not edit message text/markup in handle_ai_scam_check_tron_callback: {e}")
-        # If edit fails, send a new message
-        await callback_query.message.answer(f"🔄 Gathering comprehensive data for <code>{html.quote(address)}</code> for AI analysis. This may take a moment...", parse_mode="HTML")
-
-
-    tron_api_client = TronScanAPI()
-    enriched_data_for_ai = f"Comprehensive AI Scam Analysis Request for TRON Address: {html.quote(address)}\n"
-    enriched_data_for_ai += f"Report requested on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
-    
-    fetch_limit_trc20_history = 50
-    full_blacklist_entries = []
-
-    try:
-        # 0. Fetch Stablecoin Blacklist (once)
-        try:
-            blacklist_response = await tron_api_client.get_stablecoin_blacklist(limit=100000) 
-            if blacklist_response and isinstance(blacklist_response.get('data'), list):
-                full_blacklist_entries = blacklist_response['data']
-                logging.info(f"Fetched {len(full_blacklist_entries)} entries from stablecoin blacklist for AI check of {address}.")
-            else:
-                logging.warning(f"Could not fetch or parse stablecoin blacklist for AI check of {address}. Response: {blacklist_response}")
-        except Exception as e_bl:
-            logging.error(f"Error fetching stablecoin blacklist for AI for {address}: {e_bl}")
-            enriched_data_for_ai += f"Section: Blacklist Status\n--------------------------\nError fetching stablecoin blacklist: {html.quote(str(e_bl))}\n--------------------------\n\n"
-
-        # 1. Account Info
-        enriched_data_for_ai += await _format_account_info_for_ai(address, tron_api_client)
-        # 1.5. Blacklist status for the main address
-        enriched_data_for_ai += await _format_blacklist_status_for_ai(address, full_blacklist_entries)
-        # 2. Account Tags
-        enriched_data_for_ai += await _format_account_tags_for_ai(address, tron_api_client)
-        # 3. TRC20 Balances
-        enriched_data_for_ai += await _format_trc20_balances_for_ai(address, tron_api_client, max_to_show=5)
-        # 4. Account Transfer Amounts (Fund Flow Summary)
-        enriched_data_for_ai += await _format_account_transfer_amounts_for_ai(address, tron_api_client, max_details_to_show=3)
-        # 5. Related Accounts (now includes blacklist check)
-        enriched_data_for_ai += await _format_related_accounts_for_ai(address, tron_api_client, full_blacklist_entries, max_to_show=5)
-        # 6. TRC20 Transaction History
-        trc20_history_summary = f"Section: Recent TRC20 Transactions (Limit {fetch_limit_trc20_history})\n--------------------------\n"
-        history_data = await tron_api_client.get_trc20_transaction_history(
-            address=address, limit=fetch_limit_trc20_history, start=0
-        )
-        if history_data and history_data.get("token_transfers"):
-            transactions = history_data.get("token_transfers", [])
-            total_found_api = history_data.get("total", len(transactions))
-            trc20_history_summary += f"Found {len(transactions)} transactions in this batch (API reports total: {total_found_api}).\n"
-            if total_found_api > len(transactions) and len(transactions) == fetch_limit_trc20_history:
-                trc20_history_summary += f"Note: Analyzing the latest {fetch_limit_trc20_history} transactions. More transactions might exist.\n"
-            if not transactions:
-                 trc20_history_summary += "No TRC20 transactions found in the fetched batch.\n"
-            else:
-                for tx_idx, tx in enumerate(transactions):
-                    raw_timestamp_ms = tx.get('block_ts')
-                    human_readable_timestamp = "N/A"
-                    if raw_timestamp_ms is not None:
-                        try:
-                            human_readable_timestamp = datetime.fromtimestamp(float(raw_timestamp_ms) / 1000.0).strftime("%Y-%m-%d %H:%M:%S")
-                        except (ValueError, TypeError): human_readable_timestamp = "Invalid Timestamp"
-                    token_info = tx.get('tokenInfo', {})
-                    token_abbr = token_info.get('tokenAbbr', 'N/A')
-                    token_name = token_info.get('tokenName', 'Unknown Token')
-                    token_decimals = int(token_info.get('tokenDecimal', 0))
-                    quant_raw = tx.get('quant')
-                    amount_formatted = "N/A"
-                    if quant_raw is not None:
-                        try: amount_formatted = str(int(quant_raw) / (10**token_decimals))
-                        except (ValueError, TypeError): amount_formatted = f"{quant_raw} (raw)"
-                    trc20_history_summary += (
-                        f"Tx {tx_idx + 1}:\n"
-                        f"  Time: {human_readable_timestamp}, TxID: {html.quote(tx.get('transaction_id', 'N/A'))}\n"
-                        f"  From: {html.quote(tx.get('from_address', 'N/A'))}, To: {html.quote(tx.get('to_address', 'N/A'))}\n"
-                        f"  Token: {html.quote(token_name)} ({html.quote(token_abbr)}), Amount: {html.quote(amount_formatted)} {html.quote(token_abbr)}\n"
-                        f"   Confirmed: {tx.get('confirmed', 'N/A')}\n---\n"
-                    )
-        elif history_data: trc20_history_summary += "No TRC20 transactions found or response format unexpected for history.\n"
-        else: trc20_history_summary += "Failed to fetch TRC20 transaction history from TronScan.\n"
-        trc20_history_summary += "--------------------------\n\n"
-        enriched_data_for_ai += trc20_history_summary
-        
-        if "Could not retrieve" in enriched_data_for_ai and "Failed to fetch" in enriched_data_for_ai and "No TRC20 transactions found" in enriched_data_for_ai:
-            await callback_query.message.answer("Could not fetch sufficient transaction data for AI analysis. Please try again later or check the address on an explorer.")
-            return
-
-        # Store data in FSM for the next step (language choice)
-        await state.update_data(
-            ai_enriched_data=enriched_data_for_ai,
-            current_action_address=address # Ensure address is in state for the next handler
-        )
-
-        language_buttons = [
-            [
-                InlineKeyboardButton(text="🇬🇧 English", callback_data="ai_lang:en"),
-                InlineKeyboardButton(text="🇷🇺 Русский", callback_data="ai_lang:ru"),
-            ]
-        ]
-        reply_markup_lang = InlineKeyboardMarkup(inline_keyboard=language_buttons)
-        
-        # Edit the message to ask for language choice
-        await callback_query.message.edit_text(
-            text=f"Data gathered for <code>{html.quote(address)}</code>.\n📊 Please choose the report language:",
-            parse_mode="HTML",
-            reply_markup=reply_markup_lang
-        )
-        await state.set_state(AddressProcessingStates.awaiting_ai_language_choice)
-
-    except Exception as e:
-        logging.error(f"Error during AI Scam Check data gathering for {address}: {e}", exc_info=True)
-        await callback_query.message.answer(f"Sorry, an error occurred while gathering data for {html.quote(address)}.")
-    finally:
-        await tron_api_client.close_session()

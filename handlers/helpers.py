@@ -1,7 +1,7 @@
 """helpers.py - Contains utility functions for handling messages
 and forwarding them to an audit channel."""
 
-import logging
+import logging, re
 from aiogram import html, Bot # Added Bot
 from aiogram.types import Message, User # Added User
 from aiogram.exceptions import TelegramAPIError
@@ -88,3 +88,10 @@ async def send_text_to_audit_channel(bot: Bot, text: str, parse_mode: str = "HTM
             logging.error(f"Failed to send text to audit channel {TARGET_AUDIT_CHANNEL_ID}: {e}") # pylint: disable=logging-fstring-interpolation
     else:
         logging.warning("TARGET_AUDIT_CHANNEL_ID not set. Audit message not sent.")
+
+# Helper function for manual MarkdownV2 escaping
+def manual_escape_markdown_v2(text: str) -> str:
+    """Manually escapes characters for Telegram MarkdownV2."""
+    # Characters to escape: _ * [ ] ( ) ~ ` > # + - = | { } . !
+    escape_chars = r"[_*\[\]()~`>#+\-=|{}.!]" # Raw string for regex
+    return re.sub(escape_chars, r"\\\g<0>", text)

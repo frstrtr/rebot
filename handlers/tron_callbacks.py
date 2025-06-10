@@ -1,0 +1,402 @@
+"""
+tron_callbacks.py
+Handles TRON-specific callbacks (e.g., for TronScan API interactions).
+"""
+import logging
+from aiogram import html, types
+from aiogram.types import CallbackQuery, BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.fsm.context import FSMContext
+from aiogram.exceptions import TelegramAPIError
+from datetime import datetime
+from decimal import Decimal # Not directly used here but good for consistency if amounts were decimal
+
+from extapi.tronscan.client import TronScanAPI
+# from config.config import Config # TronScanAPI might use API key from its own config or env
+from .states import AddressProcessingStates # If TRON AI check sets states
+# from .ai_callbacks import manual_escape_markdown_v2 # If used directly here
+
+async def handle_update_report_tronscan_callback(callback_query: types.CallbackQuery, state: FSMContext):
+    """Handles the 'Update Report (TRC20)' button click for TronScan."""
+    await callback_query.answer("Fetching TRC20 report from TronScan...")
+    user_data = await state.get_data()
+    address = user_data.get("current_action_address")
+
+    if not address:
+        logging.warning(f"Could not retrieve address from state for TronScan report. UserID: {callback_query.from_user.id}")
+        await callback_query.message.answer("Error: Could not retrieve address for the report. Please try again.", show_alert=True)
+        return
+
+    api_client = TronScanAPI()
+    report_content = f"TRC20 Transaction Report for Address: {address}\n"
+    report_content += f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
+    fetch_limit = 200
+
+    try:
+        await callback_query.message.answer(f"Querying TronScan for TRC20 transfers of <code>{address}</code> (limit {fetch_limit})...", parse_mode="HTML")
+        
+        history_data = await api_client.get_trc20_transaction_history(
+            address=address,
+            limit=fetch_limit,
+            start=0
+        )
+
+        if history_data and history_data.get("token_transfers"):
+            transactions = history_data.get("token_transfers", [])
+            total_found_api = history_data.get("total", len(transactions))
+            
+            report_content += f"Found {len(transactions)} transactions in this batch (API reports total: {total_found_api}).\n"
+            if total_found_api > len(transactions):
+                report_content += "Note: More transactions might exist than shown in this batch due to API limits.\n"
+            report_content += "--------------------------------------------------\n"
+
+            for tx in transactions:
+                raw_timestamp_ms = tx.get('block_ts')
+                human_readable_timestamp = "N/A"
+                if raw_timestamp_ms is not None:
+                    try:
+                        timestamp_seconds = float(raw_timestamp_ms) / 1000.0
+                        dt_object = datetime.fromtimestamp(timestamp_seconds)
+                        human_readable_timestamp = dt_object.strftime("%Y-%m-%d %H:%M:%S")
+                    except (ValueError, TypeError):
+                        human_readable_timestamp = "Invalid Timestamp"
+                
+                token_info = tx.get('tokenInfo', {})
+                token_abbr = token_info.get('tokenAbbr', 'N/A')
+                token_name = token_info.get('tokenName', 'Unknown Token')
+                token_decimals = int(token_info.get('tokenDecimal', 0))
+                
+                quant_raw = tx.get('quant')
+                amount_formatted = "N/A"
+                if quant_raw is not None:
+                    try:
+                        amount_formatted = str(int(quant_raw) / (10**token_decimals))
+                    except (ValueError, TypeError):
+                        amount_formatted = f"{quant_raw} (raw)"
+
+                report_content += (
+                    f"Timestamp: {human_readable_timestamp} (Raw: {raw_timestamp_ms})\n"
+                    f"TxID: {tx.get('transaction_id', 'N/A')}\n"
+                    f"From: {tx.get('from_address', 'N/A')}\n"
+                    f"To: {tx.get('to_address', 'N/A')}\n"
+                    f"Token: {token_name} ({token_abbr})\n"
+                    f"Amount: {amount_formatted} {token_abbr} (Raw Quant: {quant_raw})\n"
+                    f"Confirmed: {tx.get('confirmed', 'N/A')}\n"
+                    f"--------------------------------------------------\n"
+                )
+        elif history_data:
+            report_content += "No TRC20 transactions found or response format unexpected.\n"
+            report_content += f"API Response: {str(history_data)[:500]}...\n"
+        else:
+            report_content += "Failed to fetch TRC20 transaction history from TronScan.\n"
+
+        report_file = BufferedInputFile(report_content.encode('utf-8'), filename=f"tronscan_report_{address}.txt")
+        await callback_query.message.answer_document(report_file)
+
+    except Exception as e:
+        logging.error(f"Error generating TronScan report for {address}: {e}", exc_info=True)
+        await callback_query.message.answer(f"Sorry, an error occurred while generating the report for {address}.")
+    finally:
+        await api_client.close_session()
+
+async def _format_account_info_for_ai(address: str, api_client: TronScanAPI) -> str:
+    info_summary = "Section: Account Overview\n--------------------------\n"
+    try:
+        account_info = await api_client.get_account_info(address)
+        if account_info:
+            trx_balance_sun = account_info.get('balance', 0)
+            trx_balance = trx_balance_sun / 1_000_000
+            account_name = account_info.get('account_name', 'N/A')
+            create_time_ms = account_info.get('create_time')
+            creation_time_str = "N/A"
+            if create_time_ms:
+                try:
+                    creation_time_str = datetime.fromtimestamp(create_time_ms / 1000).strftime('%Y-%m-%d %H:%M:%S UTC')
+                except: pass
+            total_tx_count = account_info.get('total_transaction_count', 'N/A')
+            info_summary += (
+                f"Address: {html.quote(address)}\n"
+                f"TRX Balance: {trx_balance:.6f} TRX\n"
+                f"Account Name: {html.quote(account_name)}\n"
+                f"Creation Time: {creation_time_str}\n"
+                f"Total Transactions: {total_tx_count}\n"
+            )
+        else:
+            info_summary += "Could not retrieve basic account information.\n"
+    except Exception as e:
+        logging.error(f"Error fetching account info for AI for {address}: {e}")
+        info_summary += f"Error fetching account info: {html.quote(str(e))}\n"
+    info_summary += "--------------------------\n\n"
+    return info_summary
+
+async def _format_account_tags_for_ai(address: str, api_client: TronScanAPI) -> str:
+    tags_summary = "Section: Account Tags\n--------------------------\n"
+    try:
+        tags_data = await api_client.get_account_tags(address)
+        found_tags = []
+        if tags_data:
+            if isinstance(tags_data.get('tags'), list) and tags_data['tags']:
+                for tag_info in tags_data['tags']:
+                    found_tags.append(tag_info.get('tag', 'Unknown Tag'))
+            elif tags_data.get('tag'):
+                found_tags.append(tags_data.get('tag'))
+            elif address in tags_data and isinstance(tags_data[address], dict) and tags_data[address].get('tag'):
+                found_tags.append(tags_data[address]['tag'])
+        if found_tags:
+            tags_summary += f"Tags: {html.quote(', '.join(list(set(found_tags))))}\n"
+        else:
+            tags_summary += "No specific tags found for this address.\n"
+    except Exception as e:
+        logging.error(f"Error fetching account tags for AI for {address}: {e}")
+        tags_summary += f"Error fetching account tags: {html.quote(str(e))}\n"
+    tags_summary += "(Note: Tags can indicate exchange, scammer, whale, etc.)\n--------------------------\n\n"
+    return tags_summary
+
+async def _format_trc20_balances_for_ai(address: str, api_client: TronScanAPI, max_to_show: int = 5) -> str:
+    balances_summary = f"Section: Top TRC20 Token Balances (Max {max_to_show} shown)\n--------------------------\n"
+    try:
+        balances_data = await api_client.get_account_trc20_balances(address, limit=50)
+        if balances_data and balances_data.get('trc20token_balances'):
+            tokens = balances_data['trc20token_balances']
+            if tokens:
+                for i, token in enumerate(tokens[:max_to_show]):
+                    token_name = token.get('tokenName', 'N/A')
+                    token_abbr = token.get('tokenAbbr', 'N/A')
+                    balance_raw = token.get('balance')
+                    token_decimals = int(token.get('tokenDecimal', 0))
+                    balance_formatted = "N/A"
+                    if balance_raw is not None:
+                        try:
+                            balance_formatted = f"{int(balance_raw) / (10**token_decimals):.6f}"
+                        except: balance_formatted = f"{balance_raw} (raw)"
+                    balances_summary += f"  - {html.quote(token_name)} ({html.quote(token_abbr)}): {html.quote(balance_formatted)}\n"
+                if len(tokens) > max_to_show:
+                    balances_summary += f"(Showing top {max_to_show} balances out of {len(tokens)} found in API batch of up to 50)\n"
+            else: # This case was missing, added for completeness
+                balances_summary += "No TRC20 token balances found.\n"
+        else:
+            balances_summary += "Could not retrieve TRC20 token balances.\n"
+    except Exception as e:
+        logging.error(f"Error fetching TRC20 balances for AI for {address}: {e}")
+        balances_summary += f"Error fetching TRC20 balances: {html.quote(str(e))}\n"
+    balances_summary += "--------------------------\n\n"
+    return balances_summary
+
+async def _format_account_transfer_amounts_for_ai(address: str, api_client: TronScanAPI, max_details_to_show: int = 2) -> str:
+    amounts_summary = "Section: Account Fund Flow Summary (USD)\n--------------------------\n"
+    try:
+        transfer_amounts = await api_client.get_account_transfer_amounts(address)
+        if transfer_amounts:
+            if transfer_amounts.get('transfer_in'):
+                in_data = transfer_amounts['transfer_in']
+                amounts_summary += "Transfer In:\n"
+                amounts_summary += f"  Total Records: {in_data.get('total', 'N/A')}\n"
+                amounts_summary += f"  Total USD Amount: {in_data.get('amountTotal', 'N/A')}\n"
+                if isinstance(in_data.get('data'), list) and in_data['data']:
+                    amounts_summary += f"  Top Senders (Max {max_details_to_show} shown):\n"
+                    for item in in_data['data'][:max_details_to_show]:
+                        amounts_summary += f"    - Address: {html.quote(item.get('address','N/A'))}, Amount USD: {item.get('amountInUsd','N/A')}, Tag: {html.quote(item.get('addressTag','N/A'))}\n"
+            else:
+                amounts_summary += "No 'transfer_in' data found.\n"
+            amounts_summary += "\n"
+            if transfer_amounts.get('transfer_out'):
+                out_data = transfer_amounts['transfer_out']
+                amounts_summary += "Transfer Out:\n"
+                amounts_summary += f"  Total Records: {out_data.get('total', 'N/A')}\n"
+                amounts_summary += f"  Total USD Amount: {out_data.get('amountTotal', 'N/A')}\n"
+                if isinstance(out_data.get('data'), list) and out_data['data']:
+                    amounts_summary += f"  Top Receivers (Max {max_details_to_show} shown):\n"
+                    for item in out_data['data'][:max_details_to_show]:
+                        amounts_summary += f"    - Address: {html.quote(item.get('address','N/A'))}, Amount USD: {item.get('amountInUsd','N/A')}, Tag: {html.quote(item.get('addressTag','N/A'))}\n"
+            else:
+                amounts_summary += "No 'transfer_out' data found.\n"
+        else:
+            amounts_summary += "Could not retrieve account fund flow summary.\n"
+    except Exception as e:
+        logging.error(f"Error fetching account transfer amounts for AI for {address}: {e}")
+        amounts_summary += f"Error fetching account fund flow summary: {html.quote(str(e))}\n"
+    amounts_summary += "--------------------------\n\n"
+    return amounts_summary
+
+async def _format_blacklist_status_for_ai(address_to_check: str, full_blacklist_entries: list, for_related: bool = False) -> str:
+    if not full_blacklist_entries:
+        if not for_related:
+            return f"Section: Blacklist Status for {html.quote(address_to_check)}\n--------------------------\nCould not check blacklist (no data provided).\n--------------------------\n\n"
+        return ""
+    found_on_blacklist = False
+    blacklist_details = ""
+    for entry in full_blacklist_entries:
+        if entry.get('blackAddress') == address_to_check:
+            token_name = entry.get('tokenName', 'N/A')
+            reason = entry.get('remark', 'No specific reason provided')
+            entry_time_ms = entry.get('time')
+            entry_time_str = "N/A"
+            if entry_time_ms:
+                try: entry_time_str = datetime.fromtimestamp(entry_time_ms / 1000).strftime('%Y-%m-%d %H:%M:%S UTC')
+                except: pass
+            if for_related:
+                blacklist_details = f" (<b>WARNING: ON STABLECOIN BLACKLIST</b> - Token: {html.quote(token_name)})"
+            else:
+                blacklist_details = (
+                    f"WARNING: Address is ON the stablecoin blacklist.\n"
+                    f"  Token: {html.quote(token_name)}\n"
+                    f"  Reason/Remark: {html.quote(reason)}\n"
+                    f"  Blacklisted On: {entry_time_str}\n"
+                    f"  Transaction Hash (related to blacklisting): {html.quote(entry.get('transHash', 'N/A'))}\n"
+                )
+            found_on_blacklist = True
+            break 
+    if for_related: return blacklist_details
+    blacklist_summary = f"Section: Stablecoin Blacklist Status for {html.quote(address_to_check)}\n--------------------------\n"
+    if found_on_blacklist: blacklist_summary += blacklist_details
+    else: blacklist_summary += "Address is NOT found on the stablecoin blacklist.\n"
+    blacklist_summary += "--------------------------\n\n"
+    return blacklist_summary
+
+async def _format_related_accounts_for_ai(address: str, api_client: TronScanAPI, full_blacklist_entries: list, max_to_show: int = 5) -> str:
+    related_summary = f"Section: Top Related Accounts (Interacted With - Max {max_to_show} shown)\n--------------------------\n"
+    try:
+        related_data = await api_client.get_account_related_accounts(address)
+        if related_data and isinstance(related_data.get('data'), list):
+            accounts = related_data['data']
+            if accounts:
+                for acc_data in accounts[:max_to_show]:
+                    related_address = acc_data.get('related_address', 'N/A')
+                    blacklist_note = await _format_blacklist_status_for_ai(related_address, full_blacklist_entries, for_related=True)
+                    related_summary += (
+                        f"  - Address: {html.quote(related_address)}{blacklist_note}, "
+                        f"Tag: {html.quote(acc_data.get('addressTag', 'N/A'))}, "
+                        f"In USD: {acc_data.get('inAmountUsd', 'N/A')}, "
+                        f"Out USD: {acc_data.get('outAmountUsd', 'N/A')}\n"
+                    )
+                if len(accounts) > max_to_show:
+                    related_summary += f"(Showing top {max_to_show} related accounts out of {len(accounts)} found)\n"
+            else:
+                related_summary += "No related accounts found.\n"
+        else:
+            related_summary += "Could not retrieve related accounts information.\n"
+    except Exception as e:
+        logging.error(f"Error fetching related accounts for AI for {address}: {e}")
+        related_summary += f"Error fetching related accounts: {html.quote(str(e))}\n"
+    related_summary += "--------------------------\n\n"
+    return related_summary
+
+async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery, state: FSMContext):
+    """Handles the 'AI Scam Check (TRC20)' button click. Gathers data and prompts for language."""
+    await callback_query.answer("Performing AI Scam Check for TRC20 transactions...")
+    user_data = await state.get_data()
+    address = user_data.get("current_action_address")
+
+    if not address:
+        logging.warning(f"Could not retrieve address from state for AI Scam Check. UserID: {callback_query.from_user.id}")
+        await callback_query.message.answer("Error: Could not retrieve address for the AI report. Please try again.", show_alert=True)
+        return
+
+    try:
+        await callback_query.message.edit_text(
+            text=f"{callback_query.message.text}\n\n🔄 Gathering comprehensive data for <code>{html.quote(address)}</code>. This may take a moment...",
+            parse_mode="HTML",
+            reply_markup=None
+        )
+    except TelegramAPIError as e:
+        logging.warning(f"Could not edit message text/markup in handle_ai_scam_check_tron_callback: {e}")
+        await callback_query.message.answer(f"🔄 Gathering comprehensive data for <code>{html.quote(address)}</code> for AI analysis. This may take a moment...", parse_mode="HTML")
+
+    tron_api_client = TronScanAPI()
+    enriched_data_for_ai = f"Comprehensive AI Scam Analysis Request for TRON Address: {html.quote(address)}\n"
+    enriched_data_for_ai += f"Report requested on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
+    fetch_limit_trc20_history = 50
+    full_blacklist_entries = []
+
+    try:
+        try:
+            blacklist_response = await tron_api_client.get_stablecoin_blacklist(limit=100000) 
+            if blacklist_response and isinstance(blacklist_response.get('data'), list):
+                full_blacklist_entries = blacklist_response['data']
+                logging.info(f"Fetched {len(full_blacklist_entries)} entries from stablecoin blacklist for AI check of {address}.")
+            else:
+                logging.warning(f"Could not fetch or parse stablecoin blacklist for AI check of {address}. Response: {blacklist_response}")
+        except Exception as e_bl:
+            logging.error(f"Error fetching stablecoin blacklist for AI for {address}: {e_bl}")
+            enriched_data_for_ai += f"Section: Blacklist Status\n--------------------------\nError fetching stablecoin blacklist: {html.quote(str(e_bl))}\n--------------------------\n\n"
+
+        enriched_data_for_ai += await _format_account_info_for_ai(address, tron_api_client)
+        enriched_data_for_ai += await _format_blacklist_status_for_ai(address, full_blacklist_entries)
+        enriched_data_for_ai += await _format_account_tags_for_ai(address, tron_api_client)
+        enriched_data_for_ai += await _format_trc20_balances_for_ai(address, tron_api_client, max_to_show=5)
+        enriched_data_for_ai += await _format_account_transfer_amounts_for_ai(address, tron_api_client, max_details_to_show=3)
+        enriched_data_for_ai += await _format_related_accounts_for_ai(address, tron_api_client, full_blacklist_entries, max_to_show=5)
+        
+        trc20_history_summary = f"Section: Recent TRC20 Transactions (Limit {fetch_limit_trc20_history})\n--------------------------\n"
+        history_data = await tron_api_client.get_trc20_transaction_history(
+            address=address, limit=fetch_limit_trc20_history, start=0
+        )
+        if history_data and history_data.get("token_transfers"):
+            transactions = history_data.get("token_transfers", [])
+            total_found_api = history_data.get("total", len(transactions))
+            trc20_history_summary += f"Found {len(transactions)} transactions in this batch (API reports total: {total_found_api}).\n"
+            if total_found_api > len(transactions) and len(transactions) == fetch_limit_trc20_history:
+                trc20_history_summary += f"Note: Analyzing the latest {fetch_limit_trc20_history} transactions. More transactions might exist.\n"
+            if not transactions:
+                 trc20_history_summary += "No TRC20 transactions found in the fetched batch.\n"
+            else:
+                for tx_idx, tx in enumerate(transactions):
+                    raw_timestamp_ms = tx.get('block_ts')
+                    human_readable_timestamp = "N/A"
+                    if raw_timestamp_ms is not None:
+                        try: human_readable_timestamp = datetime.fromtimestamp(float(raw_timestamp_ms) / 1000.0).strftime("%Y-%m-%d %H:%M:%S")
+                        except (ValueError, TypeError): human_readable_timestamp = "Invalid Timestamp"
+                    token_info = tx.get('tokenInfo', {})
+                    token_abbr = token_info.get('tokenAbbr', 'N/A')
+                    token_name = token_info.get('tokenName', 'Unknown Token')
+                    token_decimals = int(token_info.get('tokenDecimal', 0))
+                    quant_raw = tx.get('quant')
+                    amount_formatted = "N/A"
+                    if quant_raw is not None:
+                        try: amount_formatted = str(int(quant_raw) / (10**token_decimals))
+                        except (ValueError, TypeError): amount_formatted = f"{quant_raw} (raw)"
+                    trc20_history_summary += (
+                        f"Tx {tx_idx + 1}:\n"
+                        f"  Time: {human_readable_timestamp}, TxID: {html.quote(tx.get('transaction_id', 'N/A'))}\n"
+                        f"  From: {html.quote(tx.get('from_address', 'N/A'))}, To: {html.quote(tx.get('to_address', 'N/A'))}\n"
+                        f"  Token: {html.quote(token_name)} ({html.quote(token_abbr)}), Amount: {html.quote(amount_formatted)} {html.quote(token_abbr)}\n"
+                        f"   Confirmed: {tx.get('confirmed', 'N/A')}\n---\n"
+                    )
+        elif history_data: trc20_history_summary += "No TRC20 transactions found or response format unexpected for history.\n"
+        else: trc20_history_summary += "Failed to fetch TRC20 transaction history from TronScan.\n"
+        trc20_history_summary += "--------------------------\n\n"
+        enriched_data_for_ai += trc20_history_summary
+        
+        if "Could not retrieve" in enriched_data_for_ai and "Failed to fetch" in enriched_data_for_ai and "No TRC20 transactions found" in enriched_data_for_ai: # Basic check
+            await callback_query.message.answer("Could not fetch sufficient transaction data for AI analysis. Please try again later or check the address on an explorer.")
+            return
+
+        await state.update_data(
+            ai_enriched_data=enriched_data_for_ai,
+            current_action_address=address
+        )
+
+        language_buttons = [
+            [
+                InlineKeyboardButton(text="🇬🇧 English", callback_data="ai_lang:en"),
+                InlineKeyboardButton(text="🇷🇺 Русский", callback_data="ai_lang:ru"),
+            ]
+        ]
+        reply_markup_lang = InlineKeyboardMarkup(inline_keyboard=language_buttons)
+        
+        await callback_query.message.edit_text(
+            text=f"Data gathered for <code>{html.quote(address)}</code>.\n📊 Please choose the report language:",
+            parse_mode="HTML",
+            reply_markup=reply_markup_lang
+        )
+        await state.set_state(AddressProcessingStates.awaiting_ai_language_choice)
+
+    except Exception as e:
+        logging.error(f"Error during AI Scam Check data gathering for {address}: {e}", exc_info=True)
+        await callback_query.message.answer(f"Sorry, an error occurred while gathering data for {html.quote(address)}.")
+    finally:
+        await tron_api_client.close_session()
+
+# Register these handlers with your dispatcher:
+# from .tron_callbacks import handle_update_report_tronscan_callback, handle_ai_scam_check_tron_callback
+# dp.callback_query.register(handle_update_report_tronscan_callback, F.data == "update_report_tronscan")
+# dp.callback_query.register(handle_ai_scam_check_tron_callback, F.data == "ai_scam_check_tron")

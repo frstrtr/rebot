@@ -8,17 +8,23 @@ from .commands import command_start_handler, checkmemo_handler
 from .callback_handlers import (
     handle_blockchain_clarification_callback,
     # handle_memo_action_callback, # Potentially replaced
-    handle_show_public_memos_callback, # Renamed/specified
-    handle_show_private_memos_callback, # New
-    handle_request_memo_callback, # New (replaces proceed_to_memo_stage and parts of memo_action)
+    handle_show_public_memos_callback,  # Renamed/specified
+    handle_show_private_memos_callback,  # New
+    handle_request_memo_callback,  # New (replaces proceed_to_memo_stage and parts of memo_action)
     # handle_proceed_to_memo_stage_callback, # Potentially replaced
     handle_skip_address_action_stage_callback,
+)
+from .ai_callbacks import (
+    handle_ai_language_choice_callback,
+    handle_ai_response_memo_action_callback,
+)
+from .tron_callbacks import (
     handle_update_report_tronscan_callback,
-    handle_ai_scam_check_tron_callback, # New handler import
-    handle_ai_language_choice_callback, # New handler import
-    handle_ai_response_memo_action_callback, # New handler for AI response memo actions
-    handle_show_token_transfers_evm_callback, # ADDED
-    handle_ai_scam_check_evm_callback, # ADDED
+    handle_ai_scam_check_tron_callback,
+)
+from .evm_callbacks import (
+    handle_show_token_transfers_evm_callback,
+    handle_ai_scam_check_evm_callback,
 )
 from .states import AddressProcessingStates
 
@@ -36,9 +42,9 @@ __all__ = [
     "handle_skip_address_action_stage_callback",
     "AddressProcessingStates",
     "handle_update_report_tronscan_callback",
-    "handle_ai_scam_check_tron_callback", # New handler export
-    "handle_ai_language_choice_callback", # New handler export
-    "handle_ai_response_memo_action_callback", # New handler export
-    "handle_show_token_transfers_evm_callback", # ADDED
-    "handle_ai_scam_check_evm_callback", # ADDED
+    "handle_ai_scam_check_tron_callback",  # New handler export
+    "handle_ai_language_choice_callback",  # New handler export
+    "handle_ai_response_memo_action_callback",  # New handler export
+    "handle_show_token_transfers_evm_callback",  # ADDED
+    "handle_ai_scam_check_evm_callback",  # ADDED
 ]

@@ -82,7 +82,7 @@ class TronScanAPI:
             headers["TRON-PRO-API-KEY"] = self.api_key
 
         try:
-            async with session.request(method, url, params=params, json=data, headers=headers, timeout=10) as response:
+            async with session.request(method, url, params=params, json=data, headers=headers, timeout=30) as response: # Increased timeout to 30 seconds
                 if not response.ok: 
                     error_body = await response.text() 
                     logging.error(

@@ -230,14 +230,27 @@ class CryptoAddressFinder:
             if matches:  # Only log if matches is not empty
                 logging.info("[%s] Regex matches: %s", _blockchain, matches)
                 for _address in matches:
-                    if self.validate_checksum(_blockchain, _address):
+                    # Ensure we are working with a single address string if regex returns tuples (e.g. from capturing groups)
+                    current_address_to_validate = _address[0] if isinstance(_address, tuple) else _address
+
+                    if self.validate_checksum(_blockchain, current_address_to_validate):
                         logging.info(
-                            "[%s] Address passed checksum: %s%s%s", _blockchain, Config.PURPLE, _address, Config.RESET_COLOR
+                            "[%s] Address passed checksum: %s%s%s", _blockchain, Config.PURPLE, current_address_to_validate, Config.RESET_COLOR
                         )
-                        results[_blockchain].append(_address)
+                        # For Ethereum, if '0x' is missing and validation passed, prepend '0x'
+                        if _blockchain == "ethereum" and not current_address_to_validate.startswith("0x"):
+                            if len(current_address_to_validate) == 40 and all(c in "0123456789abcdefABCDEF" for c in current_address_to_validate): # Double check it's a 40-char hex
+                                validated_address = "0x" + current_address_to_validate
+                                logging.info(f"[{_blockchain}] Prepended '0x' to: {validated_address}")
+                            else: # Should not happen if validate_checksum is correct, but as a safeguard
+                                validated_address = current_address_to_validate
+                        else:
+                            validated_address = current_address_to_validate
+                        
+                        results[_blockchain].append(validated_address)
                     else:
                         logging.warning(
-                            "[%s] Address failed checksum: %s", _blockchain, _address
+                            "[%s] Address failed checksum: %s", _blockchain, current_address_to_validate
                         )
 
         # Remove empty results

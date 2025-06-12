@@ -227,34 +227,65 @@ async def handle_ai_response_memo_action_callback(callback_query: types.Callback
     user_fsm_data = await state.get_data()
     ai_report_text = user_fsm_data.get("ai_report_text") 
     address_to_update = user_fsm_data.get("current_action_address")
-    # For TRON, blockchain might not be explicitly in FSM for this stage, default or derive.
-    # For EVM, it should be there.
-    blockchain_for_update = user_fsm_data.get("current_action_blockchain", "tron") # Default to tron if not specified
+    blockchain_for_update = user_fsm_data.get("current_action_blockchain", "tron") 
     current_scan_db_message_id = user_fsm_data.get("current_scan_db_message_id")
+    requesting_user = callback_query.from_user
 
-    if not ai_report_text or not address_to_update: # Blockchain can be defaulted for TRON
+    if not ai_report_text or not address_to_update: 
         logging.error("Missing AI report text or address context for saving memo.")
         await callback_query.message.answer("Error: Could not process memo action due to missing context.")
         return
 
+    bot_info = await callback_query.bot.get_me()
+    bot_username = bot_info.username
+
+    address_deeplink = f"<a href=\"https://t.me/{bot_username}?start={html.quote(address_to_update)}\">{html.quote(address_to_update)}</a>"
+    
+    user_id_deeplink = f"<a href=\"https://t.me/oLolsBot?start={requesting_user.id}\">{requesting_user.id}</a>"
+    user_info_parts = [f"ID: {user_id_deeplink}"]
+    if requesting_user.first_name:
+        user_info_parts.append(f"Name: {html.quote(requesting_user.first_name)}")
+    if requesting_user.last_name:
+        user_info_parts.append(f"Last Name: {html.quote(requesting_user.last_name)}")
+    if requesting_user.username:
+        user_info_parts.append(f"Username: @{html.quote(requesting_user.username)}")
+    
+    formatted_user_info = "👤 User Details:\n" + "\n".join(user_info_parts)
+
     audit_report_header = (
         f"<b>🤖 AI Scam Analysis Report</b>\n"
-        f"<b>Address:</b> <code>{html.quote(address_to_update)}</code>\n"
+        f"<b>Address:</b> {address_deeplink}\n"
         f"<b>Blockchain:</b> {html.quote(blockchain_for_update.capitalize())}\n"
-        f"<b>Requested by:</b> {format_user_info_for_audit(callback_query.from_user)}\n"
+        f"<b>Requested by:</b> {formatted_user_info}\n"
         f"------------------------------------\n"
     )
-    full_audit_text = audit_report_header + html.quote(ai_report_text) 
+    # Construct full_audit_text by directly concatenating the HTML header and the HTML report
+    # ai_report_text is already HTML formatted (it's final_html_report)
+    full_audit_text = audit_report_header + ai_report_text 
     
     if len(full_audit_text) > MAX_TELEGRAM_MESSAGE_LENGTH:
-        audit_intro_text = audit_report_header + "Report is too long. See user chat/logs. First part:\n" + html.quote(ai_report_text[:MAX_TELEGRAM_MESSAGE_LENGTH - len(audit_report_header) - 100]) + "..."
+        # For the truncated intro, we might still want to quote a raw slice of ai_report_text
+        # to prevent sending broken HTML if the slice cuts a tag.
+        # However, the main report is sent as a file.
+        # The user's primary issue is with the full_audit_text when sent directly.
+        preview_text_slice = ai_report_text[:MAX_TELEGRAM_MESSAGE_LENGTH - len(audit_report_header) - 150] # Ensure space for header and ellipsis
+        
+        # To safely display a preview of HTML content, it's often better to strip tags or quote it.
+        # Since the full report is attached, quoting the preview is safer.
+        audit_intro_text = (
+            audit_report_header + 
+            "Report is too long. Full report attached as a file. First part of the report:\n" + 
+            html.quote(preview_text_slice) + "..."
+        )
         await send_text_to_audit_channel(callback_query.bot, audit_intro_text, parse_mode="HTML")
         try:
-            report_file = BufferedInputFile(ai_report_text.encode('utf-8'), filename=f"AI_Report_{address_to_update}_{blockchain_for_update}.txt")
-            await callback_query.bot.send_document(TARGET_AUDIT_CHANNEL_ID, report_file, caption=f"Full AI Report for {address_to_update}")
+            # Send the original HTML report as a file
+            report_file = BufferedInputFile(ai_report_text.encode('utf-8'), filename=f"AI_Report_{address_to_update}_{blockchain_for_update}.html") # Changed to .html
+            await callback_query.bot.send_document(TARGET_AUDIT_CHANNEL_ID, report_file, caption=f"Full AI Report for {html.quote(address_to_update)} on {html.quote(blockchain_for_update.capitalize())}")
         except Exception as e_audit_file:
             logging.error(f"Failed to send full AI report as file to audit channel: {e_audit_file}")
     else:
+        # Send the full_audit_text (which is now correctly combined HTML)
         await send_text_to_audit_channel(callback_query.bot, full_audit_text, parse_mode="HTML")
 
     if action == "skip":

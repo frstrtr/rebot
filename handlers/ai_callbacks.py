@@ -252,7 +252,7 @@ async def handle_ai_response_memo_action_callback(callback_query: types.Callback
     )
     # Construct full_audit_text by directly concatenating the HTML header and the HTML report
     # ai_report_text is already HTML formatted (it's final_html_report)
-    full_audit_text = audit_report_header + ai_report_text 
+    full_audit_text = audit_report_header + ai_report_text
     
     if len(full_audit_text) > MAX_TELEGRAM_MESSAGE_LENGTH:
         # For the truncated intro, we might still want to quote a raw slice of ai_report_text

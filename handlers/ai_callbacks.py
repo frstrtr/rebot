@@ -241,16 +241,7 @@ async def handle_ai_response_memo_action_callback(callback_query: types.Callback
 
     address_deeplink = f"<a href=\"https://t.me/{bot_username}?start={html.quote(address_to_update)}\">{html.quote(address_to_update)}</a>"
     
-    user_id_deeplink = f"<a href=\"https://t.me/oLolsBot?start={requesting_user.id}\">{requesting_user.id}</a>"
-    user_info_parts = [f"ID: {user_id_deeplink}"]
-    if requesting_user.first_name:
-        user_info_parts.append(f"Name: {html.quote(requesting_user.first_name)}")
-    if requesting_user.last_name:
-        user_info_parts.append(f"Last Name: {html.quote(requesting_user.last_name)}")
-    if requesting_user.username:
-        user_info_parts.append(f"Username: @{html.quote(requesting_user.username)}")
-    
-    formatted_user_info = "👤 User Details:\n" + "\n".join(user_info_parts)
+    formatted_user_info = format_user_info_for_audit(requesting_user)
 
     audit_report_header = (
         f"<b>🤖 AI Scam Analysis Report</b>\n"

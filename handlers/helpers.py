@@ -72,14 +72,17 @@ async def _forward_to_audit_channel(message: Message):
         )
 
 def format_user_info_for_audit(user: User) -> str:
-    """Formats user information for audit logs."""
-    user_info_parts = ["<b>👤 User Details:</b>"]
-    user_info_parts.append(f"ID: <code>{user.id}</code>")
+    """Formats user information for audit logs with deeplinked user ID."""
+    user_id_deeplink = f"<a href=\"https://t.me/oLolsBot?start={user.id}\">{user.id}</a>"
+    user_info_parts = ["👤 User Details:"]
+    user_info_parts.append(f"ID: {user_id_deeplink}")
+    
     name_parts = [html.quote(n) for n in [user.first_name, user.last_name] if n]
     if name_parts:
         user_info_parts.append(f"Name: {' '.join(name_parts)}")
     if user.username:
         user_info_parts.append(f"Username: @{html.quote(user.username)}")
+    
     return "\n".join(user_info_parts)
 
 async def send_text_to_audit_channel(bot: Bot, text: str, parse_mode: str = "HTML"):

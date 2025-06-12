@@ -34,7 +34,7 @@ async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery
     enriched_data_for_ai = user_fsm_data.get("ai_enriched_data", "") # Default to empty string
     address = user_fsm_data.get("current_action_address") 
     blockchain = user_fsm_data.get("current_action_blockchain", "N/A") # EVM might set this, TRON implies it
-    requesting_telegram_user_id = callback_query.from_user.id
+    requesting_user = callback_query.from_user # Defined for audit log
 
     if not address: # enriched_data_for_ai can be initially empty if only expert memos are to be used
         logging.error("Missing address in FSM for AI language choice.")
@@ -42,7 +42,7 @@ async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery
         await state.set_state(None)
         return
     expert_memo_content_str = ""
-    if requesting_telegram_user_id in Config.ADMINS:
+    if requesting_user.id in Config.ADMINS:
         db: Session = SessionLocal() # type: ignore
         try:
             admin_db_user = get_or_create_user(db, callback_query.from_user)
@@ -74,7 +74,7 @@ async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery
                             + "\n\n---\n".join(expert_notes_list) 
                             + "\n\n---\n\n"
                         )
-                        logging.info(f"Admin {requesting_telegram_user_id} provided expert memo for AI analysis of {address}.")
+                        logging.info(f"Admin {requesting_user.id} provided expert memo for AI analysis of {address}.")
         except Exception as e_db:
             logging.error(f"Error fetching admin expert memos for {address}: {e_db}", exc_info=True)
         finally:
@@ -168,6 +168,43 @@ async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery
     
     await state.update_data(ai_report_text=final_html_report) # final_html_report now contains the fully processed HTML
 
+    # --- Send AI Report to Audit Channel ---
+    if TARGET_AUDIT_CHANNEL_ID:
+        try:
+            bot_info_for_audit = await bot.get_me()
+            bot_username_for_audit = bot_info_for_audit.username
+
+            address_deeplink_for_audit = f"<a href=\"https://t.me/{bot_username_for_audit}?start={html.quote(address)}\">{html.quote(address)}</a>"
+            formatted_user_info_for_audit = format_user_info_for_audit(requesting_user)
+
+            audit_report_header = (
+                f"<b>🤖 AI Scam Analysis Report Generated</b>\n"
+                f"<b>Address:</b> {address_deeplink_for_audit}\n"
+                f"<b>Blockchain:</b> {html.quote(blockchain.capitalize() if blockchain != 'N/A' else 'TRON')}\n"
+                f"<b>Requested by:</b> {formatted_user_info_for_audit}\n"
+                f"------------------------------------\n"
+            )
+            full_audit_text = audit_report_header + final_html_report # final_html_report is already HTML
+
+            if len(full_audit_text) > MAX_TELEGRAM_MESSAGE_LENGTH:
+                preview_text_slice = final_html_report[:MAX_TELEGRAM_MESSAGE_LENGTH - len(audit_report_header) - 150] # Ensure space for header and ellipsis
+                audit_intro_text = (
+                    audit_report_header +
+                    "Report is too long. Full report attached as a file. First part of the report:\n" +
+                    preview_text_slice + "..." # Removed html.quote() here
+                )
+                await send_text_to_audit_channel(bot, audit_intro_text, parse_mode="HTML")
+                try:
+                    report_file = BufferedInputFile(final_html_report.encode('utf-8'), filename=f"AI_Report_{address}_{blockchain if blockchain != 'N/A' else 'TRON'}.html")
+                    await bot.send_document(TARGET_AUDIT_CHANNEL_ID, report_file, caption=f"Full AI Report for {html.quote(address)} on {html.quote(blockchain.capitalize() if blockchain != 'N/A' else 'TRON')}")
+                except Exception as e_audit_file:
+                    logging.error(f"Failed to send full AI report as file to audit channel: {e_audit_file}")
+            else:
+                await send_text_to_audit_channel(bot, full_audit_text, parse_mode="HTML")
+        except Exception as e_audit_main:
+            logging.error(f"Failed to send AI report to audit channel: {e_audit_main}", exc_info=True)
+    # --- End Send AI Report to Audit Channel ---
+
     # Send the report using HTML parse mode
     if len(final_html_report) > MAX_TELEGRAM_MESSAGE_LENGTH:
         parts = []
@@ -229,61 +266,46 @@ async def handle_ai_response_memo_action_callback(callback_query: types.Callback
     address_to_update = user_fsm_data.get("current_action_address")
     blockchain_for_update = user_fsm_data.get("current_action_blockchain", "tron") 
     current_scan_db_message_id = user_fsm_data.get("current_scan_db_message_id")
-    requesting_user = callback_query.from_user
+    # requesting_user = callback_query.from_user # No longer needed here for report audit
 
     if not ai_report_text or not address_to_update: 
         logging.error("Missing AI report text or address context for saving memo.")
         await callback_query.message.answer("Error: Could not process memo action due to missing context.")
         return
 
-    bot_info = await callback_query.bot.get_me()
-    bot_username = bot_info.username
-
-    address_deeplink = f"<a href=\"https://t.me/{bot_username}?start={html.quote(address_to_update)}\">{html.quote(address_to_update)}</a>"
-    
-    formatted_user_info = format_user_info_for_audit(requesting_user)
-
-    audit_report_header = (
-        f"<b>🤖 AI Scam Analysis Report</b>\n"
-        f"<b>Address:</b> {address_deeplink}\n"
-        f"<b>Blockchain:</b> {html.quote(blockchain_for_update.capitalize())}\n"
-        f"<b>Requested by:</b> {formatted_user_info}\n"
-        f"------------------------------------\n"
-    )
-    # Construct full_audit_text by directly concatenating the HTML header and the HTML report
-    # ai_report_text is already HTML formatted (it's final_html_report)
-    full_audit_text = audit_report_header + ai_report_text
-    
-    if len(full_audit_text) > MAX_TELEGRAM_MESSAGE_LENGTH:
-        # For the truncated intro, we might still want to quote a raw slice of ai_report_text
-        # to prevent sending broken HTML if the slice cuts a tag.
-        # However, the main report is sent as a file.
-        # The user's primary issue is with the full_audit_text when sent directly.
-        preview_text_slice = ai_report_text[:MAX_TELEGRAM_MESSAGE_LENGTH - len(audit_report_header) - 150] # Ensure space for header and ellipsis
-        
-        # To safely display a preview of HTML content, it's often better to strip tags or quote it.
-        # Since the full report is attached, quoting the preview is safer.
-        audit_intro_text = (
-            audit_report_header + 
-            "Report is too long. Full report attached as a file. First part of the report:\n" + 
-            html.quote(preview_text_slice) + "..."
-        )
-        await send_text_to_audit_channel(callback_query.bot, audit_intro_text, parse_mode="HTML")
-        try:
-            # Send the original HTML report as a file
-            report_file = BufferedInputFile(ai_report_text.encode('utf-8'), filename=f"AI_Report_{address_to_update}_{blockchain_for_update}.html") # Changed to .html
-            await callback_query.bot.send_document(TARGET_AUDIT_CHANNEL_ID, report_file, caption=f"Full AI Report for {html.quote(address_to_update)} on {html.quote(blockchain_for_update.capitalize())}")
-        except Exception as e_audit_file:
-            logging.error(f"Failed to send full AI report as file to audit channel: {e_audit_file}")
-    else:
-        # Send the full_audit_text (which is now correctly combined HTML)
-        await send_text_to_audit_channel(callback_query.bot, full_audit_text, parse_mode="HTML")
+    # The following audit log section for the report content is now removed.
+    # bot_info = await callback_query.bot.get_me()
+    # bot_username = bot_info.username
+    # address_deeplink = f"<a href=\"https://t.me/{bot_username}?start={html.quote(address_to_update)}\">{html.quote(address_to_update)}</a>"
+    # formatted_user_info = format_user_info_for_audit(requesting_user)
+    # audit_report_header = (
+    #     f"<b>🤖 AI Scam Analysis Report</b>\n"
+    #     f"<b>Address:</b> {address_deeplink}\n"
+    #     f"<b>Blockchain:</b> {html.quote(blockchain_for_update.capitalize())}\n"
+    #     f"<b>Requested by:</b> {formatted_user_info}\n"
+    #     f"------------------------------------\n"
+    # )
+    # full_audit_text = audit_report_header + ai_report_text
+    # if len(full_audit_text) > MAX_TELEGRAM_MESSAGE_LENGTH:
+    #     # ... (logic for sending file)
+    # else:
+    #     await send_text_to_audit_channel(callback_query.bot, full_audit_text, parse_mode="HTML")
 
     if action == "skip":
         await callback_query.message.edit_text(
             f"AI report for <code>{html.quote(address_to_update)}</code> was not saved. Logged to audit.",
             parse_mode="HTML", reply_markup=None
         )
+        # Optionally, send a simpler audit message about the skip action
+        if TARGET_AUDIT_CHANNEL_ID:
+            user_info_for_skip_audit = format_user_info_for_audit(callback_query.from_user)
+            skip_audit_text = (
+                f"📝 <b>AI Memo Action: Skipped</b>\n"
+                f"<b>Address:</b> <code>{html.quote(address_to_update)}</code>\n"
+                f"<b>Blockchain:</b> {html.quote(blockchain_for_update.capitalize())}\n"
+                f"<b>Action by:</b> {user_info_for_skip_audit}"
+            )
+            await send_text_to_audit_channel(callback_query.bot, skip_audit_text, parse_mode="HTML")
     else: 
         memo_type_to_save = MemoType.PUBLIC.value if action == "public" else MemoType.PRIVATE.value
         db = SessionLocal()
@@ -314,6 +336,16 @@ async def handle_ai_response_memo_action_callback(callback_query: types.Callback
                     f"✅ AI report for <code>{html.quote(address_to_update)}</code> saved as {action} memo.",
                     parse_mode="HTML", reply_markup=None
                 )
+                # Optionally, send a simpler audit message about the save action
+                if TARGET_AUDIT_CHANNEL_ID:
+                    user_info_for_save_audit = format_user_info_for_audit(callback_query.from_user)
+                    save_audit_text = (
+                        f"💾 <b>AI Memo Action: Saved as {action.capitalize()}</b>\n"
+                        f"<b>Address:</b> <code>{html.quote(address_to_update)}</code>\n"
+                        f"<b>Blockchain:</b> {html.quote(blockchain_for_update.capitalize())}\n"
+                        f"<b>Action by:</b> {user_info_for_save_audit}"
+                    )
+                    await send_text_to_audit_channel(callback_query.bot, save_audit_text, parse_mode="HTML")
             else:
                 logging.error(f"Failed to update AI memo for address ID {db_crypto_address.id}")
                 await callback_query.message.answer("Error: Could not save AI report as memo.")

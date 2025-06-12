@@ -8,11 +8,13 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardBut
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramAPIError
 from datetime import datetime
+from sqlalchemy import func # Add this import
+from sqlalchemy.orm import Session # Import Session
 
 from genai import VertexAIClient
 from config.config import Config
 from database import SessionLocal, get_or_create_user, save_crypto_address
-from database.models import MemoType
+from database.models import MemoType, CryptoAddress # Import CryptoAddress
 from database.queries import update_crypto_address_memo
 from .common import MAX_TELEGRAM_MESSAGE_LENGTH, TARGET_AUDIT_CHANNEL_ID
 from .states import AddressProcessingStates # For setting state if needed
@@ -29,14 +31,67 @@ async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery
     chosen_lang_name = lang_map.get(chosen_lang_code, "the selected language")
 
     user_fsm_data = await state.get_data()
-    enriched_data_for_ai = user_fsm_data.get("ai_enriched_data")
+    enriched_data_for_ai = user_fsm_data.get("ai_enriched_data", "") # Default to empty string
     address = user_fsm_data.get("current_action_address") 
     blockchain = user_fsm_data.get("current_action_blockchain", "N/A") # EVM might set this, TRON implies it
+    requesting_telegram_user_id = callback_query.from_user.id
 
-    if not enriched_data_for_ai or not address:
-        logging.error("Missing enriched_data_for_ai or address in FSM for AI language choice.")
-        await callback_query.message.answer("Error: Missing data for AI analysis. Please try again.")
+    if not address: # enriched_data_for_ai can be initially empty if only expert memos are to be used
+        logging.error("Missing address in FSM for AI language choice.")
+        await callback_query.message.answer("Error: Missing address data for AI analysis. Please try again.")
         await state.set_state(None)
+        return
+    expert_memo_content_str = ""
+    if requesting_telegram_user_id in Config.ADMINS:
+        db: Session = SessionLocal() # type: ignore
+        try:
+            admin_db_user = get_or_create_user(db, callback_query.from_user)
+            if admin_db_user and admin_db_user.id:
+                # Fetch private memos by this admin for this address/blockchain that start with "EXPERT"
+                expert_memos = db.query(CryptoAddress).filter(
+                    func.lower(CryptoAddress.address) == address.lower(),
+                    func.lower(CryptoAddress.blockchain) == blockchain.lower(), # Use the blockchain from FSM
+                    CryptoAddress.memo_type == MemoType.PRIVATE.value,
+                    CryptoAddress.memo_added_by_user_id == admin_db_user.id,
+                    func.lower(CryptoAddress.notes).like("expert%") # Case-insensitive prefix match
+                ).order_by(CryptoAddress.memo_updated_at.desc()).all()
+
+                if expert_memos:
+                    expert_notes_list = []
+                    for memo in expert_memos:
+                        if memo.notes:
+                            # Find the position of "expert" case-insensitively
+                            expert_keyword_pos = memo.notes.lower().find("expert")
+                            if expert_keyword_pos != -1:
+                                # Extract content after "expert" and strip leading separators/whitespace
+                                content_after_expert = memo.notes[expert_keyword_pos + len("expert"):].lstrip(' :-').strip()
+                                if content_after_expert:
+                                    expert_notes_list.append(content_after_expert)
+                    
+                    if expert_notes_list:
+                        expert_memo_content_str = (
+                            "Additional Expert Observations (to be integrated into the overall analysis):\n"
+                            + "\n\n---\n".join(expert_notes_list) 
+                            + "\n\n---\n\n"
+                        )
+                        logging.info(f"Admin {requesting_telegram_user_id} provided expert memo for AI analysis of {address}.")
+        except Exception as e_db:
+            logging.error(f"Error fetching admin expert memos for {address}: {e_db}", exc_info=True)
+        finally:
+            if db.is_active:
+                db.close()
+
+    # Prepend expert memo content to the existing enriched data
+    final_enriched_data = expert_memo_content_str + enriched_data_for_ai
+
+    if not final_enriched_data.strip(): # Check if, after all, there's no data to send
+        logging.warning(f"No data (neither enriched nor expert) to send for AI analysis for address {address}.")
+        await callback_query.message.edit_text(
+            text=f"No data available to perform AI analysis for <code>{html.quote(address)}</code>. Please ensure there is information to analyze.",
+            parse_mode="HTML",
+            reply_markup=None
+        )
+        await state.set_state(None) # Clear state as we can't proceed
         return
 
     await callback_query.message.edit_text(
@@ -64,8 +119,8 @@ async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery
             f"Analyze the following data for the address {html.quote(address)} on the {html.quote(blockchain.capitalize() if blockchain != 'N/A' else 'TRON')} blockchain. "
             f"Provide a concise risk assessment and identify any potential red flags or suspicious activities. "
             f"The user has requested the report in {chosen_lang_name}.\n\n"
-            f"Data:\n{enriched_data_for_ai}\n\n"
-            f"Based on this data, please provide your analysis in {chosen_lang_name}, focusing on:\n"
+            f"Data (this may include prior expert observations; integrate all provided information into your analysis):\n{final_enriched_data}\n\n" # MODIFIED
+            f"Based on ALL the provided data, please provide your analysis in {chosen_lang_name}, focusing on:\n" # MODIFIED
             f"1. Overall risk level (e.g., Low, Medium, High, Very High, Suspicious).\n"
             f"2. Key observations and red flags (e.g., interactions with known scam addresses, unusual transaction patterns, token characteristics if applicable, lack of activity, etc.).\n"
             f"3. A brief summary conclusion.\n"

@@ -10,11 +10,13 @@ from aiogram.exceptions import TelegramAPIError
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Optional
+import asyncio # Added for periodic typing
 
 from extapi.etherscan.client import EtherscanAPI, EtherscanAPIError
 from config.config import Config
 from .common import EXPLORER_CONFIG
 from .states import AddressProcessingStates # If EVM AI check sets states
+from .helpers import send_typing_periodically # Added for periodic typing
 # Import any other necessary modules like _orchestrate_next_processing_step if called directly
 # from .address_processing import _orchestrate_next_processing_step
 # from .ai_callbacks import manual_escape_markdown_v2 # If used directly here, but it's in helpers
@@ -385,16 +387,21 @@ async def handle_ai_scam_check_evm_callback(callback_query: types.CallbackQuery,
     except TelegramAPIError as e:
         logging.warning(f"Failed to edit message for AI EVM check data gathering: {e}")
 
-    # Send "typing..." action as a progress indicator for data gathering
-    try:
-        await callback_query.bot.send_chat_action(chat_id=callback_query.from_user.id, action="typing")
-    except TelegramAPIError as e_chat_action: # More specific error for Telegram API calls
-        logging.warning(f"Could not send typing action during EVM data gathering: {e_chat_action}")
+    # --- Start periodic typing ---
+    stop_typing_event = asyncio.Event()
+    typing_task = asyncio.create_task(
+        send_typing_periodically(callback_query.bot, callback_query.from_user.id, stop_typing_event)
+    )
+    # --- End periodic typing ---
 
     chain_config = EXPLORER_CONFIG.get(blockchain.lower())
     if not chain_config:
         logging.error(f"No EXPLORER_CONFIG found for blockchain: {blockchain}")
         await callback_query.message.answer(f"Configuration error: Explorer details for {blockchain.capitalize()} not found.")
+        # Stop typing if we exit early
+        stop_typing_event.set()
+        try: await typing_task
+        except asyncio.CancelledError: pass
         return
 
     api_base_url = chain_config.get("api_base_url")
@@ -405,6 +412,10 @@ async def handle_ai_scam_check_evm_callback(callback_query: types.CallbackQuery,
     if not api_base_url:
         logging.error(f"API base URL not configured for {blockchain} in EXPLORER_CONFIG.")
         await callback_query.message.answer(f"Configuration error: API URL for {blockchain.capitalize()} not set.")
+        # Stop typing if we exit early
+        stop_typing_event.set()
+        try: await typing_task
+        except asyncio.CancelledError: pass
         return
 
     evm_api_client = EtherscanAPI(api_key=api_key, base_url=api_base_url, chain_id=str(chain_id_for_client) if chain_id_for_client is not None else None)
@@ -424,6 +435,15 @@ async def handle_ai_scam_check_evm_callback(callback_query: types.CallbackQuery,
         enriched_data_for_ai += f"\nAn error occurred during data aggregation: {html.quote(str(e))}\n"
     finally:
         await evm_api_client.close_session()
+        # --- Stop periodic typing ---
+        stop_typing_event.set()
+        try:
+            await typing_task 
+        except asyncio.CancelledError:
+            logging.info(f"Typing task for chat {callback_query.from_user.id} was cancelled during EVM data gathering.")
+        except Exception as e_task_await:
+            logging.error(f"Error awaiting typing task for chat {callback_query.from_user.id} during EVM data gathering: {e_task_await}", exc_info=True)
+        # --- End stop periodic typing ---
 
     update_payload = {"ai_enriched_data": enriched_data_for_ai}
     if "current_scan_db_message_id" in user_fsm_data:

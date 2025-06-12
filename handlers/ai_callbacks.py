@@ -6,9 +6,10 @@ import logging
 from aiogram import html, types, Bot
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
 from aiogram.fsm.context import FSMContext
+import asyncio # Ensure asyncio is imported
 from aiogram.exceptions import TelegramAPIError
 from datetime import datetime
-from sqlalchemy import func # Add this import
+from sqlalchemy import func 
 from sqlalchemy.orm import Session # Import Session
 
 from genai import VertexAIClient
@@ -18,12 +19,11 @@ from database.models import MemoType, CryptoAddress # Import CryptoAddress
 from database.queries import update_crypto_address_memo
 from .common import MAX_TELEGRAM_MESSAGE_LENGTH, TARGET_AUDIT_CHANNEL_ID
 from .states import AddressProcessingStates # For setting state if needed
-# Ensure markdown_to_html is imported from helpers
-from .helpers import format_user_info_for_audit, send_text_to_audit_channel, replace_addresses_with_deeplinks, markdown_to_html 
+from .helpers import format_user_info_for_audit, send_text_to_audit_channel, replace_addresses_with_deeplinks, markdown_to_html, send_typing_periodically # MODIFIED: Added send_typing_periodically
 from .address_processing import _orchestrate_next_processing_step
 
 
-async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery, state: FSMContext, bot: Bot): # Added bot parameter
+async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery, state: FSMContext, bot: Bot):
     """Handles AI report language selection and triggers AI analysis."""
     await callback_query.answer()
     chosen_lang_code = callback_query.data.split(":")[1]
@@ -100,11 +100,12 @@ async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery
         reply_markup=None
     )
 
-    # Send "typing..." action as a progress indicator for the AI analysis
-    try:
-        await bot.send_chat_action(chat_id=callback_query.from_user.id, action="typing")
-    except TelegramAPIError as e_chat_action:
-        logging.warning(f"Could not send typing action due to Telegram API error: {e_chat_action}")
+    # --- Start periodic typing ---
+    stop_typing_event = asyncio.Event()
+    typing_task = asyncio.create_task(
+        send_typing_periodically(bot, callback_query.from_user.id, stop_typing_event)
+    )
+    # --- End periodic typing ---
 
     final_html_report = "Error: AI analysis could not be performed."
 
@@ -154,6 +155,16 @@ async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery
     except Exception as e:
         logging.error(f"Error during Vertex AI call for {address} on {blockchain if blockchain != 'N/A' else 'TRON'}: {e}", exc_info=True)
         final_html_report = f"An unexpected error occurred during AI analysis for {html.quote(address)}."
+    finally:
+        # --- Stop periodic typing ---
+        stop_typing_event.set()
+        try:
+            await typing_task 
+        except asyncio.CancelledError:
+            logging.info(f"Typing task for chat {callback_query.from_user.id} was cancelled.")
+        except Exception as e_task_await:
+            logging.error(f"Error awaiting typing task for chat {callback_query.from_user.id}: {e_task_await}", exc_info=True)
+        # --- End stop periodic typing ---
     
     await state.update_data(ai_report_text=final_html_report) # final_html_report now contains the fully processed HTML
 

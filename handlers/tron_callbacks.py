@@ -9,11 +9,11 @@ from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramAPIError
 from datetime import datetime
 from decimal import Decimal # Not directly used here but good for consistency if amounts were decimal
+import asyncio # Added for periodic typing
 
 from extapi.tronscan.client import TronScanAPI
-# from config.config import Config # TronScanAPI might use API key from its own config or env
 from .states import AddressProcessingStates # If TRON AI check sets states
-# from .ai_callbacks import manual_escape_markdown_v2 # If used directly here
+from .helpers import send_typing_periodically # Added for periodic typing
 
 async def handle_update_report_tronscan_callback(callback_query: types.CallbackQuery, state: FSMContext):
     """Handles the 'Update Report (TRC20)' button click for TronScan."""
@@ -99,6 +99,7 @@ async def handle_update_report_tronscan_callback(callback_query: types.CallbackQ
         await api_client.close_session()
 
 async def _format_account_info_for_ai(address: str, api_client: TronScanAPI) -> str:
+    """Formats account info for AI processing."""
     info_summary = "Section: Account Overview\n--------------------------\n"
     try:
         account_info = await api_client.get_account_info(address)
@@ -129,6 +130,7 @@ async def _format_account_info_for_ai(address: str, api_client: TronScanAPI) -> 
     return info_summary
 
 async def _format_account_tags_for_ai(address: str, api_client: TronScanAPI) -> str:
+    """Formats account tags for AI processing."""
     tags_summary = "Section: Account Tags\n--------------------------\n"
     try:
         tags_data = await api_client.get_account_tags(address)
@@ -152,6 +154,7 @@ async def _format_account_tags_for_ai(address: str, api_client: TronScanAPI) -> 
     return tags_summary
 
 async def _format_trc20_balances_for_ai(address: str, api_client: TronScanAPI, max_to_show: int = 50)-> str:
+    """Formats TRC20 token balances for AI processing."""
     balances_summary = f"Section: Top TRC20 Token Balances (Max {max_to_show} shown)\n--------------------------\n"
     try:
         balances_data = await api_client.get_account_trc20_balances(address, limit=50)
@@ -208,6 +211,7 @@ async def _format_trc20_balances_for_ai(address: str, api_client: TronScanAPI, m
     return balances_summary
 
 async def _format_account_transfer_amounts_for_ai(address: str, api_client: TronScanAPI, max_details_to_show: int = 10) -> str:
+    """Formats account transfer amounts for AI processing."""
     amounts_summary = "Section: Account Fund Flow Summary (USD)\n--------------------------\n"
     try:
         transfer_amounts = await api_client.get_account_transfer_amounts(address)
@@ -244,6 +248,7 @@ async def _format_account_transfer_amounts_for_ai(address: str, api_client: Tron
     return amounts_summary
 
 async def _format_blacklist_status_for_ai(address_to_check: str, full_blacklist_entries: list, for_related: bool = False) -> str:
+    """Formats the blacklist status for AI processing."""
     if not full_blacklist_entries:
         if not for_related:
             return f"Section: Blacklist Status for {html.quote(address_to_check)}\n--------------------------\nCould not check blacklist (no data provided).\n--------------------------\n\n"
@@ -279,6 +284,7 @@ async def _format_blacklist_status_for_ai(address_to_check: str, full_blacklist_
     return blacklist_summary
 
 async def _format_related_accounts_for_ai(address: str, api_client: TronScanAPI, full_blacklist_entries: list, max_to_show: int = 10) -> str:
+    """Formats related accounts for AI processing."""
     related_summary = f"Section: Top Related Accounts (Interacted With - Max {max_to_show} shown)\n--------------------------\n"
     try:
         related_data = await api_client.get_account_related_accounts(address)
@@ -328,11 +334,12 @@ async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery
         # If edit fails, send a new message
         await callback_query.message.answer(f"🔄 Gathering comprehensive data for <code>{html.quote(address)}</code> for AI analysis. This may take a moment...", parse_mode="HTML")
 
-    # Send "typing..." action as a progress indicator for data gathering
-    try:
-        await callback_query.bot.send_chat_action(chat_id=callback_query.from_user.id, action="typing")
-    except TelegramAPIError as e_chat_action:
-        logging.warning(f"Could not send typing action during Tron data gathering: {e_chat_action}")
+    # --- Start periodic typing ---
+    stop_typing_event = asyncio.Event()
+    typing_task = asyncio.create_task(
+        send_typing_periodically(callback_query.bot, callback_query.from_user.id, stop_typing_event)
+    )
+    # --- End periodic typing ---
 
     tron_api_client = TronScanAPI()
     enriched_data_for_ai = f"Comprehensive AI Scam Analysis Request for TRON Address: {html.quote(address)}\n"
@@ -440,3 +447,12 @@ async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery
         await callback_query.message.answer(f"Sorry, an error occurred while gathering data for {html.quote(address)}.")
     finally:
         await tron_api_client.close_session()
+        # --- Stop periodic typing ---
+        stop_typing_event.set()
+        try:
+            await typing_task
+        except asyncio.CancelledError:
+            logging.info(f"Typing task for chat {callback_query.from_user.id} was cancelled during Tron data gathering.")
+        except Exception as e_task_await:
+            logging.error(f"Error awaiting typing task for chat {callback_query.from_user.id} during Tron data gathering: {e_task_await}", exc_info=True)
+        # --- End stop periodic typing ---

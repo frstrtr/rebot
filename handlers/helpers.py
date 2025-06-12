@@ -5,6 +5,8 @@ import logging, re
 from aiogram import html, Bot 
 from aiogram.types import Message, User 
 from aiogram.exceptions import TelegramAPIError
+import asyncio # Added for asyncio operations
+import logging # Added for logging within the helper
 import markdown as  markdown2 # Added for Markdown to HTML conversion
 from bs4 import BeautifulSoup # Added for HTML sanitization
 from .common import TARGET_AUDIT_CHANNEL_ID, AMBIGUOUS_CHAIN_GROUPS, crypto_finder 
@@ -235,3 +237,32 @@ def manual_escape_markdown_v2(text: str) -> str:
     # Characters to escape: _ * [ ] ( ) ~ ` > # + - = | { } . !
     escape_chars = r"[_*\[\]()~`>#+\-=|{}.!]" # Raw string for regex
     return re.sub(escape_chars, r"\\\g<0>", text)
+
+async def send_typing_periodically(bot: Bot, chat_id: int, stop_event: asyncio.Event, interval: int = 4):
+    """
+    Sends 'typing' chat action periodically until the stop_event is set.
+
+    :param bot: The Bot instance.
+    :param chat_id: The ID of the chat to send the action to.
+    :param stop_event: An asyncio.Event that signals when to stop sending the action.
+    :param interval: The interval in seconds between sending the action.
+    """
+    while not stop_event.is_set():
+        try:
+            await bot.send_chat_action(chat_id=chat_id, action="typing")
+        except TelegramAPIError as e:
+            logging.warning(f"Could not send periodic typing action to chat {chat_id}: {e}")
+        except Exception as e_gen:
+            # Log unexpected errors and break to prevent continuous failure
+            logging.error(f"Unexpected error in send_typing_periodically for chat {chat_id}: {e_gen}", exc_info=True)
+            break 
+        
+        try:
+            # Wait for the interval or until the event is set, whichever comes first
+            await asyncio.wait_for(stop_event.wait(), timeout=interval)
+        except asyncio.TimeoutError:
+            # Timeout means the event was not set, so continue the loop
+            continue
+        except Exception as e_wait:
+            logging.error(f"Unexpected error during wait in send_typing_periodically for chat {chat_id}: {e_wait}", exc_info=True)
+            break # Exit loop on other wait errors

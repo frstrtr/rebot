@@ -64,7 +64,8 @@ async def handle_admin_request_delete_memo_callback(
 
         # Authorization check
         admin_can_delete = False
-        if memo_item.memo_type == MemoType.PUBLIC.value:
+        # MODIFIED: Allow deletion if memo_type is PUBLIC or None
+        if memo_item.memo_type == MemoType.PUBLIC.value or memo_item.memo_type is None:
             admin_can_delete = True
         elif memo_item.memo_type == MemoType.PRIVATE.value:
             admin_db_user = get_or_create_user(db, callback_query.from_user)
@@ -172,7 +173,8 @@ async def handle_admin_confirm_delete_memo_callback(
 
         # Authorization check
         admin_can_delete = False
-        if memo_to_delete.memo_type == MemoType.PUBLIC.value:
+        # MODIFIED: Allow deletion if memo_type is PUBLIC or None
+        if memo_to_delete.memo_type == MemoType.PUBLIC.value or memo_to_delete.memo_type is None:
             admin_can_delete = True
         elif memo_to_delete.memo_type == MemoType.PRIVATE.value:
             admin_db_user = get_or_create_user(db, callback_query.from_user)

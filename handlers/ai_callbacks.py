@@ -19,9 +19,15 @@ from database.models import MemoType, CryptoAddress # Import CryptoAddress
 from database.queries import update_crypto_address_memo
 from .common import MAX_TELEGRAM_MESSAGE_LENGTH, TARGET_AUDIT_CHANNEL_ID
 from .states import AddressProcessingStates # For setting state if needed
-from .helpers import format_user_info_for_audit, send_text_to_audit_channel, replace_addresses_with_deeplinks, markdown_to_html, send_typing_periodically # MODIFIED: Added send_typing_periodically
+from .helpers import ( # MODIFIED: Ensure process_ai_markdown_to_html_with_deeplinks is imported
+    format_user_info_for_audit, 
+    send_text_to_audit_channel, 
+    markdown_to_html, # Keep if used directly elsewhere, though new func uses it internally
+    send_typing_periodically,
+    process_ai_markdown_to_html_with_deeplinks # New helper
+)
 from .address_processing import _orchestrate_next_processing_step
-
+import asyncio # Ensure asyncio is imported
 
 async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery, state: FSMContext, bot: Bot):
     """Handles AI report language selection and triggers AI analysis."""
@@ -31,39 +37,37 @@ async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery
     chosen_lang_name = lang_map.get(chosen_lang_code, "the selected language")
 
     user_fsm_data = await state.get_data()
-    enriched_data_for_ai = user_fsm_data.get("ai_enriched_data", "") # Default to empty string
+    enriched_data_for_ai = user_fsm_data.get("ai_enriched_data", "") 
     address = user_fsm_data.get("current_action_address") 
-    blockchain = user_fsm_data.get("current_action_blockchain", "N/A") # EVM might set this, TRON implies it
-    requesting_user = callback_query.from_user # Defined for audit log
+    blockchain = user_fsm_data.get("current_action_blockchain", "N/A") 
+    requesting_user = callback_query.from_user
 
-    if not address: # enriched_data_for_ai can be initially empty if only expert memos are to be used
+    if not address: 
         logging.error("Missing address in FSM for AI language choice.")
         await callback_query.message.answer("Error: Missing address data for AI analysis. Please try again.")
         await state.set_state(None)
         return
+    
     expert_memo_content_str = ""
     if requesting_user.id in Config.ADMINS:
         db: Session = SessionLocal() # type: ignore
         try:
             admin_db_user = get_or_create_user(db, callback_query.from_user)
             if admin_db_user and admin_db_user.id:
-                # Fetch private memos by this admin for this address/blockchain that start with "EXPERT"
                 expert_memos = db.query(CryptoAddress).filter(
                     func.lower(CryptoAddress.address) == address.lower(),
-                    func.lower(CryptoAddress.blockchain) == blockchain.lower(), # Use the blockchain from FSM
+                    func.lower(CryptoAddress.blockchain) == blockchain.lower(), 
                     CryptoAddress.memo_type == MemoType.PRIVATE.value,
                     CryptoAddress.memo_added_by_user_id == admin_db_user.id,
-                    func.lower(CryptoAddress.notes).like("expert%") # Case-insensitive prefix match
+                    func.lower(CryptoAddress.notes).like("expert%") 
                 ).order_by(CryptoAddress.memo_updated_at.desc()).all()
 
                 if expert_memos:
                     expert_notes_list = []
                     for memo in expert_memos:
                         if memo.notes:
-                            # Find the position of "expert" case-insensitively
                             expert_keyword_pos = memo.notes.lower().find("expert")
                             if expert_keyword_pos != -1:
-                                # Extract content after "expert" and strip leading separators/whitespace
                                 content_after_expert = memo.notes[expert_keyword_pos + len("expert"):].lstrip(' :-').strip()
                                 if content_after_expert:
                                     expert_notes_list.append(content_after_expert)
@@ -81,17 +85,16 @@ async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery
             if db.is_active:
                 db.close()
 
-    # Prepend expert memo content to the existing enriched data
     final_enriched_data = expert_memo_content_str + enriched_data_for_ai
 
-    if not final_enriched_data.strip(): # Check if, after all, there's no data to send
+    if not final_enriched_data.strip(): 
         logging.warning(f"No data (neither enriched nor expert) to send for AI analysis for address {address}.")
         await callback_query.message.edit_text(
             text=f"No data available to perform AI analysis for <code>{html.quote(address)}</code>. Please ensure there is information to analyze.",
             parse_mode="HTML",
             reply_markup=None
         )
-        await state.set_state(None) # Clear state as we can't proceed
+        await state.set_state(None) 
         return
 
     await callback_query.message.edit_text(
@@ -100,12 +103,10 @@ async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery
         reply_markup=None
     )
 
-    # --- Start periodic typing ---
     stop_typing_event = asyncio.Event()
     typing_task = asyncio.create_task(
         send_typing_periodically(bot, callback_query.from_user.id, stop_typing_event)
     )
-    # --- End periodic typing ---
 
     final_html_report = "Error: AI analysis could not be performed."
 
@@ -120,28 +121,22 @@ async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery
             f"Analyze the following data for the address {html.quote(address)} on the {html.quote(blockchain.capitalize() if blockchain != 'N/A' else 'TRON')} blockchain. "
             f"Provide a concise risk assessment and identify any potential red flags or suspicious activities. "
             f"The user has requested the report in {chosen_lang_name}.\n\n"
-            f"Data (this may include prior expert observations; integrate all provided information into your analysis):\n{final_enriched_data}\n\n" # MODIFIED
-            f"Based on ALL the provided data, please provide your analysis in {chosen_lang_name}, focusing on:\n" # MODIFIED
+            f"Data (this may include prior expert observations; integrate all provided information into your analysis):\n{final_enriched_data}\n\n"
+            f"Based on ALL the provided data, please provide your analysis in {chosen_lang_name}, focusing on:\n"
             f"1. Overall risk level (e.g., Low, Medium, High, Very High, Suspicious).\n"
             f"2. Key observations and red flags (e.g., interactions with known scam addresses, unusual transaction patterns, token characteristics if applicable, lack of activity, etc.).\n"
             f"3. A brief summary conclusion.\n"
-            # Instruct AI to use Markdown for formatting
             f"Present the output clearly. Use Markdown for formatting (e.g. **bold**, *italic*, `code`, lists, tables if appropriate)."
         )
         
-        # generated_text_from_ai is expected to be Markdown
-        generated_text_from_ai = await vertex_ai_client.generate_text(prompt_template)
+        generated_text_from_ai = await vertex_ai_client.generate_text(prompt_template) # This is Markdown
 
         if generated_text_from_ai:
-            # Get bot username for deeplinks
             bot_info = await bot.get_me()
             bot_username = bot_info.username
             
-            # Step 1: Insert HTML deeplinks into the AI's (Markdown) text
-            text_with_html_deeplinks = replace_addresses_with_deeplinks(generated_text_from_ai, bot_username)
-            
-            # Step 2: Convert the Markdown (which now contains HTML deeplinks) to final HTML
-            final_html_report = markdown_to_html(text_with_html_deeplinks)
+            # Use the new helper function to convert AI's Markdown to HTML with deeplinks
+            final_html_report = process_ai_markdown_to_html_with_deeplinks(generated_text_from_ai, bot_username)
         else:
             final_html_report = f"AI analysis did not return content for {html.quote(address)}. This could be due to safety filters or other issues."
             logging.warning(f"Vertex AI returned no content for address {address} on {blockchain if blockchain != 'N/A' else 'TRON'}.")
@@ -156,7 +151,6 @@ async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery
         logging.error(f"Error during Vertex AI call for {address} on {blockchain if blockchain != 'N/A' else 'TRON'}: {e}", exc_info=True)
         final_html_report = f"An unexpected error occurred during AI analysis for {html.quote(address)}."
     finally:
-        # --- Stop periodic typing ---
         stop_typing_event.set()
         try:
             await typing_task 
@@ -164,9 +158,8 @@ async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery
             logging.info(f"Typing task for chat {callback_query.from_user.id} was cancelled.")
         except Exception as e_task_await:
             logging.error(f"Error awaiting typing task for chat {callback_query.from_user.id}: {e_task_await}", exc_info=True)
-        # --- End stop periodic typing ---
     
-    await state.update_data(ai_report_text=final_html_report) # final_html_report now contains the fully processed HTML
+    await state.update_data(ai_report_text=final_html_report)
 
     # --- Send AI Report to Audit Channel ---
     if TARGET_AUDIT_CHANNEL_ID:
@@ -316,20 +309,31 @@ async def handle_ai_response_memo_action_callback(callback_query: types.Callback
                 await callback_query.message.answer("Error: Could not save address to DB for memo.")
                 db.close()
                 return
+
+            # Get user ID for memo_added_by_user_id for both public and private AI memos
             memo_user_db_id = None
-            if memo_type_to_save == MemoType.PRIVATE.value:
-                db_user = get_or_create_user(db, callback_query.from_user)
-                if db_user: memo_user_db_id = db_user.id
-                if not memo_user_db_id:
-                    logging.warning(f"Cannot save private AI memo for {address_to_update}: user ID failed.")
-                    await callback_query.message.answer("Error: Could not ID user for private memo. Not saved.")
-                    db.close()
-                    return
+            db_user = get_or_create_user(db, callback_query.from_user)
+            if db_user:
+                memo_user_db_id = db_user.id
+            
+            if not memo_user_db_id: # If user could not be identified in DB
+                logging.error(f"Cannot save AI memo for {address_to_update}: User ID for {callback_query.from_user.id} could not be retrieved/created in DB.")
+                await callback_query.message.answer("Error: Could not identify your user account. AI Memo not saved.")
+                db.close()
+                return
+
+            # Specific check if it's a private memo and user ID failed (should be caught above, but as a safeguard)
+            if memo_type_to_save == MemoType.PRIVATE.value and not memo_user_db_id:
+                logging.warning(f"Cannot save private AI memo for {address_to_update}: user ID failed despite earlier check.")
+                await callback_query.message.answer("Error: Could not ID user for private memo. Not saved as private.")
+                db.close()
+                return
+
             ai_memo_prefix = f"[AI Analysis - {datetime.now().strftime('%Y-%m-%d %H:%M')}]\n"
             final_memo_text = ai_memo_prefix + ai_report_text
             updated_address = update_crypto_address_memo(
                 db=db, address_id=db_crypto_address.id, notes=final_memo_text,
-                memo_type=memo_type_to_save, user_id=memo_user_db_id
+                memo_type=memo_type_to_save, user_id=memo_user_db_id # Pass the user_id here
             )
             if updated_address:
                 await callback_query.message.edit_text(

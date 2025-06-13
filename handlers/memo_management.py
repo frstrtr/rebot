@@ -16,7 +16,7 @@ from database import (
     CryptoAddress,
     CryptoAddressStatus,
 )
-from database.models import MemoType
+from database.models import MemoType, User # MODIFIED: Added User import
 from database.queries import update_crypto_address_memo
 from .common import MAX_TELEGRAM_MESSAGE_LENGTH, TARGET_AUDIT_CHANNEL_ID
 from .helpers import markdown_to_html # Ensure this helper is available and imported
@@ -80,20 +80,50 @@ async def _display_memos_for_address_blockchain(
         status_display = memo_item.status.value if isinstance(memo_item.status, CryptoAddressStatus) else str(memo_item.status or "N/A")
         processed_notes = markdown_to_html(memo_item.notes if memo_item.notes else "")
         
-        individual_memo_text = f"  • ID <code>{memo_item.id}</code> (<i>{status_display}</i>):\n{processed_notes}"
+        author_info_line = ""
+        current_user_is_admin = requesting_telegram_user_id and requesting_telegram_user_id in Config.ADMINS
+
+        if current_user_is_admin: # This condition was already updated to always try if admin
+            author_display_text_value = "Author not specified"
+            added_by_prefix = ""
+
+            if memo_item.memo_added_by_user_id: # This will now be true for public memos too
+                added_by_prefix = "Added by: "
+                author_db_user_obj = db.query(User).filter(User.id == memo_item.memo_added_by_user_id).first()
+                
+                if author_db_user_obj:
+                    author_details_parts_list = []
+                    author_telegram_id = author_db_user_obj.telegram_id
+                    author_id_deeplink = f"<a href=\"https://t.me/oLolsBot?start={author_telegram_id}\">{author_telegram_id}</a>"
+                    author_details_parts_list.append(f"User {author_id_deeplink}")
+                    
+                    name_parts_list = []
+                    if author_db_user_obj.first_name:
+                        name_parts_list.append(html.quote(author_db_user_obj.first_name))
+                    if author_db_user_obj.last_name:
+                        name_parts_list.append(html.quote(author_db_user_obj.last_name))
+                    if name_parts_list:
+                        author_details_parts_list.append(f"({ ' '.join(name_parts_list) })")
+                    
+                    if author_db_user_obj.username:
+                        author_details_parts_list.append(f"@{html.quote(author_db_user_obj.username)}")
+                    
+                    author_display_text_value = ' '.join(author_details_parts_list)
+                else:
+                    author_display_text_value = f"DB User ID {memo_item.memo_added_by_user_id} (Details not found)"
+
+            date_display_text_value = ""
+            if memo_item.updated_at: 
+                created_date_str = memo_item.updated_at.strftime('%Y-%m-%d %H:%M') 
+                date_display_text_value = f" on {created_date_str} UTC"
+
+            author_info_line = f"\n    <i>{added_by_prefix}{author_display_text_value}{date_display_text_value}</i>"
+        
+        individual_memo_text = f"  • ID <code>{memo_item.id}</code> (<i>{status_display}</i>):\n{processed_notes}{author_info_line}"
 
         admin_button_markup = None
         
-        is_actually_admin_in_config = False
-        if requesting_telegram_user_id is not None:
-            try:
-                if int(requesting_telegram_user_id) in Config.ADMINS:
-                    is_actually_admin_in_config = True
-            except ValueError:
-                logging.warning(f"requesting_telegram_user_id '{requesting_telegram_user_id}' is not a valid integer for admin check.")
-        
-        current_user_is_admin = is_actually_admin_in_config
-
+        # current_user_is_admin is already defined above
         if current_user_is_admin:
             admin_should_see_delete_button = False
             logging.debug(
@@ -103,10 +133,12 @@ async def _display_memos_for_address_blockchain(
                 f"Requesting DB ID: {requesting_user_db_id}, Memo Added By DB ID: {memo_item.memo_added_by_user_id}"
             )
             
-            if memo_item.memo_type == MemoType.PUBLIC.value:
+            # MODIFIED: Allow admin to delete if memo_type is PUBLIC or None
+            if memo_item.memo_type == MemoType.PUBLIC.value or memo_item.memo_type is None:
                 admin_should_see_delete_button = True
-                logging.debug(f"  -> Memo ID {memo_item.id} is PUBLIC. Admin can delete.")
+                logging.debug(f"  -> Memo ID {memo_item.id} is PUBLIC or type None. Admin can delete.")
             elif memo_item.memo_type == MemoType.PRIVATE.value:
+                # MODIFIED: Corrected attribute name from memo_added_by_user_db_id to memo_added_by_user_id
                 if requesting_user_db_id is not None and memo_item.memo_added_by_user_id == requesting_user_db_id:
                     admin_should_see_delete_button = True
                     logging.debug(
@@ -133,7 +165,7 @@ async def _display_memos_for_address_blockchain(
             # Log why current_user_is_admin might be false
             if requesting_telegram_user_id is None:
                 logging.debug(f"Memo Display (ID {memo_item.id}, Address: {address}, Scope: {memo_scope}): No requesting_telegram_user_id provided. Not admin.")
-            elif not is_actually_admin_in_config:
+            elif not (requesting_telegram_user_id in Config.ADMINS): # Check if it's actually not in Config.ADMINS
                  logging.debug(f"Memo Display (ID {memo_item.id}, Address: {address}, Scope: {memo_scope}): User {requesting_telegram_user_id} is NOT in Config.ADMINS. Not admin.")
         
         try:
@@ -237,21 +269,34 @@ async def _process_memo_action(message: Message, state: FSMContext):
             db.close()
             return
 
-        # Get internal DB user ID for memo_added_by_user_id
+        # Get internal DB user ID for memo_added_by_user_id for ALL memo types
         memo_user_db_id = None
-        if intended_memo_type_str == MemoType.PRIVATE.value:
-            if message.from_user:
-                db_user = get_or_create_user(db, message.from_user)
-                if db_user:
-                    memo_user_db_id = db_user.id
-            if not memo_user_db_id: # If still None (e.g. message.from_user was None or db_user failed)
-                logging.warning("Cannot save private memo: user identification failed.")
-                await message.answer("Error: Could not identify user to save private memo. Memo not saved as private.")
-                # Fallback or clear state. For now, let it proceed but it won't be private if memo_user_db_id is None.
-                # Or more strictly:
-                # await state.clear()
-                # db.close()
-                # return
+        if message.from_user:
+            db_user = get_or_create_user(db, message.from_user)
+            if db_user:
+                memo_user_db_id = db_user.id
+            else: # Failed to get/create user
+                logging.error(f"Failed to get_or_create_user for Telegram ID {message.from_user.id} while adding memo.")
+                await message.answer("Error: Could not identify your user account. Memo not saved.")
+                await state.clear()
+                db.close()
+                return
+        else: # Should not happen if message is from a user
+            logging.error("message.from_user is None during memo processing.")
+            await message.answer("Error: User information missing. Memo not saved.")
+            await state.clear()
+            db.close()
+            return
+        
+        # Specific handling for private memos if user identification failed for some reason
+        # (though the above block should catch it, this is an additional safeguard if logic changes)
+        if intended_memo_type_str == MemoType.PRIVATE.value and not memo_user_db_id:
+            logging.warning("Cannot save private memo: user identification failed despite earlier checks.")
+            await message.answer("Error: Could not identify user to save private memo. Memo not saved as private.")
+            # Decide on fallback: clear state, or prevent saving. For now, prevent saving.
+            await state.clear()
+            db.close()
+            return
         
         updated_address = update_crypto_address_memo(
             db=db,

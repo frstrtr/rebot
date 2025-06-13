@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session # Import Session
 from genai import VertexAIClient
 from config.config import Config
 from database import SessionLocal, get_or_create_user, save_crypto_address
-from database.models import MemoType, CryptoAddress # Import CryptoAddress
+from database.models import MemoType, CryptoAddress, User # MODIFIED: Import User model
 from database.queries import update_crypto_address_memo
 from .common import MAX_TELEGRAM_MESSAGE_LENGTH, TARGET_AUDIT_CHANNEL_ID
 from .states import AddressProcessingStates # For setting state if needed
@@ -49,41 +49,72 @@ async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery
         return
     
     expert_memo_content_str = ""
-    if requesting_user.id in Config.ADMINS:
-        db: Session = SessionLocal() # type: ignore
-        try:
-            admin_db_user = get_or_create_user(db, callback_query.from_user)
-            if admin_db_user and admin_db_user.id:
+    db: Session = SessionLocal() # type: ignore
+    try:
+        admin_telegram_ids = Config.ADMINS
+        if not admin_telegram_ids:
+            logging.info("No admin Telegram IDs configured in Config.ADMINS. Skipping fetch for admin expert memos.")
+        else:
+            # Fetch DB User objects for all configured admin Telegram IDs
+            admin_db_users = db.query(User).filter(User.telegram_id.in_(admin_telegram_ids)).all() # MODIFIED
+            admin_db_ids = [u.id for u in admin_db_users if u and u.id]
+
+            logging.debug(
+                f"AI Language Choice: Attempting to fetch expert memos from ADMINS. "
+                f"Configured Admin Telegram IDs: {admin_telegram_ids}. "
+                f"Found Admin DB IDs: {admin_db_ids}. "
+                f"For Address: '{address}', Blockchain: '{blockchain}'"
+            )
+
+            if admin_db_ids:
                 expert_memos = db.query(CryptoAddress).filter(
                     func.lower(CryptoAddress.address) == address.lower(),
                     func.lower(CryptoAddress.blockchain) == blockchain.lower(), 
                     CryptoAddress.memo_type == MemoType.PRIVATE.value,
-                    CryptoAddress.memo_added_by_user_id == admin_db_user.id,
+                    CryptoAddress.memo_added_by_user_id.in_(admin_db_ids), # Fetch memos added by ANY of the admin DB IDs
                     func.lower(CryptoAddress.notes).like("expert%") 
                 ).order_by(CryptoAddress.memo_updated_at.desc()).all()
+                logging.debug(f"Found {len(expert_memos)} potential 'expert' memos from DB query for admin DB IDs {admin_db_ids}.")
 
                 if expert_memos:
                     expert_notes_list = []
-                    for memo in expert_memos:
+                    for i, memo in enumerate(expert_memos):
+                        logging.debug(f"  Processing admin expert memo item {i+1}/{len(expert_memos)}, DB Memo ID: {memo.id}, Added by User DB ID: {memo.memo_added_by_user_id}, Notes (start): '{memo.notes[:100] if memo.notes else 'N/A'}...'")
                         if memo.notes:
                             expert_keyword_pos = memo.notes.lower().find("expert")
+                            logging.debug(f"    Keyword 'expert' found at notes position: {expert_keyword_pos}")
+                            
                             if expert_keyword_pos != -1:
                                 content_after_expert = memo.notes[expert_keyword_pos + len("expert"):].lstrip(' :-').strip()
+                                logging.debug(f"    Content after 'expert' (lstripped ' :-' and stripped): '{content_after_expert[:100]}...'")
                                 if content_after_expert:
                                     expert_notes_list.append(content_after_expert)
+                                    logging.debug(f"    Appended to expert_notes_list. Current list size: {len(expert_notes_list)}")
+                                else:
+                                    logging.debug(f"    Content after 'expert' is empty after stripping. Not appended.")
+                            else:
+                                logging.warning(f"    'expert' keyword not found in memo.notes via find(), though DB query `like 'expert%'` matched. Memo ID: {memo.id}. This is unexpected.")
+                        else:
+                            logging.debug(f"    Admin Memo ID: {memo.id} has no notes content. Skipped.")
                     
                     if expert_notes_list:
                         expert_memo_content_str = (
-                            "Additional Expert Observations (to be integrated into the overall analysis):\n"
+                            "Additional Administrator-Provided Observations (to be integrated into the overall analysis):\n" 
                             + "\n\n---\n".join(expert_notes_list) 
                             + "\n\n---\n\n"
                         )
-                        logging.info(f"Admin {requesting_user.id} provided expert memo for AI analysis of {address}.")
-        except Exception as e_db:
-            logging.error(f"Error fetching admin expert memos for {address}: {e_db}", exc_info=True)
-        finally:
-            if db.is_active:
-                db.close()
+                        logging.info(f"{len(expert_notes_list)} Admin-provided 'expert' memo piece(s) included for AI analysis of {address} (requested by user {requesting_user.id}). Total expert_memo_content_str length: {len(expert_memo_content_str)}")
+                    else:
+                        logging.info(f"No valid content extracted from {len(expert_memos)} potential admin 'expert' memos for address {address}.")
+                else:
+                    logging.info(f"No 'expert' memos found in DB that match all criteria for configured admin users, address {address}, blockchain {blockchain}.")
+            else:
+                logging.info("No admin users (with DB IDs) found in DB for the configured admin Telegram IDs. Cannot fetch admin expert memos.")
+    except Exception as e_db:
+        logging.error(f"Error fetching admin 'expert' private memos for {address}: {e_db}", exc_info=True)
+    finally:
+        if db.is_active:
+            db.close()
 
     final_enriched_data = expert_memo_content_str + enriched_data_for_ai
 

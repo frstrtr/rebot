@@ -110,7 +110,7 @@ class VertexAIClient:
         }
 
         try:
-            logging.debug(f"Sending prompt to Vertex AI: '{prompt[:100]}...' with config: {generation_config}")
+            logging.debug(f"Sending prompt to Vertex AI. Prompt: \"{prompt}\" with config: {generation_config}") # MODIFIED: Log full prompt
             response = await self.model.generate_content_async(
                 prompt,
                 generation_config=generation_config

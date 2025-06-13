@@ -12,7 +12,7 @@ class Config:
     PARSE_MODE = ParseMode.HTML
     MAX_TELEGRAM_MESSAGE_LENGTH = 4000  # Telegram's limit is 4096, using a buffer
     LOG_FOLDER = "logs"  # Define the log folder name
-    LOG_LEVEL = logging.INFO  # Define the global log level
+    LOG_LEVEL = logging.DEBUG  # Define the global log level
 
     # ANSI Color Codes
     PURPLE = "\033[95m"

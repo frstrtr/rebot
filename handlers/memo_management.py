@@ -33,6 +33,9 @@ async def _display_memos_for_address_blockchain(
     requesting_user_db_id: Optional[int] = None, # For fetching user's private memos
     requesting_telegram_user_id: Optional[int] = None, # For admin checks
 ):
+    """ Displays memos for a specific address and blockchain.
+    And show buttons for admin actions if the user is an admin."""
+    
     query = db.query(CryptoAddress).filter(
         func.lower(CryptoAddress.address) == address.lower(),
         func.lower(CryptoAddress.blockchain) == blockchain.lower(),
@@ -43,7 +46,7 @@ async def _display_memos_for_address_blockchain(
     header_scope_text = "Previous Public Memos"
     if memo_scope == "private_own":
         if not requesting_user_db_id:
-            logging.error("User ID not provided for private memos in _display_memos.")
+            logging.error("User ID not provided for private memos in _display_memos. Call from requesting_telegram_user_id: %s", requesting_telegram_user_id)
             await message_target.answer(
                 "[_display_memos] Error: User ID missing for private memo display.", parse_mode="HTML", disable_web_page_preview=True
             )
@@ -71,32 +74,69 @@ async def _display_memos_for_address_blockchain(
         return
 
     list_header = f"📜 <b>{header_scope_text} for <code>{html.quote(address)}</code> on {html.quote(blockchain.capitalize())}:</b>"
-    # Send the overall header for the memo list first
     await message_target.answer(list_header, parse_mode="HTML", disable_web_page_preview=True)
 
-    # Now, iterate and send each memo individually
     for memo_item in existing_memos_specific:
         status_display = memo_item.status.value if isinstance(memo_item.status, CryptoAddressStatus) else str(memo_item.status or "N/A")
         processed_notes = markdown_to_html(memo_item.notes if memo_item.notes else "")
         
-        # Prepare the text for this specific memo item
-        # Using a bullet point for visual separation as each memo is a new message.
         individual_memo_text = f"  • ID <code>{memo_item.id}</code> (<i>{status_display}</i>):\n{processed_notes}"
 
         admin_button_markup = None
-        if memo_scope == "public" and requesting_telegram_user_id and requesting_telegram_user_id in Config.ADMINS:
-            buttons = [[
-                InlineKeyboardButton(
-                    text=f"🗑️ Del Memo {memo_item.id}",
-                    callback_data=f"admin_request_delete_memo:{memo_item.id}"
-                )
-            ]]
-            admin_button_markup = InlineKeyboardMarkup(inline_keyboard=buttons)
+        
+        is_actually_admin_in_config = False
+        if requesting_telegram_user_id is not None:
+            try:
+                if int(requesting_telegram_user_id) in Config.ADMINS:
+                    is_actually_admin_in_config = True
+            except ValueError:
+                logging.warning(f"requesting_telegram_user_id '{requesting_telegram_user_id}' is not a valid integer for admin check.")
+        
+        current_user_is_admin = is_actually_admin_in_config
+
+        if current_user_is_admin:
+            admin_should_see_delete_button = False
+            logging.debug(
+                f"Admin Check for Memo ID {memo_item.id} (Address: {address}, Scope: {memo_scope}): "
+                f"User {requesting_telegram_user_id} IS admin. "
+                f"Memo Type: {memo_item.memo_type}, "
+                f"Requesting DB ID: {requesting_user_db_id}, Memo Added By DB ID: {memo_item.memo_added_by_user_id}"
+            )
+            
+            if memo_item.memo_type == MemoType.PUBLIC.value:
+                admin_should_see_delete_button = True
+                logging.debug(f"  -> Memo ID {memo_item.id} is PUBLIC. Admin can delete.")
+            elif memo_item.memo_type == MemoType.PRIVATE.value:
+                if requesting_user_db_id is not None and memo_item.memo_added_by_user_id == requesting_user_db_id:
+                    admin_should_see_delete_button = True
+                    logging.debug(
+                        f"  -> Memo ID {memo_item.id} is PRIVATE and OWNED by admin (DB ID {requesting_user_db_id}). Admin can delete."
+                    )
+                else:
+                    logging.debug(
+                        f"  -> Memo ID {memo_item.id} is PRIVATE but NOT confirmed as owned by admin. "
+                        f"Requesting DB ID: {requesting_user_db_id}, Memo Owner DB ID: {memo_item.memo_added_by_user_id}. No delete button."
+                    )
+            
+            if admin_should_see_delete_button:
+                buttons = [[
+                    InlineKeyboardButton(
+                        text=f"🗑️ Del Memo {memo_item.id}",
+                        callback_data=f"admin_request_delete_memo:{memo_item.id}"
+                    )
+                ]]
+                admin_button_markup = InlineKeyboardMarkup(inline_keyboard=buttons)
+                logging.debug(f"  -> Delete button GENERATED for Memo ID {memo_item.id}.")
+            else:
+                logging.debug(f"  -> No delete button generated for Memo ID {memo_item.id} for admin {requesting_telegram_user_id}.")
+        else:
+            # Log why current_user_is_admin might be false
+            if requesting_telegram_user_id is None:
+                logging.debug(f"Memo Display (ID {memo_item.id}, Address: {address}, Scope: {memo_scope}): No requesting_telegram_user_id provided. Not admin.")
+            elif not is_actually_admin_in_config:
+                 logging.debug(f"Memo Display (ID {memo_item.id}, Address: {address}, Scope: {memo_scope}): User {requesting_telegram_user_id} is NOT in Config.ADMINS. Not admin.")
         
         try:
-            # Attempt to send the individual memo
-            # Note: If individual_memo_text (mainly processed_notes) is too long, this will fail.
-            # A more robust solution would split oversized processed_notes here.
             await message_target.answer(
                 individual_memo_text,
                 parse_mode="HTML",
@@ -106,7 +146,6 @@ async def _display_memos_for_address_blockchain(
         except Exception as e: # Catch generic Exception which includes TelegramAPIError
             if "message is too long" in str(e).lower():
                 logging.warning(f"Individual memo ID {memo_item.id} content is too long. Sending truncated placeholder.")
-                # Fallback for oversized memo content
                 truncated_text = (
                     f"  • ID <code>{memo_item.id}</code> (<i>{status_display}</i>):\n"
                     f"[Content for this memo is too long to display in a single message part. "

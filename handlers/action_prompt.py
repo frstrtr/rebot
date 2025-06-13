@@ -14,6 +14,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from database import get_or_create_user, CryptoAddress
 from database.models import MemoType
 from .common import EXPLORER_CONFIG #, ADMINS
+from .helpers import _create_bot_deeplink_html # MODIFIED: Import the helper function
 
 async def _send_action_prompt(
     target_message: Message,
@@ -37,9 +38,13 @@ async def _send_action_prompt(
         update_payload["current_scan_db_message_id"] = current_state_data.get("current_scan_db_message_id")
     
     await state.update_data(**update_payload)
+
+    bot_info = await target_message.bot.get_me()
+    bot_username = bot_info.username
+    address_deeplink = _create_bot_deeplink_html(address, bot_username)
     
     prompt_text = (
-        f"Address <code>{html.quote(address)}</code> identified for <b>{html.quote(blockchain.capitalize())}</b>.\n"
+        f"Address {address_deeplink} identified for <b>{html.quote(blockchain.capitalize())}</b>.\n"
         "What would you like to do?"
     )
 
@@ -210,16 +215,21 @@ async def _send_action_prompt(
     try:
         if edit_message:
             await target_message.edit_text(
-                text=prompt_text, parse_mode="HTML", reply_markup=reply_markup
+                text=prompt_text, parse_mode="HTML", reply_markup=reply_markup, disable_web_page_preview=True
             )
         else:
             await target_message.answer(
-                text=prompt_text, parse_mode="HTML", reply_markup=reply_markup
+                text=prompt_text, parse_mode="HTML", reply_markup=reply_markup, disable_web_page_preview=True
             )
     except TelegramAPIError as e:
         logging.warning(f"Failed to send/edit action prompt, API error: {e}") # pylint: disable=logging-fstring-interpolation
         # Fallback for edit failure
         if edit_message:
+            # Construct fallback text ensuring deeplink is used if possible
+            fallback_prompt_text = (
+                f"[_send_action_prompt] (fallback) Address {address_deeplink} identified for <b>{html.quote(blockchain.capitalize())}</b>.\n"
+                "What would you like to do?"
+            )
             await target_message.answer(
-                text=f"[_send_action_prompt] (fallback) {prompt_text}", parse_mode="HTML", reply_markup=reply_markup
+                text=fallback_prompt_text, parse_mode="HTML", reply_markup=reply_markup, disable_web_page_preview=True
             )

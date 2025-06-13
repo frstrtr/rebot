@@ -4,7 +4,7 @@ Handles AI-related callbacks common to different blockchain analyses.
 """
 import logging
 from aiogram import html, types, Bot
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
 from aiogram.fsm.context import FSMContext
 import asyncio # Ensure asyncio is imported
 from aiogram.exceptions import TelegramAPIError
@@ -18,16 +18,14 @@ from database import SessionLocal, get_or_create_user, save_crypto_address
 from database.models import MemoType, CryptoAddress, User # MODIFIED: Import User model
 from database.queries import update_crypto_address_memo
 from .common import MAX_TELEGRAM_MESSAGE_LENGTH, TARGET_AUDIT_CHANNEL_ID
-from .states import AddressProcessingStates # For setting state if needed
 from .helpers import ( # MODIFIED: Ensure process_ai_markdown_to_html_with_deeplinks is imported
-    format_user_info_for_audit, 
-    send_text_to_audit_channel, 
-    markdown_to_html, # Keep if used directly elsewhere, though new func uses it internally
+    format_user_info_for_audit,
+    send_text_to_audit_channel,
     send_typing_periodically,
-    process_ai_markdown_to_html_with_deeplinks # New helper
+    process_ai_markdown_to_html_with_deeplinks, # New helper
+    _create_bot_deeplink_html # Ensure this is imported
 )
 from .address_processing import _orchestrate_next_processing_step
-import asyncio # Ensure asyncio is imported
 
 async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery, state: FSMContext, bot: Bot):
     """Handles AI report language selection and triggers AI analysis."""
@@ -41,12 +39,17 @@ async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery
     address = user_fsm_data.get("current_action_address") 
     blockchain = user_fsm_data.get("current_action_blockchain", "N/A") 
     requesting_user = callback_query.from_user
+    
+    bot_info_for_deeplinks = await bot.get_me()
+    bot_username_for_deeplinks = bot_info_for_deeplinks.username
 
     if not address: 
         logging.error("Missing address in FSM for AI language choice.")
         await callback_query.message.answer("Error: Missing address data for AI analysis. Please try again.")
         await state.set_state(None)
         return
+    
+    address_deeplink = _create_bot_deeplink_html(address, bot_username_for_deeplinks)
     
     expert_memo_content_str = ""
     db: Session = SessionLocal() # type: ignore
@@ -91,7 +94,7 @@ async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery
                                     expert_notes_list.append(content_after_expert)
                                     logging.debug(f"    Appended to expert_notes_list. Current list size: {len(expert_notes_list)}")
                                 else:
-                                    logging.debug(f"    Content after 'expert' is empty after stripping. Not appended.")
+                                    logging.debug("    Content after 'expert' is empty after stripping. Not appended.")
                             else:
                                 logging.warning(f"    'expert' keyword not found in memo.notes via find(), though DB query `like 'expert%'` matched. Memo ID: {memo.id}. This is unexpected.")
                         else:
@@ -121,17 +124,19 @@ async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery
     if not final_enriched_data.strip(): 
         logging.warning(f"No data (neither enriched nor expert) to send for AI analysis for address {address}.")
         await callback_query.message.edit_text(
-            text=f"No data available to perform AI analysis for <code>{html.quote(address)}</code>. Please ensure there is information to analyze.",
+            text=f"No data available to perform AI analysis for {address_deeplink}. Please ensure there is information to analyze.",
             parse_mode="HTML",
-            reply_markup=None
+            reply_markup=None,
+            disable_web_page_preview=True
         )
         await state.set_state(None) 
         return
 
     await callback_query.message.edit_text(
-        text=f"Got it! Preparing AI analysis in {chosen_lang_name} for <code>{html.quote(address)}</code> ({html.quote(blockchain.capitalize() if blockchain != 'N/A' else 'TRON')})... This may take a moment.",
+        text=f"Got it! Preparing AI analysis in {chosen_lang_name} for {address_deeplink} ({html.quote(blockchain.capitalize() if blockchain != 'N/A' else 'TRON')})... This may take a moment.",
         parse_mode="HTML",
-        reply_markup=None
+        reply_markup=None,
+        disable_web_page_preview=True
     )
 
     stop_typing_event = asyncio.Event()
@@ -169,7 +174,7 @@ async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery
             # Use the new helper function to convert AI's Markdown to HTML with deeplinks
             final_html_report = process_ai_markdown_to_html_with_deeplinks(generated_text_from_ai, bot_username)
         else:
-            final_html_report = f"AI analysis did not return content for {html.quote(address)}. This could be due to safety filters or other issues."
+            final_html_report = f"AI analysis did not return content for {address_deeplink}. This could be due to safety filters or other issues."
             logging.warning(f"Vertex AI returned no content for address {address} on {blockchain if blockchain != 'N/A' else 'TRON'}.")
 
     except RuntimeError as e: 
@@ -180,7 +185,7 @@ async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery
         final_html_report = f"Error: AI analysis client configuration is incomplete. Details: {html.quote(str(e))}"
     except Exception as e:
         logging.error(f"Error during Vertex AI call for {address} on {blockchain if blockchain != 'N/A' else 'TRON'}: {e}", exc_info=True)
-        final_html_report = f"An unexpected error occurred during AI analysis for {html.quote(address)}."
+        final_html_report = f"An unexpected error occurred during AI analysis for {address_deeplink}."
     finally:
         stop_typing_event.set()
         try:
@@ -198,12 +203,14 @@ async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery
             bot_info_for_audit = await bot.get_me()
             bot_username_for_audit = bot_info_for_audit.username
 
-            address_deeplink_for_audit = f"<a href=\"https://t.me/{bot_username_for_audit}?start={html.quote(address)}\">{html.quote(address)}</a>"
+            # address_deeplink_for_audit is already created using _create_bot_deeplink_html earlier if address was present
+            # For audit, we use the same deeplink as for user messages.
+            address_deeplink_for_audit_channel = _create_bot_deeplink_html(address, bot_username_for_audit)
             formatted_user_info_for_audit = format_user_info_for_audit(requesting_user)
 
             audit_report_header = (
                 f"<b>🤖 AI Scam Analysis Report Generated</b>\n"
-                f"<b>Address:</b> {address_deeplink_for_audit}\n"
+                f"<b>Address:</b> {address_deeplink_for_audit_channel}\n"
                 f"<b>Blockchain:</b> {html.quote(blockchain.capitalize() if blockchain != 'N/A' else 'TRON')}\n"
                 f"<b>Requested by:</b> {formatted_user_info_for_audit}\n"
                 f"------------------------------------\n"
@@ -274,8 +281,8 @@ async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery
     ]
     reply_markup_memo_actions = InlineKeyboardMarkup(inline_keyboard=memo_action_buttons)
     await callback_query.message.answer(
-        f"What would you like to do with this AI report for <code>{html.quote(address)}</code>?",
-        reply_markup=reply_markup_memo_actions, parse_mode="HTML"
+        f"What would you like to do with this AI report for {address_deeplink}?",
+        reply_markup=reply_markup_memo_actions, parse_mode="HTML", disable_web_page_preview=True
     )
     await state.set_state(None)
 
@@ -290,42 +297,33 @@ async def handle_ai_response_memo_action_callback(callback_query: types.Callback
     address_to_update = user_fsm_data.get("current_action_address")
     blockchain_for_update = user_fsm_data.get("current_action_blockchain", "tron") 
     current_scan_db_message_id = user_fsm_data.get("current_scan_db_message_id")
-    # requesting_user = callback_query.from_user # No longer needed here for report audit
+    
+    bot_info = await callback_query.bot.get_me() 
+    bot_username = bot_info.username
 
-    if not ai_report_text or not address_to_update: 
-        logging.error("Missing AI report text or address context for saving memo.")
-        await callback_query.message.answer("Error: Could not process memo action due to missing context.")
+    if not address_to_update: # ai_report_text might be None if action is skip and report wasn't generated
+        logging.error("Missing address context for saving/skipping memo.")
+        await callback_query.message.answer("Error: Could not process memo action due to missing address context.", disable_web_page_preview=True)
         return
 
-    # The following audit log section for the report content is now removed.
-    # bot_info = await callback_query.bot.get_me()
-    # bot_username = bot_info.username
-    # address_deeplink = f"<a href=\"https://t.me/{bot_username}?start={html.quote(address_to_update)}\">{html.quote(address_to_update)}</a>"
-    # formatted_user_info = format_user_info_for_audit(requesting_user)
-    # audit_report_header = (
-    #     f"<b>🤖 AI Scam Analysis Report</b>\n"
-    #     f"<b>Address:</b> {address_deeplink}\n"
-    #     f"<b>Blockchain:</b> {html.quote(blockchain_for_update.capitalize())}\n"
-    #     f"<b>Requested by:</b> {formatted_user_info}\n"
-    #     f"------------------------------------\n"
-    # )
-    # full_audit_text = audit_report_header + ai_report_text
-    # if len(full_audit_text) > MAX_TELEGRAM_MESSAGE_LENGTH:
-    #     # ... (logic for sending file)
-    # else:
-    #     await send_text_to_audit_channel(callback_query.bot, full_audit_text, parse_mode="HTML")
+    address_deeplink_for_user_message = _create_bot_deeplink_html(address_to_update, bot_username)
+
+    if not ai_report_text and action != "skip": # Report text is needed if not skipping
+        logging.error("Missing AI report text for saving memo.")
+        await callback_query.message.answer(f"Error: Could not process memo action for {address_deeplink_for_user_message} due to missing report text.", parse_mode="HTML", disable_web_page_preview=True)
+        return
 
     if action == "skip":
         await callback_query.message.edit_text(
-            f"AI report for <code>{html.quote(address_to_update)}</code> was not saved. Logged to audit.",
-            parse_mode="HTML", reply_markup=None
+            f"AI report for {address_deeplink_for_user_message} was not saved. Logged to audit.",
+            parse_mode="HTML", reply_markup=None, disable_web_page_preview=True
         )
-        # Optionally, send a simpler audit message about the skip action
         if TARGET_AUDIT_CHANNEL_ID:
             user_info_for_skip_audit = format_user_info_for_audit(callback_query.from_user)
+            address_deeplink_for_audit = _create_bot_deeplink_html(address_to_update, bot_username)
             skip_audit_text = (
                 f"📝 <b>AI Memo Action: Skipped</b>\n"
-                f"<b>Address:</b> <code>{html.quote(address_to_update)}</code>\n"
+                f"<b>Address:</b> {address_deeplink_for_audit}\n"
                 f"<b>Blockchain:</b> {html.quote(blockchain_for_update.capitalize())}\n"
                 f"<b>Action by:</b> {user_info_for_skip_audit}"
             )
@@ -341,19 +339,17 @@ async def handle_ai_response_memo_action_callback(callback_query: types.Callback
                 db.close()
                 return
 
-            # Get user ID for memo_added_by_user_id for both public and private AI memos
             memo_user_db_id = None
             db_user = get_or_create_user(db, callback_query.from_user)
             if db_user:
                 memo_user_db_id = db_user.id
             
-            if not memo_user_db_id: # If user could not be identified in DB
+            if not memo_user_db_id: 
                 logging.error(f"Cannot save AI memo for {address_to_update}: User ID for {callback_query.from_user.id} could not be retrieved/created in DB.")
                 await callback_query.message.answer("Error: Could not identify your user account. AI Memo not saved.")
                 db.close()
                 return
 
-            # Specific check if it's a private memo and user ID failed (should be caught above, but as a safeguard)
             if memo_type_to_save == MemoType.PRIVATE.value and not memo_user_db_id:
                 logging.warning(f"Cannot save private AI memo for {address_to_update}: user ID failed despite earlier check.")
                 await callback_query.message.answer("Error: Could not ID user for private memo. Not saved as private.")
@@ -361,32 +357,32 @@ async def handle_ai_response_memo_action_callback(callback_query: types.Callback
                 return
 
             ai_memo_prefix = f"[AI Analysis - {datetime.now().strftime('%Y-%m-%d %H:%M')}]\n"
-            final_memo_text = ai_memo_prefix + ai_report_text
+            final_memo_text = ai_memo_prefix + ai_report_text # ai_report_text is already HTML with deeplinks
             updated_address = update_crypto_address_memo(
                 db=db, address_id=db_crypto_address.id, notes=final_memo_text,
-                memo_type=memo_type_to_save, user_id=memo_user_db_id # Pass the user_id here
+                memo_type=memo_type_to_save, user_id=memo_user_db_id 
             )
             if updated_address:
                 await callback_query.message.edit_text(
-                    f"✅ AI report for <code>{html.quote(address_to_update)}</code> saved as {action} memo.",
-                    parse_mode="HTML", reply_markup=None
+                    f"✅ AI report for {address_deeplink_for_user_message} saved as {action} memo.",
+                    parse_mode="HTML", reply_markup=None, disable_web_page_preview=True
                 )
-                # Optionally, send a simpler audit message about the save action
                 if TARGET_AUDIT_CHANNEL_ID:
                     user_info_for_save_audit = format_user_info_for_audit(callback_query.from_user)
+                    address_deeplink_for_audit = _create_bot_deeplink_html(address_to_update, bot_username)
                     save_audit_text = (
                         f"💾 <b>AI Memo Action: Saved as {action.capitalize()}</b>\n"
-                        f"<b>Address:</b> <code>{html.quote(address_to_update)}</code>\n"
+                        f"<b>Address:</b> {address_deeplink_for_audit}\n"
                         f"<b>Blockchain:</b> {html.quote(blockchain_for_update.capitalize())}\n"
                         f"<b>Action by:</b> {user_info_for_save_audit}"
                     )
                     await send_text_to_audit_channel(callback_query.bot, save_audit_text, parse_mode="HTML")
             else:
                 logging.error(f"Failed to update AI memo for address ID {db_crypto_address.id}")
-                await callback_query.message.answer("Error: Could not save AI report as memo.")
+                await callback_query.message.answer(f"Error: Could not save AI report as memo for {address_deeplink_for_user_message}.", parse_mode="HTML", disable_web_page_preview=True)
         except Exception as e:
             logging.error(f"Error saving AI memo for {address_to_update}: {e}", exc_info=True)
-            await callback_query.message.answer("Unexpected error saving AI memo.")
+            await callback_query.message.answer(f"Unexpected error saving AI memo for {address_deeplink_for_user_message}.", parse_mode="HTML", disable_web_page_preview=True)
         finally:
             if db.is_active: db.close()
 

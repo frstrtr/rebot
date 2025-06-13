@@ -21,6 +21,7 @@ from .address_processing import (
     # _prompt_for_next_memo, # This is likely called by _orchestrate_next_processing_step
     _send_action_prompt,
 )
+from .helpers import _create_bot_deeplink_html # Ensure this is imported
 
 # Import new callback modules if they are called from here (unlikely for this structure)
 
@@ -46,6 +47,10 @@ async def handle_blockchain_clarification_callback(
     action = callback_query.data.split(":")[1]
     address_str = item_being_clarified["address"]
     db = SessionLocal()
+    
+    bot_info = await callback_query.bot.get_me()
+    bot_username = bot_info.username
+    address_deeplink = _create_bot_deeplink_html(address_str, bot_username)
 
     try:
         if action == "chosen":
@@ -77,9 +82,10 @@ async def handle_blockchain_clarification_callback(
                 )
             await state.update_data(**fsm_update_payload)
             await callback_query.message.edit_text(
-                f"✅ Blockchain for <code>{html.quote(address_str)}</code> set to <b>{html.quote(chosen_blockchain.capitalize())}</b>.",
+                f"✅ Blockchain for {address_deeplink} set to <b>{html.quote(chosen_blockchain.capitalize())}</b>.",
                 parse_mode="HTML",
                 reply_markup=None,
+                disable_web_page_preview=True
             )
             await _send_action_prompt(
                 target_message=callback_query.message,
@@ -95,9 +101,10 @@ async def handle_blockchain_clarification_callback(
                 "User skipped blockchain clarification for address %s", address_str
             )
             await callback_query.message.edit_text(
-                f"⏭️ Skipped blockchain clarification for <code>{html.quote(address_str)}</code>.",
+                f"⏭️ Skipped blockchain clarification for {address_deeplink}.",
                 parse_mode="HTML",
                 reply_markup=None,
+                disable_web_page_preview=True
             )
             await state.update_data(current_item_for_blockchain_clarification=None)
             await _orchestrate_next_processing_step(callback_query.message, state)
@@ -184,6 +191,9 @@ async def handle_skip_address_action_stage_callback(
     address_skipped = data.get("current_action_address")
     blockchain_skipped = data.get("current_action_blockchain")
 
+    bot_info = await callback_query.bot.get_me()
+    bot_username = bot_info.username
+
     if not address_skipped or not blockchain_skipped:
         logging.warning(
             f"User {callback_query.from_user.id} - SkipAction: Missing context. Callback: {callback_query.data}. State: {data}"
@@ -199,20 +209,23 @@ async def handle_skip_address_action_stage_callback(
         await _orchestrate_next_processing_step(callback_query.message, state)
         return
 
+    address_deeplink_skipped = _create_bot_deeplink_html(address_skipped, bot_username)
     logging.info(
         f"User {callback_query.from_user.id} skipped further processing for {address_skipped} on {blockchain_skipped}"
     )
     try:
         await callback_query.message.edit_text(
-            f"⏭️ Skipped actions for <code>{html.quote(address_skipped)}</code> on {html.quote(blockchain_skipped.capitalize())}.",
+            f"⏭️ Skipped actions for {address_deeplink_skipped} on {html.quote(blockchain_skipped.capitalize())}.",
             parse_mode="HTML",
             reply_markup=None,
+            disable_web_page_preview=True
         )
     except TelegramAPIError as e:
         logging.warning(f"Failed to edit message on skip action: {e}")
         await callback_query.message.answer(
-            f"⏭️ Skipped actions for <code>{html.quote(address_skipped)}</code> on {html.quote(blockchain_skipped.capitalize())}.",
+            f"⏭️ Skipped actions for {address_deeplink_skipped} on {html.quote(blockchain_skipped.capitalize())}.",
             parse_mode="HTML",
+            disable_web_page_preview=True
         )
     await state.update_data(addresses_for_memo_prompt_details=[])
     await _orchestrate_next_processing_step(callback_query.message, state)
@@ -351,6 +364,10 @@ async def handle_request_memo_callback(
     address_text = current_address_info.get("address")
     blockchain_text = current_address_info.get("blockchain", "N/A").capitalize()
 
+    bot_info = await callback_query.bot.get_me()
+    bot_username = bot_info.username
+    address_deeplink = _create_bot_deeplink_html(address_text, bot_username)
+
     db_session = SessionLocal()
     try:
         current_scan_db_message_id = data.get("current_scan_db_message_id")
@@ -387,7 +404,7 @@ async def handle_request_memo_callback(
             db_session.close()
 
     prompt_message_text = (
-        f"Please reply with your {memo_type_str} memo for: <code>{html.quote(address_text)}</code> ({html.quote(blockchain_text)}).\n"
+        f"Please reply with your {memo_type_str} memo for: {address_deeplink} ({html.quote(blockchain_text)}).\n"
         "Or send /skip to cancel adding this memo."
     )
     try:
@@ -395,8 +412,13 @@ async def handle_request_memo_callback(
             text=prompt_message_text,
             parse_mode="HTML",
             reply_markup=None,
+            disable_web_page_preview=True
         )
     except Exception as e:
         logging.warning(f"Failed to edit message for memo prompt, sending new: {e}")
-        await callback_query.message.answer(text=prompt_message_text, parse_mode="HTML")
+        await callback_query.message.answer(
+            text=prompt_message_text, 
+            parse_mode="HTML", 
+            disable_web_page_preview=True
+        )
     await state.set_state(AddressProcessingStates.awaiting_memo)

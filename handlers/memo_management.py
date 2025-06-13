@@ -19,7 +19,7 @@ from database import (
 from database.models import MemoType, User # MODIFIED: Added User import
 from database.queries import update_crypto_address_memo
 from .common import MAX_TELEGRAM_MESSAGE_LENGTH, TARGET_AUDIT_CHANNEL_ID
-from .helpers import markdown_to_html # Ensure this helper is available and imported
+from .helpers import markdown_to_html, _create_bot_deeplink_html # MODIFIED: Import _create_bot_deeplink_html
 from config.config import Config # Import Config for admin check
 
 # from .states import AddressProcessingStates # Not directly setting states here, but might be needed by callers
@@ -312,7 +312,7 @@ async def _process_memo_action(message: Message, state: FSMContext):
                 parse_mode="HTML",
             )
             # Audit Log
-            if message.from_user:
+            if message.from_user and TARGET_AUDIT_CHANNEL_ID: # Check if audit channel is configured
                 user = message.from_user
                 user_info_parts = [f"ID: <code>{user.id}</code>"]
                 name_parts = [html.quote(n) for n in [user.first_name, user.last_name] if n]
@@ -320,13 +320,17 @@ async def _process_memo_action(message: Message, state: FSMContext):
                 if user.username: user_info_parts.append(f"Username: @{html.quote(user.username)}")
                 user_info_audit_str = "\n".join(["<b>👤 User Details:</b>"] + user_info_parts)
                 
+                bot_info = await message.bot.get_me()
+                bot_username = bot_info.username
+                address_deeplink_for_audit = _create_bot_deeplink_html(address_text_for_display, bot_username)
+
                 audit_message_text = f"""<b>📝 New Memo Added</b>
 {user_info_audit_str}
-<b>Address:</b> <code>{html.quote(address_text_for_display)}</code>
+<b>Address:</b> {address_deeplink_for_audit}
 <b>Blockchain:</b> {html.quote(blockchain_for_display.capitalize())}
 <b>Memo:</b> {html.quote(memo_text)}"""
                 try:
-                    await message.bot.send_message(TARGET_AUDIT_CHANNEL_ID, audit_message_text, parse_mode="HTML")
+                    await message.bot.send_message(TARGET_AUDIT_CHANNEL_ID, audit_message_text, parse_mode="HTML", disable_web_page_preview=True)
                 except Exception as e_audit:
                     logging.error(f"Failed to send new memo audit log: {e_audit}")
         else:

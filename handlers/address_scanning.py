@@ -15,7 +15,7 @@ from .common import (
     MAX_TELEGRAM_MESSAGE_LENGTH,
     EXPLORER_CONFIG,
 )
-from .helpers import get_ambiguity_group_members
+from .helpers import get_ambiguity_group_members, _create_bot_deeplink_html # MODIFIED: Import _create_bot_deeplink_html
 from utils.colors import Colors
 
 # Import functions from other refactored modules
@@ -68,9 +68,16 @@ async def _scan_message_for_addresses_action(
                     "<b>🔍 Detected Crypto Addresses in User Message:</b>"
                 ]
                 all_detected_pairs = []
+                bot_info = await message.bot.get_me() # Get bot info for username
+                bot_username = bot_info.username
+
                 for blockchain, addresses_list in detected_raw_addresses_map.items():
                     if addresses_list:
-                        formatted_addresses_list = [f"  • <code>{html.quote(addr)}</code>" for addr in addresses_list]
+                        # MODIFIED: Use _create_bot_deeplink_html for addresses in audit log
+                        formatted_addresses_list = [
+                            f"  • {_create_bot_deeplink_html(addr, bot_username)}" 
+                            for addr in addresses_list
+                        ]
                         all_detected_pairs.extend([(blockchain, addr) for addr in addresses_list])
                         audit_addresses_parts.append(
                             f"<b>{html.quote(blockchain.capitalize())}:</b>\n" + "\n".join(formatted_addresses_list)

@@ -20,6 +20,7 @@ from .common import (
     MAX_TELEGRAM_MESSAGE_LENGTH,
 )
 from .address_processing import _scan_message_for_addresses_action
+from .helpers import _create_bot_deeplink_html # MODIFIED: Import the helper function
 
 
 async def command_start_handler(
@@ -38,6 +39,9 @@ async def command_start_handler(
     await state.clear()
     user_full_name = message.from_user.full_name if message.from_user else "User"
     payload = command.args
+
+    bot_info = await message.bot.get_me()
+    bot_username = bot_info.username
 
     if message.from_user:
         user = message.from_user
@@ -72,8 +76,11 @@ async def command_start_handler(
             "Start command with payload (deep link) detected. Address: %s",
             address_from_payload,
         )
+        address_deeplink = _create_bot_deeplink_html(address_from_payload, bot_username)
         await message.answer(
-            f"Hello, {html.bold(user_full_name)}!\nProcessing address from link: <code>{html.quote(address_from_payload)}</code>"
+            f"Hello, {html.bold(user_full_name)}!\nProcessing address from link: {address_deeplink}",
+            parse_mode="HTML",
+            disable_web_page_preview=True
         )
         await _scan_message_for_addresses_action(
             message, state, text_override=address_from_payload
@@ -107,6 +114,10 @@ async def checkmemo_handler(message: types.Message):
 
     db = SessionLocal()
     reply_markup_for_first_message = None
+    bot_info = await message.bot.get_me()
+    bot_username = bot_info.username
+    address_deeplink = _create_bot_deeplink_html(address_arg, bot_username)
+
     try:
         for blockchain_key, config_data in EXPLORER_CONFIG.items():
             if crypto_finder.validate_checksum(blockchain_key, address_arg):
@@ -136,14 +147,15 @@ async def checkmemo_handler(message: types.Message):
         )
         if not results:
             await message.reply(
-                f"No memos found for address: <code>{html.quote(address_arg)}</code>",
+                f"No memos found for address: {address_deeplink}",
                 parse_mode="HTML",
                 reply_markup=reply_markup_for_first_message,
+                disable_web_page_preview=True
             )
             return
 
         response_header = (
-            f"<b>Memos for Address:</b> <code>{html.quote(address_arg)}</code>\n\n"
+            f"<b>Memos for Address:</b> {address_deeplink}\n\n"
         )
         memo_blocks = []
         for row in results:
@@ -210,16 +222,18 @@ async def checkmemo_handler(message: types.Message):
         for i, text_to_send in enumerate(final_messages_to_send):
             if text_to_send.strip():
                 await message.reply(
-                    text=text_to_send,  # Added text argument
+                    text=text_to_send,
+                    parse_mode="HTML", # Added parse_mode
                     reply_markup=(reply_markup_for_first_message if i == 0 else None),
+                    disable_web_page_preview=True
                 )
     except (SQLAlchemyError, TelegramAPIError) as e:
         logging.exception(
             "Database or Telegram API error in checkmemo_handler for address %s: %s", html.quote(address_arg), e
         )
-        # Removed the first erroneous reply, the second one is sufficient for an error message.
         await message.reply(
-            text="An error occurred while retrieving memos. Please check the bot logs." # Added text argument
+            text="An error occurred while retrieving memos. Please check the bot logs.",
+            parse_mode="HTML" # Added parse_mode
         )
     finally:
         if db.is_active:

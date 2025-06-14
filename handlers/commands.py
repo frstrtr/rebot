@@ -20,7 +20,7 @@ from .common import (
     MAX_TELEGRAM_MESSAGE_LENGTH,
 )
 from .address_processing import _scan_message_for_addresses_action
-from .helpers import _create_bot_deeplink_html # MODIFIED: Import the helper function
+from .helpers import _create_bot_deeplink_html, format_user_info_for_audit # MODIFIED: Import format_user_info_for_audit
 
 
 async def command_start_handler(
@@ -48,17 +48,18 @@ async def command_start_handler(
         audit_header = "Audit: User started the bot with /start command"
         if payload:
             audit_header += f" and payload: <code>{html.quote(payload)}</code>"
-        user_info_parts = [audit_header, f"User ID: (<code>{user.id}</code>)"]
-        name_parts = [html.quote(n) for n in [user.first_name, user.last_name] if n]
-        if name_parts:
-            user_info_parts.append(f"Name: {' '.join(name_parts)}")
-        if user.username:
-            user_info_parts.append(f"Username: @{html.quote(user.username)}")
+        
+        # Use the helper function to format user info, which includes the deeplinked ID
+        formatted_user_info = format_user_info_for_audit(user)
+        
+        full_audit_message = f"{audit_header}\n{formatted_user_info}"
+
         try:
             await message.bot.send_message(
                 chat_id=TARGET_AUDIT_CHANNEL_ID,
-                text="\n".join(user_info_parts),
+                text=full_audit_message, # MODIFIED
                 parse_mode="HTML",
+                disable_web_page_preview=True,
             )
             logging.info(
                 "/start command from user %s (payload: '%s') logged to audit channel.",

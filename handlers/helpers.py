@@ -31,21 +31,7 @@ async def _forward_to_audit_channel(message: Message):
         return
 
     user = message.from_user
-    user_info_parts = ["👤 Message received from:"]
-    user_info_parts.append(f"ID: (<code>{user.id}</code>)")
-
-    name_parts = []
-    if user.first_name:
-        name_parts.append(html.quote(user.first_name))
-    if user.last_name:
-        name_parts.append(html.quote(user.last_name))
-    if name_parts:
-        user_info_parts.append(f"Name: {' '.join(name_parts)}")
-
-    if user.username:
-        user_info_parts.append(f"Username: @{html.quote(user.username)}")
-
-    user_details_text = "\n".join(user_info_parts)
+    user_details_text = format_user_info_for_audit(user)
 
     try:
         # Assuming /skip is a command/text the user might send

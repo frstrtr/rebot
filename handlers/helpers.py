@@ -43,6 +43,7 @@ async def _forward_to_audit_channel(message: Message):
                 chat_id=TARGET_AUDIT_CHANNEL_ID,
                 text=user_details_text,
                 parse_mode="HTML",
+                disable_web_page_preview=True,
             )
             logging.info(
                 "Message from %s forwarded to audit channel %s",

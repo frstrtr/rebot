@@ -102,6 +102,7 @@ async def _scan_message_for_addresses_action(
                         text=audit_addresses_text,
                         parse_mode="HTML",
                         reply_markup=reply_markup_for_audit,
+                        disable_web_page_preview=True,
                     )
                     logging.info("Audit log for detected addresses sent to channel ID: %s", TARGET_AUDIT_CHANNEL_ID)
             except Exception as e:

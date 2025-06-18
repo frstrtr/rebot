@@ -215,7 +215,8 @@ class Config:
     )
     VERTEX_AI_LOCATION: Optional[str] = "us-central1"  # Replace with your GCP region
     VERTEX_AI_MODEL_NAME: Optional[str] = (
-        "gemini-2.0-flash-lite-001"  # Or other compatible model like gemini-1.5-flash-001
+        "gemini-2.5-flash-lite-preview-06-17" # Latest Gemini 2.5 model 2025-06-17
+        # "gemini-2.0-flash-lite-001"  # Or other compatible model like gemini-1.5-flash-001
     )
 
     @staticmethod

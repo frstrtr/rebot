@@ -30,3 +30,7 @@ google-genai>=1.19.0
 markdown>=3.8
 beautifulsoup4>=4.13.4
 lxml>=5.4.0
+
+# API
+fastapi>=0.115.13
+uvicorn>=0.34.3

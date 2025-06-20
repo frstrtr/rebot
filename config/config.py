@@ -20,6 +20,9 @@ class Config:
     GREEN = "\033[92m"
     RESET_COLOR = "\033[0m"  # Standardized name for reset
 
+    # Bot identity
+    BOT_USERNAME: Optional[str] = "oLolsBot" # Add bot username here or load from env/file
+
     ETH_USDC_CONTRACT_ADDRESS = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
     ETH_USDT_CONTRACT_ADDRESS = "0xdAC17F958D2ee523a2206206994597C13D831ec7"
     BSC_USDC_CONTRACT_ADDRESS = "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d"
@@ -81,6 +84,8 @@ class Config:
         return token
 
     # External API Configurations
+    EXTERNAL_API_SECRET = _load_api_token("external_api_secret.txt")
+
     ETHERSCAN_API_KEY = _load_api_token(
         "etherscan_api_token.txt"
     )  # Optional, can be None if not set

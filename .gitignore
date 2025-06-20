@@ -175,3 +175,4 @@ config/bscscan_api_token.txt
 test.txt
 data/cache/stablecoin_blacklist.json
 
+config/external_api_secret.txt

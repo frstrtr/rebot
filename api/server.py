@@ -3,7 +3,7 @@ import os
 import logging
 
 # This runner script assumes it's being run from the project root directory.
-from api.external_api import app
+from external_api import app
 
 if __name__ == "__main__":
     # Use environment variables for host and port, with defaults

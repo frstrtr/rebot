@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 from typing import List, Optional, Set
 
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, or_
+from sqlalchemy.exc import SQLAlchemyError
 
 # Adjust path to import from the parent project directory
 import sys
@@ -31,6 +32,9 @@ API_KEY_NAME = "X-API-KEY"
 api_key_header = Security(APIKeyHeader(name=API_KEY_NAME, auto_error=False))
 
 async def get_api_key(api_key: str = api_key_header):
+    """ Validates the API key provided in the request header.
+    Raises HTTPException if the key is invalid or not set.
+    """
     if not Config.EXTERNAL_API_SECRET:
         logging.critical("EXTERNAL_API_SECRET is not set in the configuration. API is insecure.")
         raise HTTPException(status_code=500, detail="API secret is not configured on the server.")
@@ -44,8 +48,10 @@ class AddressCheckRequest(BaseModel):
     crypto_address: str
     request_by_telegram_id: int = Field(..., gt=0, le=100000000, description="Telegram ID of the user making the request.")
     provided_by_telegram_id: int = Field(..., gt=0, le=100000000, description="Telegram ID of the user who provided the address.")
+    blockchain_type: Optional[str] = Field(None, description="Optional: Specify the blockchain to resolve ambiguity (e.g., 'ethereum', 'bsc').")
 
 class AddressCheckResponse(BaseModel):
+    """Response model for the address check API."""
     status: str = Field(..., description="OK, ERROR, or CLARIFICATION_NEEDED")
     message: Optional[str] = Field(None, description="Error message or status description.")
     request_datetime: datetime = Field(..., description="Timestamp of the request in UTC.")
@@ -81,41 +87,96 @@ async def check_address(request: AddressCheckRequest, db: Session = Depends(get_
         )
 
     detected_chains: Set[str] = {chain for chain, addrs in detected_map.items() if request.crypto_address in addrs}
+    
+    blockchain: Optional[str] = None
+    ambiguity_options: Set[str] = set()
 
-    is_ambiguous = False
-    ambiguity_options = set()
     if len(detected_chains) == 1:
         single_chain = detected_chains.copy().pop()
         group = get_ambiguity_group_members(single_chain)
         if group:
-            is_ambiguous = True
             ambiguity_options = group
+        else:
+            blockchain = single_chain
     elif len(detected_chains) > 1:
-        is_ambiguous = True
         ambiguity_options = detected_chains
 
-    if is_ambiguous:
-        return AddressCheckResponse(
-            status="CLARIFICATION_NEEDED",
-            message="Address format is ambiguous and could belong to multiple blockchains. Please clarify.",
-            request_datetime=request_time,
-            possible_blockchains=sorted(list(ambiguity_options))
-        )
-
-    blockchain = detected_chains.pop()
+    if ambiguity_options:
+        if request.blockchain_type:
+            if request.blockchain_type.lower() in ambiguity_options:
+                blockchain = request.blockchain_type.lower()
+            else:
+                return AddressCheckResponse(
+                    status="ERROR",
+                    message=f"Provided blockchain_type '{request.blockchain_type}' is not a valid option for this address. Possible options: {sorted(list(ambiguity_options))}",
+                    request_datetime=request_time
+                )
+        else:
+            return AddressCheckResponse(
+                status="CLARIFICATION_NEEDED",
+                message="Address format is ambiguous and could belong to multiple blockchains. Please clarify by providing a 'blockchain_type'.",
+                request_datetime=request_time,
+                possible_blockchains=sorted(list(ambiguity_options))
+            )
     
-    from sqlalchemy.exc import SQLAlchemyError
+    if not blockchain:
+        # This case should not be hit if logic is correct, but it's a safeguard.
+        # Add logging to be sure
+        logging.error(f"API_LOGIC_ERROR: Could not resolve a single blockchain for address '{request.crypto_address}' from detected chains: {detected_chains}. Ambiguity options were: {ambiguity_options}")
+        return AddressCheckResponse(
+            status="ERROR",
+            message=f"Could not determine a single blockchain for '{request.crypto_address}'.",
+            request_datetime=request_time
+        )
+    
     try:
-        memos_query = db.query(CryptoAddress.notes).filter(
+        # --- Extensive Logging for DB Query ---
+        logging.info("-------------------- API DB QUERY DEBUG START --------------------")
+        logging.info(f"[API_DB_DEBUG] File: api/external_api.py -> check_address()")
+        logging.info(f"[API_DB_DEBUG] Preparing to query for public memos.")
+        logging.info(f"[API_DB_DEBUG] PARAMETER address: '{request.crypto_address}'")
+        logging.info(f"[API_DB_DEBUG] PARAMETER blockchain: '{blockchain}'")
+
+        # 1. Create the base query EXACTLY matching the working logic in memo_management.py
+        logging.info("[API_DB_DEBUG] Using func.lower() for case-insensitive comparison to mirror the bot's working implementation.")
+        query = db.query(CryptoAddress).filter(
             func.lower(CryptoAddress.address) == request.crypto_address.lower(),
             func.lower(CryptoAddress.blockchain) == blockchain.lower(),
-            CryptoAddress.memo_type == MemoType.PUBLIC.value,
             CryptoAddress.notes.isnot(None),
             CryptoAddress.notes != ""
-        ).all()
-        public_memos = [memo[0] for memo in memos_query]
+        )
+        logging.info(f"[API_DB_DEBUG] Step 1: Base query constructed.")
+        logging.info(f"[API_DB_DEBUG] SQL for base query (approximate): {str(query.statement.compile(compile_kwargs={'literal_binds': True}))}")
+
+        # 2. Apply the public scope filter to the existing query object.
+        query = query.filter(
+            or_(
+                CryptoAddress.memo_type == MemoType.PUBLIC.value,
+                CryptoAddress.memo_type.is_(None)
+            )
+        )
+        logging.info(f"[API_DB_DEBUG] Step 2: Public memo filter applied (memo_type is 'public' or NULL).")
+        logging.info(f"[API_DB_DEBUG] SQL for final query (approximate): {str(query.statement.compile(compile_kwargs={'literal_binds': True}))}")
+        
+        # 3. Execute the final query with ordering.
+        logging.info("[API_DB_DEBUG] Step 3: Executing query against the database...")
+        memo_results = query.order_by(CryptoAddress.id.desc()).all()
+        logging.info(f"[API_DB_DEBUG] Step 4: Query executed. Found {len(memo_results)} raw results.")
+
+        # 4. Log the raw results for inspection.
+        if not memo_results:
+            logging.warning(f"[API_DB_DEBUG] No matching records found in 'crypto_addresses' table for the given criteria.")
+        else:
+            for i, memo in enumerate(memo_results):
+                logging.info(f"[API_DB_DEBUG]   - Result [{i}]: ID={memo.id}, Addr='{memo.address}', Chain='{memo.blockchain}', Type='{memo.memo_type}', Notes='{memo.notes[:70]}...'")
+
+        # 5. Extract the notes.
+        public_memos = [memo.notes for memo in memo_results if memo.notes]
+        logging.info(f"[API_DB_DEBUG] Step 5: Extracted {len(public_memos)} notes from raw results.")
+        logging.info("-------------------- API DB QUERY DEBUG END ----------------------")
+
     except SQLAlchemyError as e:
-        logging.error(f"API DB Error fetching memos for {request.crypto_address}: {e}")
+        logging.error(f"API DB Error fetching memos for {request.crypto_address}: {e}", exc_info=True)
         return AddressCheckResponse(status="ERROR", message="A database error occurred while fetching memos.", request_datetime=request_time)
 
     explorer_link = Config.EXPLORER_CONFIG.get(blockchain, {}).get("url_template", "").format(address=request.crypto_address) or None

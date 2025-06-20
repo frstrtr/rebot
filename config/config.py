@@ -21,7 +21,7 @@ class Config:
     RESET_COLOR = "\033[0m"  # Standardized name for reset
 
     # Bot identity
-    BOT_USERNAME: Optional[str] = "oLolsBot" # Add bot username here or load from env/file
+    BOT_USERNAME: Optional[str] = "cryptoscamreportbot" # Add bot username here or load from env/file
 
     ETH_USDC_CONTRACT_ADDRESS = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
     ETH_USDT_CONTRACT_ADDRESS = "0xdAC17F958D2ee523a2206206994597C13D831ec7"

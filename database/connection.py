@@ -25,15 +25,13 @@ PG_DB = os.environ.get("PG_DB", "rebot")
 if DATABASE_TYPE == "sqlite":
     DATABASE_URL = f"sqlite:///{SQLITE_DB_PATH}"
     connect_args = {"check_same_thread": False}
+    engine = create_engine(DATABASE_URL, connect_args=connect_args)
 elif DATABASE_TYPE == "postgresql":
     DATABASE_URL = f"postgresql://{PG_USER}:{PG_PASSWORD}@{PG_HOST}:{PG_PORT}/{PG_DB}"
     engine = create_engine(DATABASE_URL)
-    SessionLocal = scoped_session(sessionmaker(autocommit=False, autoflush=False, bind=engine))
 else:
     raise ValueError(f"Unsupported database type: {DATABASE_TYPE}")
 
-# Create SQLAlchemy engine and session
-engine = create_engine(DATABASE_URL, connect_args=connect_args)
 SessionLocal = scoped_session(sessionmaker(autocommit=False, autoflush=False, bind=engine))
 
 Base = declarative_base()

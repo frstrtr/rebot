@@ -3,16 +3,16 @@ address_scanning.py
 Contains the core logic for scanning messages for crypto addresses.
 """
 import logging
-from aiogram import html, types
+from aiogram import html
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
-from aiogram.exceptions import TelegramAPIError
+# from aiogram.exceptions import TelegramAPIError
 
 from database import SessionLocal, save_message
 from .common import (
     crypto_finder,
     TARGET_AUDIT_CHANNEL_ID,
-    MAX_TELEGRAM_MESSAGE_LENGTH,
+    # MAX_TELEGRAM_MESSAGE_LENGTH,
     EXPLORER_CONFIG,
 )
 from .helpers import get_ambiguity_group_members, _create_bot_deeplink_html # MODIFIED: Import _create_bot_deeplink_html

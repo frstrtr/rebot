@@ -27,7 +27,8 @@ if DATABASE_TYPE == "sqlite":
     connect_args = {"check_same_thread": False}
 elif DATABASE_TYPE == "postgresql":
     DATABASE_URL = f"postgresql://{PG_USER}:{PG_PASSWORD}@{PG_HOST}:{PG_PORT}/{PG_DB}"
-    connect_args = {}
+    engine = create_engine(DATABASE_URL)
+    SessionLocal = scoped_session(sessionmaker(autocommit=False, autoflush=False, bind=engine))
 else:
     raise ValueError(f"Unsupported database type: {DATABASE_TYPE}")
 

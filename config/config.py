@@ -5,7 +5,7 @@
 from aiogram.enums import ParseMode
 import os
 import logging
-from typing import Optional
+from typing import Optional, List
 
 
 class Config:
@@ -32,18 +32,21 @@ class Config:
     # ... add other contracts and chains
 
     @staticmethod
-    def _load_admins(filename="admins.txt"):
-        """Loads admin IDs from a file, one ID per line."""
+    def _load_admins(filename="admins.txt") -> List[int]:
+        """Loads admin Telegram user IDs from a file."""
         admin_ids = []
         script_dir = os.path.dirname(__file__)
         file_path = os.path.join(script_dir, filename)
         try:
             with open(file_path, "r", encoding="utf-8") as f:
                 for line in f:
-                    line = line.strip()
-                    if line.isdigit():
-                        admin_ids.append(int(line))
-                    elif line:  # If line is not empty and not a digit
+                    stripped_line = line.strip()
+                    # Skip empty lines and lines that start with # (comments)
+                    if not stripped_line or stripped_line.startswith("#"):
+                        continue
+                    if stripped_line.isdigit():
+                        admin_ids.append(int(stripped_line))
+                    else:
                         logging.warning(
                             f"Invalid entry in '{filename}': '{line}' is not a valid integer ID. Skipping."
                         )  # pylint: disable=logging-fstring-interpolation

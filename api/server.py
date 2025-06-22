@@ -8,7 +8,7 @@ import os
 import uvicorn
 
 # This runner script assumes it's being run from the project root directory.
-from external_api import app
+from external_api import app # pylint: disable=unused-import # Import the FastAPI app from external_api.py
 
 # Define a standard logging configuration dictionary for Uvicorn
 LOGGING_CONFIG = {
@@ -41,7 +41,7 @@ LOGGING_CONFIG = {
 
 if __name__ == "__main__":
     # Use environment variables for host and port, with defaults
-    host = os.environ.get("API_HOST", "0.0.0.0")
+    host = os.environ.get("API_HOST", "127.0.0.1")
     port = int(os.environ.get("API_PORT", 8000))
     
     # To run this, you would execute `python -m api.server` from the /home/user0/rebot/ directory.

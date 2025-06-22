@@ -131,11 +131,11 @@ async def check_address(request: AddressCheckRequest, db: Session = Depends(get_
     
     try:
         # --- Extensive Logging for DB Query ---
-        logging.info("-------------------- API DB QUERY DEBUG START --------------------")
-        logging.info(f"[API_DB_DEBUG] File: api/external_api.py -> check_address()")
-        logging.info(f"[API_DB_DEBUG] Preparing to query for public memos.")
-        logging.info(f"[API_DB_DEBUG] PARAMETER address: '{request.crypto_address}'")
-        logging.info(f"[API_DB_DEBUG] PARAMETER blockchain: '{blockchain}'")
+        # logging.info("-------------------- API DB QUERY DEBUG START --------------------")
+        # logging.info(f"[API_DB_DEBUG] File: api/external_api.py -> check_address()")
+        # logging.info(f"[API_DB_DEBUG] Preparing to query for public memos.")
+        # logging.info(f"[API_DB_DEBUG] PARAMETER address: '{request.crypto_address}'")
+        # logging.info(f"[API_DB_DEBUG] PARAMETER blockchain: '{blockchain}'")
 
         # 1. Create the base query EXACTLY matching the working logic in memo_management.py
         logging.info("[API_DB_DEBUG] Using func.lower() for case-insensitive comparison to mirror the bot's working implementation.")
@@ -145,8 +145,8 @@ async def check_address(request: AddressCheckRequest, db: Session = Depends(get_
             CryptoAddress.notes.isnot(None),
             CryptoAddress.notes != ""
         )
-        logging.info(f"[API_DB_DEBUG] Step 1: Base query constructed.")
-        logging.info(f"[API_DB_DEBUG] SQL for base query (approximate): {str(query.statement.compile(compile_kwargs={'literal_binds': True}))}")
+        # logging.info(f"[API_DB_DEBUG] Step 1: Base query constructed.")
+        # logging.info(f"[API_DB_DEBUG] SQL for base query (approximate): {str(query.statement.compile(compile_kwargs={'literal_binds': True}))}")
 
         # 2. Apply the public scope filter to the existing query object.
         query = query.filter(
@@ -155,13 +155,13 @@ async def check_address(request: AddressCheckRequest, db: Session = Depends(get_
                 CryptoAddress.memo_type.is_(None)
             )
         )
-        logging.info(f"[API_DB_DEBUG] Step 2: Public memo filter applied (memo_type is 'public' or NULL).")
-        logging.info(f"[API_DB_DEBUG] SQL for final query (approximate): {str(query.statement.compile(compile_kwargs={'literal_binds': True}))}")
+        # logging.info(f"[API_DB_DEBUG] Step 2: Public memo filter applied (memo_type is 'public' or NULL).")
+        # logging.info(f"[API_DB_DEBUG] SQL for final query (approximate): {str(query.statement.compile(compile_kwargs={'literal_binds': True}))}")
         
         # 3. Execute the final query with ordering.
-        logging.info("[API_DB_DEBUG] Step 3: Executing query against the database...")
+        # logging.info("[API_DB_DEBUG] Step 3: Executing query against the database...")
         memo_results = query.order_by(CryptoAddress.id.desc()).all()
-        logging.info(f"[API_DB_DEBUG] Step 4: Query executed. Found {len(memo_results)} raw results.")
+        # logging.info(f"[API_DB_DEBUG] Step 4: Query executed. Found {len(memo_results)} raw results.")
 
         # 4. Log the raw results for inspection.
         if not memo_results:
@@ -172,8 +172,8 @@ async def check_address(request: AddressCheckRequest, db: Session = Depends(get_
 
         # 5. Extract the notes.
         public_memos = [memo.notes for memo in memo_results if memo.notes]
-        logging.info(f"[API_DB_DEBUG] Step 5: Extracted {len(public_memos)} notes from raw results.")
-        logging.info("-------------------- API DB QUERY DEBUG END ----------------------")
+        # logging.info(f"[API_DB_DEBUG] Step 5: Extracted {len(public_memos)} notes from raw results.")
+        # logging.info("-------------------- API DB QUERY DEBUG END ----------------------")
 
     except SQLAlchemyError as e:
         logging.error(f"API DB Error fetching memos for {request.crypto_address}: {e}", exc_info=True)

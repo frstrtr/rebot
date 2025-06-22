@@ -88,9 +88,12 @@ async def command_start_handler(
         )
     else:
         await message.answer(
-            f"Hello, {html.bold(user_full_name)}!\n\nPlease send me a message containing a crypto address, and I will help you with it.\n\n"
-            "You can also use /checkmemo to check existing memos for a crypto address.\n"
-            "If you want to skip the memo process, just reply with /skip.\n"
+            f"Hello, {html.bold(user_full_name)}! 👋\n\n"
+            "Please send or forward 🤖me a message containing a 💸crypto address, and I'll help you with it. 🔍\n\n"
+            "I'll provide a blockchain explorer ⛓️link, 📝memo book entries (public and private), "
+            "and an 🤖AI analysis of the address's metadata in a multi-language report. 📈\n\n"
+            "You can also use /checkmemo to see existing memos for an address. 📝\n"
+            "If you'd like to skip the memo process, simply reply with /skip. ⏩"
         )
 
 

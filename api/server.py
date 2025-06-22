@@ -8,7 +8,7 @@ import os
 import uvicorn
 
 # This runner script assumes it's being run from the project root directory.
-# from external_api import app
+from external_api import app
 
 # Define a standard logging configuration dictionary for Uvicorn
 LOGGING_CONFIG = {

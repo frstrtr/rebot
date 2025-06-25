@@ -18,9 +18,10 @@ from database import (
 )
 from database.models import MemoType, User # MODIFIED: Added User import
 from database.queries import update_crypto_address_memo
-from .common import MAX_TELEGRAM_MESSAGE_LENGTH, TARGET_AUDIT_CHANNEL_ID
-from .helpers import markdown_to_html, _create_bot_deeplink_html # MODIFIED: Import _create_bot_deeplink_html
 from config.config import Config # Import Config for admin check
+from .common import MAX_TELEGRAM_MESSAGE_LENGTH, TARGET_AUDIT_CHANNEL_ID
+# MODIFIED: Import _create_bot_deeplink_html
+from .helpers import markdown_to_html, _create_bot_deeplink_html
 
 # from .states import AddressProcessingStates # Not directly setting states here, but might be needed by callers
 
@@ -120,6 +121,14 @@ async def _display_memos_for_address_blockchain(
             author_info_line = f"\n    <i>{added_by_prefix}{author_display_text_value}{date_display_text_value}</i>"
         
         individual_memo_text = f"  • ID <code>{memo_item.id}</code> (<i>{status_display}</i>):\n{processed_notes}{author_info_line}"
+
+        # Add deeplink if it's a public report
+        if memo_item.memo_type == MemoType.PUBLIC.value or memo_item.memo_type is None:
+            bot_info = await message_target.bot.get_me()
+            bot_username = bot_info.username
+            deeplink_url = f"https://t.me/{bot_username}?start=report_{memo_item.id}_{memo_item.address}"
+            report_deeplink_line = f'\n\n🔗 <b>Report Link:</b> <code>{deeplink_url}</code>'
+            individual_memo_text += report_deeplink_line
 
         admin_button_markup = None
         
@@ -311,6 +320,17 @@ async def _process_memo_action(message: Message, state: FSMContext):
                 f"📝 {intended_memo_type_str.capitalize()} memo saved for <code>{html.quote(address_text_for_display)}</code> ({html.quote(blockchain_for_display.capitalize())}).",
                 parse_mode="HTML",
             )
+            # If the memo is public, show the shareable deeplink
+            if intended_memo_type_str == MemoType.PUBLIC.value:
+                bot_info = await message.bot.get_me()
+                bot_username = bot_info.username
+                deeplink_url = f"https://t.me/{bot_username}?start=report_{updated_address.id}_{updated_address.address}"
+                await message.answer(
+                    f'🔗 <b>Public report link:</b> <code>{deeplink_url}</code>',
+                    parse_mode="HTML",
+                    disable_web_page_preview=True
+                )
+
             # Audit Log
             if message.from_user and TARGET_AUDIT_CHANNEL_ID: # Check if audit channel is configured
                 user = message.from_user

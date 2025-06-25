@@ -289,7 +289,7 @@ async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery
 
 
 async def handle_ai_response_memo_action_callback(callback_query: types.CallbackQuery, state: FSMContext):
-    """Handles user's choice to save or skip saving the AI-generated report as a memo."""
+    """Handles user actions on an AI-generated report, like saving it as a memo."""
     await callback_query.answer()
     action = callback_query.data.split(":")[1] 
 
@@ -368,6 +368,16 @@ async def handle_ai_response_memo_action_callback(callback_query: types.Callback
                     f"✅ AI report for {address_deeplink_for_user_message} saved as {action} memo.",
                     parse_mode="HTML", reply_markup=None, disable_web_page_preview=True
                 )
+
+                # If the memo is public, show the shareable deeplink
+                if memo_type_to_save == MemoType.PUBLIC.value:
+                    deeplink_url = f"https://t.me/{bot_username}?start=report_{updated_address.id}_{updated_address.address}"
+                    await callback_query.message.answer(
+                        f'🔗 <b>Public report link:</b> <code>{deeplink_url}</code>',
+                        parse_mode="HTML",
+                        disable_web_page_preview=True
+                    )
+
                 if TARGET_AUDIT_CHANNEL_ID:
                     user_info_for_save_audit = format_user_info_for_audit(callback_query.from_user)
                     address_deeplink_for_audit = _create_bot_deeplink_html(address_to_update, bot_username)

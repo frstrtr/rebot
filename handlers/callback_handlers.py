@@ -4,14 +4,17 @@ Handles general callbacks, blockchain clarifications, and memo interactions.
 
 import logging
 from aiogram import html, types
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+
+# from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramAPIError
-from datetime import datetime  # Keep if used by any remaining handlers
+
+# from datetime import datetime  # Keep if used by any remaining handlers
 
 from database import SessionLocal, get_or_create_user, save_crypto_address
 from database.models import MemoType
-from database.queries import update_crypto_address_memo
+
+# from database.queries import update_crypto_address_memo
 
 # from .common import EXPLORER_CONFIG # Keep if used by any remaining handlers
 from .states import AddressProcessingStates
@@ -21,7 +24,7 @@ from .address_processing import (
     # _prompt_for_next_memo, # This is likely called by _orchestrate_next_processing_step
     _send_action_prompt,
 )
-from .helpers import _create_bot_deeplink_html # Ensure this is imported
+from .helpers import _create_bot_deeplink_html  # Ensure this is imported
 
 # Import new callback modules if they are called from here (unlikely for this structure)
 
@@ -47,7 +50,7 @@ async def handle_blockchain_clarification_callback(
     action = callback_query.data.split(":")[1]
     address_str = item_being_clarified["address"]
     db = SessionLocal()
-    
+
     bot_info = await callback_query.bot.get_me()
     bot_username = bot_info.username
     address_deeplink = _create_bot_deeplink_html(address_str, bot_username)
@@ -85,7 +88,7 @@ async def handle_blockchain_clarification_callback(
                 f"✅ Blockchain for {address_deeplink} set to <b>{html.quote(chosen_blockchain.capitalize())}</b>.",
                 parse_mode="HTML",
                 reply_markup=None,
-                disable_web_page_preview=True
+                disable_web_page_preview=True,
             )
             await _send_action_prompt(
                 target_message=callback_query.message,
@@ -104,7 +107,7 @@ async def handle_blockchain_clarification_callback(
                 f"⏭️ Skipped blockchain clarification for {address_deeplink}.",
                 parse_mode="HTML",
                 reply_markup=None,
-                disable_web_page_preview=True
+                disable_web_page_preview=True,
             )
             await state.update_data(current_item_for_blockchain_clarification=None)
             await _orchestrate_next_processing_step(callback_query.message, state)
@@ -218,14 +221,14 @@ async def handle_skip_address_action_stage_callback(
             f"⏭️ Skipped actions for {address_deeplink_skipped} on {html.quote(blockchain_skipped.capitalize())}.",
             parse_mode="HTML",
             reply_markup=None,
-            disable_web_page_preview=True
+            disable_web_page_preview=True,
         )
     except TelegramAPIError as e:
         logging.warning(f"Failed to edit message on skip action: {e}")
         await callback_query.message.answer(
             f"⏭️ Skipped actions for {address_deeplink_skipped} on {html.quote(blockchain_skipped.capitalize())}.",
             parse_mode="HTML",
-            disable_web_page_preview=True
+            disable_web_page_preview=True,
         )
     await state.update_data(addresses_for_memo_prompt_details=[])
     await _orchestrate_next_processing_step(callback_query.message, state)
@@ -278,6 +281,7 @@ async def handle_show_public_memos_callback(
 async def handle_show_private_memos_callback(
     callback_query: types.CallbackQuery, state: FSMContext
 ):
+    """Handles the 'Show Private Memos' button click."""
     await callback_query.answer("Fetching your private memos...")
     user_fsm_data = await state.get_data()
     address = user_fsm_data.get("current_action_address")
@@ -412,13 +416,11 @@ async def handle_request_memo_callback(
             text=prompt_message_text,
             parse_mode="HTML",
             reply_markup=None,
-            disable_web_page_preview=True
+            disable_web_page_preview=True,
         )
     except Exception as e:
         logging.warning(f"Failed to edit message for memo prompt, sending new: {e}")
         await callback_query.message.answer(
-            text=prompt_message_text, 
-            parse_mode="HTML", 
-            disable_web_page_preview=True
+            text=prompt_message_text, parse_mode="HTML", disable_web_page_preview=True
         )
     await state.set_state(AddressProcessingStates.awaiting_memo)

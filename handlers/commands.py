@@ -13,6 +13,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import SQLAlchemyError
 
 from database import SessionLocal, CryptoAddress, CryptoAddressStatus
+from database.models import MemoType
 from .common import (
     crypto_finder,
     TARGET_AUDIT_CHANNEL_ID,
@@ -20,7 +21,55 @@ from .common import (
     MAX_TELEGRAM_MESSAGE_LENGTH,
 )
 from .address_processing import _scan_message_for_addresses_action
-from .helpers import _create_bot_deeplink_html, format_user_info_for_audit # MODIFIED: Import format_user_info_for_audit
+from .helpers import _create_bot_deeplink_html, format_user_info_for_audit, markdown_to_html
+
+
+async def handle_report_deeplink(message: types.Message, report_id: int):
+    """Handles a deeplink to a specific report (memo)."""
+    db = SessionLocal()
+    try:
+        # Fetch the specific memo by its ID
+        report_memo = db.query(CryptoAddress).filter(CryptoAddress.id == report_id).first()
+
+        if not report_memo:
+            await message.answer("Sorry, the requested report could not be found.")
+            return
+
+        # Security/Sanity check: only allow access to public memos via this link
+        if report_memo.memo_type not in [MemoType.PUBLIC.value, None]:
+             await message.answer("Sorry, you do not have permission to view this report.")
+             return
+        
+        bot_info = await message.bot.get_me()
+        bot_username = bot_info.username
+        address_deeplink = _create_bot_deeplink_html(report_memo.address, bot_username)
+
+        response_header = (
+            f"📜 <b>Public Report for Address:</b> {address_deeplink}\n"
+            f"<b>Blockchain:</b> {html.quote(report_memo.blockchain.capitalize())}\n\n"
+        )
+        
+        processed_notes = markdown_to_html(report_memo.notes if report_memo.notes else "")
+
+        full_report_text = response_header + processed_notes
+        
+        if len(full_report_text) > MAX_TELEGRAM_MESSAGE_LENGTH:
+            trunc_suffix = "... (report truncated)"
+            allowed_len = MAX_TELEGRAM_MESSAGE_LENGTH - len(trunc_suffix)
+            full_report_text = full_report_text[:allowed_len] + trunc_suffix
+
+        await message.answer(
+            full_report_text,
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+
+    except Exception as e:
+        logging.exception(f"Error handling report deeplink for report_id {report_id}: {e}")
+        await message.answer("An error occurred while fetching the report.")
+    finally:
+        if db.is_active:
+            db.close()
 
 
 async def command_start_handler(
@@ -72,6 +121,24 @@ async def command_start_handler(
             )
 
     if payload:
+        # Handle report deeplink
+        if payload.startswith("report_"):
+            try:
+                # Format: report_{report_id} or report_{report_id}_{address}
+                # The address is for user context in the URL, only the ID is needed for lookup.
+                parts = payload.split('_')
+                if len(parts) < 2:
+                    raise ValueError("Deeplink payload is too short")
+                
+                report_id_str = parts[1]
+                report_id = int(report_id_str)
+                await handle_report_deeplink(message, report_id)
+                return # Stop further processing in start handler
+            except (ValueError, IndexError):
+                logging.warning(f"Invalid report deeplink payload: {payload}")
+                await message.answer("Invalid report link.")
+                return
+
         address_from_payload = payload.strip()
         logging.info(
             "Start command with payload (deep link) detected. Address: %s",

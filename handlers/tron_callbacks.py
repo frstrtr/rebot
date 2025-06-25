@@ -142,8 +142,24 @@ async def _format_account_info_for_ai(address: str, api_client: TronScanAPI) -> 
             tags_str = ", ".join(tags) if tags else "None"
 
             # Permissions
+            owner_permission_str = "N/A"
             owner_permission = account_info.get('ownerPermission', {})
-            owner_keys_count = len(owner_permission.get('keys', []))
+            if owner_permission and isinstance(owner_permission.get('keys'), list):
+                owner_addresses = [key.get('address') for key in owner_permission['keys'] if key.get('address')]
+                if owner_addresses:
+                    owner_permission_str = ", ".join(owner_addresses)
+
+            active_permission_str = "N/A"
+            active_permissions = account_info.get('activePermissions', [])
+            if active_permissions and isinstance(active_permissions, list):
+                active_addresses = set()
+                for perm in active_permissions:
+                    if isinstance(perm.get('keys'), list):
+                        for key in perm['keys']:
+                            if key.get('address'):
+                                active_addresses.add(key.get('address'))
+                if active_addresses:
+                    active_permission_str = ", ".join(list(active_addresses))
 
             info_summary += (
                 f"Address: {html.quote(address)}\n"
@@ -157,7 +173,8 @@ async def _format_account_info_for_ai(address: str, api_client: TronScanAPI) -> 
                 f"Outgoing Transactions: {tx_out_count}\n\n"
                 f"--- Network & Security Profile ---\n"
                 f"Total Frozen TRX: {total_frozen_trx:.6f} TRX\n"
-                f"Owner Keys: {owner_keys_count}\n"
+                f"Owner Permission Authorized To: {html.quote(owner_permission_str)}\n"
+                f"Active Permission(s) Authorized To: {html.quote(active_permission_str)}\n"
                 f"TronScan Tags: {html.quote(tags_str)}\n"
                 f"Community Risk Feedback: {'Yes' if feedback_risk else 'No'}\n"
             )

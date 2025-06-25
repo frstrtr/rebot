@@ -1,8 +1,14 @@
-✅ Add new 'address to check' notifier group or message 2624042904 (test channel)
+✅ Add new 'address to check' notifier group or message (test channel)
 ✅ Add TON blockchain support
-Separate memos between users
+Add TON API support to gather metadata
+✅ Separate memos between users
 ✅ blockchain explorer buttons for all blockchain types
 Add known scam description and links
-Add memo review and editor capabilities
+✅ Add memo review and editor capabilities
 Add LLM pattern analyzer, when address submitted for Checks
 Add connected address seek for the given address recipients and senders
+
+DeepLinks to individual reports
+Enrich AI data from other reports related to addresses interacted with analyzed
+Provide individual reports deeplinks inside generated reports
+Use all type of reports recorded for the given address and related addresses

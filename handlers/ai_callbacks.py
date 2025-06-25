@@ -43,7 +43,7 @@ async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery
     bot_info_for_deeplinks = await bot.get_me()
     bot_username_for_deeplinks = bot_info_for_deeplinks.username
 
-    if not address: 
+    if not address:
         logging.error("Missing address in FSM for AI language choice.")
         await callback_query.message.answer("Error: Missing address data for AI analysis. Please try again.")
         await state.set_state(None)

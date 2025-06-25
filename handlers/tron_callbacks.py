@@ -99,27 +99,67 @@ async def handle_update_report_tronscan_callback(callback_query: types.CallbackQ
         await api_client.close_session()
 
 async def _format_account_info_for_ai(address: str, api_client: TronScanAPI) -> str:
-    """Formats account info for AI processing."""
-    info_summary = "Section: Account Overview\n--------------------------\n"
+    """Formats account info for AI processing, including scam-relevant details."""
+    info_summary = "Section: Account Overview & Risk Indicators\n--------------------------\n"
     try:
         account_info = await api_client.get_account_info(address)
         if account_info:
+            # Basic Info
             trx_balance_sun = account_info.get('balance', 0)
             trx_balance = trx_balance_sun / 1_000_000
-            account_name = account_info.get('account_name', 'N/A')
-            create_time_ms = account_info.get('create_time')
+            account_name = account_info.get('name', 'N/A')
+            
+            # Timestamps
+            create_time_ms = account_info.get('date_created')
             creation_time_str = "N/A"
             if create_time_ms:
                 try:
                     creation_time_str = datetime.fromtimestamp(create_time_ms / 1000).strftime('%Y-%m-%d %H:%M:%S UTC')
-                except: pass
-            total_tx_count = account_info.get('total_transaction_count', 'N/A')
+                except Exception: pass
+
+            latest_op_time_ms = account_info.get('latest_operation_time')
+            latest_op_time_str = "N/A"
+            if latest_op_time_ms:
+                try:
+                    latest_op_time_str = datetime.fromtimestamp(latest_op_time_ms / 1000).strftime('%Y-%m-%d %H:%M:%S UTC')
+                except Exception: pass
+
+            # Transaction Counts
+            total_tx_count = account_info.get('totalTransactionCount', 'N/A')
+            tx_in_count = account_info.get('transactions_in', 'N/A')
+            tx_out_count = account_info.get('transactions_out', 'N/A')
+
+            # Network Participation & Risk Flags
+            total_frozen_sun = account_info.get('totalFrozen', 0)
+            total_frozen_trx = total_frozen_sun / 1_000_000
+            feedback_risk = account_info.get('feedbackRisk', False)
+            
+            tags = []
+            for tag_key in ['redTag', 'greyTag', 'blueTag', 'publicTag']:
+                tag_value = account_info.get(tag_key)
+                if tag_value:
+                    tags.append(f"{tag_key.replace('Tag','').capitalize()}: {tag_value}")
+            tags_str = ", ".join(tags) if tags else "None"
+
+            # Permissions
+            owner_permission = account_info.get('ownerPermission', {})
+            owner_keys_count = len(owner_permission.get('keys', []))
+
             info_summary += (
                 f"Address: {html.quote(address)}\n"
-                f"TRX Balance: {trx_balance:.6f} TRX\n"
                 f"Account Name: {html.quote(account_name)}\n"
+                f"TRX Balance: {trx_balance:.6f} TRX\n"
                 f"Creation Time: {creation_time_str}\n"
+                f"Last Activity Time: {latest_op_time_str}\n\n"
+                f"--- Transaction Profile ---\n"
                 f"Total Transactions: {total_tx_count}\n"
+                f"Incoming Transactions: {tx_in_count}\n"
+                f"Outgoing Transactions: {tx_out_count}\n\n"
+                f"--- Network & Security Profile ---\n"
+                f"Total Frozen TRX: {total_frozen_trx:.6f} TRX\n"
+                f"Owner Keys: {owner_keys_count}\n"
+                f"TronScan Tags: {html.quote(tags_str)}\n"
+                f"Community Risk Feedback: {'Yes' if feedback_risk else 'No'}\n"
             )
         else:
             info_summary += "Could not retrieve basic account information.\n"

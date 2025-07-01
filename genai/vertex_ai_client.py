@@ -3,80 +3,137 @@ vertex_ai_client.py
 Client for interacting with Google Cloud Vertex AI Generative Models.
 """
 import logging
-import asyncio
-from typing import Optional
+from typing import Optional, List
 
-import vertexai
-from google.cloud import aiplatform
-from vertexai.generative_models import GenerativeModel, Part
+try:
+    import google.auth
+    import vertexai
+    from vertexai.generative_models import GenerativeModel, Candidate, Part
+    from google.auth import exceptions as google_auth_exceptions
+    from google.api_core import exceptions as google_api_exceptions
+    from google.cloud import aiplatform
+except ImportError:
+    logging.error(
+        "google-cloud-aiplatform library not found. Please install it with 'pip install google-cloud-aiplatform'"
+    )
+    # Define dummy classes or raise an error to prevent use if library is missing
+    GenerativeModel = None
+    Candidate = None
+    Part = None
 
-from config.config import Config
-
-logger = logging.getLogger(__name__)
+from config.config import Config  # Assuming your Config class is here
 
 
 class VertexAIClient:
-    """A client for interacting with Google's Vertex AI Generative Models."""
+    """
+    A client for interacting with Google Cloud Vertex AI, specifically for text generation.
+    """
 
     _initialized = False
 
-    def __init__(self, model_name: Optional[str] = None):
+    def __init__(
+        self,
+        project_id: Optional[str] = None,
+        location: Optional[str] = None,
+        model_name: Optional[str] = None,
+    ):
         """
-        Initializes the Vertex AI client.
+        Initializes the VertexAIClient.
 
         Args:
-            model_name: The name of the generative model to use.
-                        Defaults to the one specified in the global Config.
+            project_id: Google Cloud Project ID. Defaults to Config.GCP_PROJECT_ID.
+            location: Google Cloud Location (e.g., "us-central1"). Defaults to Config.GCP_LOCATION.
+            model_name: The name of the Vertex AI model to use (e.g., "gemini-1.5-flash-001").
+                        Defaults to Config.VERTEX_AI_MODEL_NAME.
         """
+        if not GenerativeModel:
+            logging.error(
+                "Vertex AI client cannot be initialized because google-cloud-aiplatform is not installed."
+            )
+            raise RuntimeError(
+                "google-cloud-aiplatform library is required for VertexAIClient."
+            )
+
+        # Use provided args or fall back to Config
+        self.project_id = project_id or Config.GCP_PROJECT_ID
+        self.location = location or Config.GCP_LOCATION
+        self.model_name = model_name or Config.VERTEX_AI_MODEL_NAME
+
+        # --- Centralized Initialization Logic ---
+        # Ensure global initialization happens only once.
         if not VertexAIClient._initialized:
+            if not self.project_id:
+                raise ValueError("Vertex AI Project ID must be provided or set in Config.")
+            if not self.location:
+                raise ValueError("Vertex AI Location must be provided or set in Config.")
+
             try:
-                gcp_project_id = Config.GCP_PROJECT_ID
-                gcp_location = Config.GCP_LOCATION
-
-                if not gcp_project_id or not gcp_location:
-                    raise ValueError(
-                        "GCP_PROJECT_ID and GCP_LOCATION must be set in the config."
-                    )
-
-                aiplatform.init(project=gcp_project_id, location=gcp_location)
-                VertexAIClient._initialized = True
-                logger.info(
-                    "Vertex AI SDK initialized successfully for project '%s' in location '%s'.",
-                    gcp_project_id,
-                    gcp_location,
+                # Let the SDK handle all credential loading and configuration.
+                # It will automatically find Application Default Credentials (ADC)
+                # and configure both sync and async clients correctly.
+                vertexai.init(
+                    project=self.project_id,
+                    location=self.location,
                 )
 
-            except Exception as e:
-                logger.critical(
-                    f"Failed to initialize Vertex AI SDK: {e}", exc_info=True
+                VertexAIClient._initialized = True
+                logging.info(
+                    f"VertexAIClient initialized for project='{self.project_id}', "
+                    f"location='{self.location}'"
+                )
+
+            except google_auth_exceptions.DefaultCredentialsError as e:
+                logging.error(
+                    "Google Cloud Default Credentials not found. "
+                    "Ensure you are authenticated (e.g., via `gcloud auth application-default login`) "
+                    "or GOOGLE_APPLICATION_CREDENTIALS environment variable is set. Error: %s",
+                    e,
                 )
                 raise
+            except Exception as e:
+                logging.error(f"Failed to initialize Vertex AI client: {e}", exc_info=True)
+                raise
 
-        # Use the provided model_name or fall back to the one in Config
-        self.model = GenerativeModel(model_name or Config.VERTEX_AI_MODEL_NAME)
+        if not self.model_name:
+            raise ValueError("Vertex AI Model Name must be provided or set in Config.")
+        
+        self.model = GenerativeModel(self.model_name)
 
-    async def generate_text(self, prompt: str) -> Optional[str]:
+    async def generate_text(
+        self, prompt: str, max_tokens: Optional[int] = None, temperature: Optional[float] = None
+    ) -> Optional[str]:
         """
         Generates text using the configured Vertex AI model.
 
         Args:
             prompt: The text prompt to send to the model.
+            max_tokens: Maximum number of tokens to generate. Instructs the model to stop after generating this many tokens.
+                        Helps control the length of the generated output.
+            temperature: Sampling temperature. Higher values (e.g., 0.8) make the output more random,
+                        while lower values (e.g., 0.2) make it more focused and deterministic.
 
         Returns:
             The generated text as a string, or None if an error occurred.
         """
-        logger.debug("Generating text with Vertex AI for prompt: %s", prompt[:100])
+        logging.debug("Generating text with Vertex AI for prompt: %s", prompt[:100])
         try:
+            from vertexai.generative_models import GenerationConfig
+
             # The client library will handle async credentials automatically after aiplatform.init()
+            generation_config = GenerationConfig(
+                max_output_tokens=max_tokens,
+                temperature=temperature,
+            )
             response = await self.model.generate_content_async(
-                [Part.from_text(prompt)]
+                [Part.from_text(prompt)],
+                generation_config=generation_config,
             )
             # Assuming the response has a 'text' attribute or can be converted to string
             generated_text = response.text
-            logger.debug("Successfully received response from Vertex AI.")
+            logging.debug("Successfully received response from Vertex AI.")
             return generated_text
         except Exception as e:
-            logger.error(
+            logging.error(
                 "An unexpected error occurred during Vertex AI text generation: %s",
                 e,
                 exc_info=True,

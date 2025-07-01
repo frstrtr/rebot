@@ -217,16 +217,55 @@ class Config:
         # ... other chains
     }
 
-    # Vertex AI Configuration
-    VERTEX_AI_PROJECT_ID: Optional[str] = (
-        "multichat-bot-396516"  # Replace with your GCP Project ID
+    @staticmethod
+    def _initialize_gcp_credentials(filename="gcp_credentials.txt"):
+        """
+        Initializes Google Cloud credentials.
+        Tries to load a service account key path from a file.
+        If the file exists, it sets the GOOGLE_APPLICATION_CREDENTIALS environment variable.
+        Otherwise, it relies on the environment or Application Default Credentials (ADC).
+        """
+        script_dir = os.path.dirname(__file__)
+        file_path = os.path.join(script_dir, filename)
+        
+        # First, check if the environment variable is already set. If so, respect it.
+        if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+            logging.info("Using existing GOOGLE_APPLICATION_CREDENTIALS environment variable.")
+            return
+
+        # If not set, try to load from the specified file.
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                credential_path = f.readline().strip()
+            if credential_path:
+                # Check if the path is valid before setting it
+                if os.path.exists(credential_path):
+                    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = credential_path
+                    logging.info(f"Loaded GCP credentials from '{filename}' and set environment variable.")
+                else:
+                    logging.error(f"GCP credential file path '{credential_path}' found in '{filename}' does not exist.")
+            else:
+                logging.warning(f"GCP credentials file '{filename}' is empty. Relying on other ADC methods.")
+        except FileNotFoundError:
+            logging.info(f"'{filename}' not found. Relying on environment or gcloud ADC for GCP authentication.")
+        except OSError as e:
+            logging.error(f"Error reading GCP credentials file '{filename}': {e}")
+
+    # --- Consolidated Google Cloud Platform Configuration ---
+    # These variables are used to initialize the Vertex AI SDK.
+    GCP_PROJECT_ID: Optional[str] = os.environ.get(
+        "GCP_PROJECT_ID", "multichat-bot-396516"
     )
-    # VERTEX_AI_LOCATION: Optional[str] = "us-central1"  # Replace with your GCP region
-    VERTEX_AI_LOCATION: Optional[str] = "global"  # Replace with your GCP region global for preview models
-    VERTEX_AI_MODEL_NAME: Optional[str] = (
-        "gemini-2.5-flash-lite-preview-06-17" # Latest Gemini 2.5 model 2025-06-17
-        # "gemini-2.0-flash-lite-001"  # Or other compatible model like gemini-1.5-flash-001
+    # Use 'global' for preview models, or a specific region like 'us-central1' for stable models.
+    GCP_LOCATION: Optional[str] = os.environ.get(
+        "GCP_LOCATION", "global"
     )
+    VERTEX_AI_MODEL_NAME: Optional[str] = os.environ.get(
+        "VERTEX_AI_MODEL_NAME", "gemini-2.5-flash-lite-preview-06-17"  # Default model name
+    )
+
+    # Run the GCP credential initialization when the Config class is loaded.
+    _initialize_gcp_credentials()
 
     @staticmethod
     def get_log_file_path(filename="bot.log"):

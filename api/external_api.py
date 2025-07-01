@@ -19,6 +19,11 @@ from database import SessionLocal
 from database.models import CryptoAddress, MemoType
 from synapsifier.crypto_address import CryptoAddressFinder
 from handlers.helpers import get_ambiguity_group_members
+# --- New Imports ---
+import json
+import asyncio
+from utils.tronscan import TronScanAPI
+from genai.vertex_ai_client import VertexAIClient
 
 # --- FastAPI App Initialization ---
 app = FastAPI(
@@ -59,6 +64,7 @@ class AddressCheckResponse(BaseModel):
     blockchain_explorer_link: Optional[str] = Field(None, description="Link to a block explorer for the address.")
     public_memos: Optional[List[str]] = Field(None, description="A list of public memos associated with the address.")
     possible_blockchains: Optional[List[str]] = Field(None, description="List of possible blockchains if clarification is needed.")
+    risk_score: Optional[float] = Field(None, description="An AI-generated risk score for TRON addresses (0.0 to 1.0).")
 
 # --- Dependency for DB Session ---
 def get_db():
@@ -128,6 +134,48 @@ async def check_address(request: AddressCheckRequest, db: Session = Depends(get_
             message=f"Could not determine a single blockchain for '{request.crypto_address}'.",
             request_datetime=request_time
         )
+
+    # --- New logic for TRON address risk analysis ---
+    risk_score: Optional[float] = None
+    if blockchain == 'tron':
+        try:
+            # Initialize clients for Tron and AI
+            tron_client = TronScanAPI()
+            vertex_client = VertexAIClient()
+
+            # Fetch Tron data in a non-blocking way since the API client is synchronous
+            loop = asyncio.get_running_loop()
+            tron_data = await loop.run_in_executor(
+                None, tron_client.get_account_info, request.crypto_address
+            )
+
+            if tron_data:
+                logging.info(f"Fetched TRON account info for address {request.crypto_address}: {tron_data}")
+                tron_data_str = json.dumps(tron_data)
+                prompt = (
+                    f"Analyze the following TRON account data and provide a risk score from 0.0 (very low risk) "
+                    f"to 1.0 (very high risk). The data is: {tron_data_str}. "
+                    f"Consider factors like balance, transaction count, and creation date. "
+                    f"Your response must be only the numerical score (e.g., 0.75) and nothing else."
+                )
+
+                # Get AI analysis
+                ai_response = await vertex_client.generate_text(prompt)
+                logging.info(f"AI response for TRON address {request.crypto_address}: {ai_response}")
+
+                if ai_response:
+                    try:
+                        # Attempt to parse the score from the AI's response
+                        risk_score = float(ai_response.strip())
+                        logging.info(f"Successfully generated risk score {risk_score} for TRON address {request.crypto_address}")
+                    except (ValueError, TypeError):
+                        logging.error(f"Could not parse risk score from AI response: '{ai_response}' for address {request.crypto_address}")
+            else:
+                logging.info(f"No account info found on TronScan for address {request.crypto_address}, skipping risk analysis.")
+
+        except Exception as e:
+            # Log any errors from the Tron/AI clients but don't fail the whole request
+            logging.error(f"Error during TRON risk analysis for {request.crypto_address}: {e}", exc_info=True)
     
     try:
         # --- Extensive Logging for DB Query ---
@@ -191,5 +239,6 @@ async def check_address(request: AddressCheckRequest, db: Session = Depends(get_
         request_datetime=request_time,
         bot_deeplink=bot_deeplink,
         blockchain_explorer_link=explorer_link,
-        public_memos=public_memos if public_memos else []
+        public_memos=public_memos if public_memos else [],
+        risk_score=risk_score
     )

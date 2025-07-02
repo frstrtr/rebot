@@ -118,7 +118,7 @@ class CryptoAddress(Base):
     address = Column(String(255), nullable=False, index=True)
     blockchain = Column(String(50), nullable=False)
     status = Column(String(20), nullable=False, default="to_check")  # Using string for enum compatibility
-    message_id = Column(Integer, ForeignKey("messages.id"), nullable=False)
+    message_id = Column(Integer, ForeignKey("messages.id"), nullable=True) # MODIFIED: Allow null for API-added addresses
     detected_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     

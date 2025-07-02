@@ -10,6 +10,7 @@ import logging # Added for logging within the helper
 import markdown as markdown2 # Added for Markdown to HTML conversion
 from bs4 import BeautifulSoup # Added for HTML sanitization
 from .common import TARGET_AUDIT_CHANNEL_ID, AMBIGUOUS_CHAIN_GROUPS, crypto_finder # crypto_finder is needed
+from config.credentials import Credentials # Import Credentials to get bot token
 
 def get_ambiguity_group_members(chain_name: str) -> set | None:
     """
@@ -83,11 +84,30 @@ async def send_text_to_audit_channel(bot: Bot, text: str, parse_mode: str = "HTM
     else:
         logging.warning("TARGET_AUDIT_CHANNEL_ID not set. Audit message not sent.")
 
+async def log_to_audit_channel_async(text: str):
+    """
+    Creates a temporary Bot instance to send a message to the audit channel.
+    Useful for logging from outside the main bot's context (e.g., an API).
+    """
+    credentials = Credentials()
+    bot_token = credentials.get_bot_token()
+
+    if not bot_token:
+        logging.error("Cannot log to audit channel: BOT_TOKEN is not configured.")
+        return
+    if not TARGET_AUDIT_CHANNEL_ID:
+        logging.error("Cannot log to audit channel: TARGET_AUDIT_CHANNEL_ID is not configured.")
+        return
+
+    bot = Bot(token=bot_token)
+    try:
+        await send_text_to_audit_channel(bot, text, parse_mode="HTML")
+    finally:
+        await bot.session.close()
+
+
 def _create_bot_deeplink_html(address: str, bot_username: str) -> str:
-    """
-    Creates an HTML deeplink for a given address that starts a chat with the bot
-    and passes the address via the start parameter.
-    """
+    """Creates a t.me deeplink for a given address, formatted as an HTML link."""
     deeplink_url = f"https://t.me/{bot_username}?start={html.quote(address)}" # Address in start param should also be quoted if it can have special chars
     return f'<a href="{deeplink_url}">{html.quote(address)}</a>'
 

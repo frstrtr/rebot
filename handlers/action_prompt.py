@@ -43,8 +43,28 @@ async def _send_action_prompt(
     bot_username = bot_info.username
     address_deeplink = _create_bot_deeplink_html(address, bot_username)
     
+    # --- Fetch Risk Score from DB ---
+    risk_score_html = ""
+    try:
+        address_record = db.query(CryptoAddress).filter(
+            func.lower(CryptoAddress.address) == address.lower(),
+            func.lower(CryptoAddress.blockchain) == blockchain.lower()
+        ).first()
+
+        if address_record and address_record.risk_score is not None:
+            updated_at_str = address_record.updated_at.strftime('%Y-%m-%d %H:%M')
+            risk_score_html = (
+                f"<b>Risk Score:</b> {address_record.risk_score:.2f} "
+                f"<i>(Updated: {updated_at_str} UTC)</i>\n"
+            )
+    except SQLAlchemyError as e:
+        logging.error(f"DB Error fetching risk score for action prompt: {e}")
+
     prompt_text = (
-        f"Address {address_deeplink} identified for <b>{html.quote(blockchain.capitalize())}</b>.\n"
+        f"<b>Address:</b> <code>{address}</code>\n"
+        f"<b>Blockchain:</b> {html.quote(blockchain.capitalize())}\n"
+        f"{risk_score_html}"
+        f"----------------------------------------\n"
         "What would you like to do?"
     )
 

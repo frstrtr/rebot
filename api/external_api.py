@@ -28,7 +28,7 @@ from genai.vertex_ai_client import VertexAIClient
 # --- FastAPI App Initialization ---
 app = FastAPI(
     title="Rebot External API",
-    description="API to check crypto addresses, retrieve public memos, and get explorer links.",
+    description="API to check crypto addresses, retrieve public memos, scam score and get explorer links.",
     version="1.0.0"
 )
 
@@ -51,8 +51,8 @@ async def get_api_key(api_key: str = api_key_header):
 # --- Pydantic Models for Request and Response ---
 class AddressCheckRequest(BaseModel):
     crypto_address: str
-    request_by_telegram_id: int = Field(..., gt=0, le=100000000, description="Telegram ID of the user making the request.")
-    provided_by_telegram_id: int = Field(..., gt=0, le=100000000, description="Telegram ID of the user who provided the address.")
+    request_by_telegram_id: int = Field(..., gt=0, le=10000000000, description="Telegram ID of the user making the request.")
+    provided_by_telegram_id: int = Field(..., gt=0, le=10000000000, description="Telegram ID of the user who provided the address.")
     blockchain_type: Optional[str] = Field(None, description="Optional: Specify the blockchain to resolve ambiguity (e.g., 'ethereum', 'bsc').")
 
 class AddressCheckResponse(BaseModel):

@@ -12,11 +12,16 @@ X-API-KEY: your_api_key_here
 
 ## Endpoints Overview
 
-| Endpoint | Method | Purpose | Performance |
+|# Get scam analysis
+result = await apiRequest('get-scam-analysis', {
+    crypto_address: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
+    request_by_telegram_id: 123456789,
+    blockchain_type: 'tron'
+});int | Method | Purpose | Performance |
 |----------|--------|---------|-------------|
 | `/check-address` | POST | Full address validation + all memos | Comprehensive |
-| `/scam-report` | POST | Get existing scam analysis | Fast (read-only) |
-| `/report-scam` | POST | Create new scam analysis | Slower (AI analysis) |
+| `/get-scam-analysis` | POST | Get existing scam analysis | Fast (read-only) |
+| `/analyze-scam` | POST | Create new scam analysis | Slower (AI analysis) |
 
 ## Quick Examples
 
@@ -33,9 +38,9 @@ curl -X POST "http://localhost:8000/check-address" \
   }'
 ```
 
-### 2. Get Scam Report (Existing Analysis)
+### 2. Get Scam Analysis (Existing Analysis)
 ```bash
-curl -X POST "http://localhost:8000/scam-report" \
+curl -X POST "http://localhost:8000/get-scam-analysis" \
   -H "X-API-KEY: your_key" \
   -H "Content-Type: application/json" \
   -d '{
@@ -45,9 +50,9 @@ curl -X POST "http://localhost:8000/scam-report" \
   }'
 ```
 
-### 3. Create Scam Analysis (New Analysis)
+### 3. Analyze Scam (New Analysis)
 ```bash
-curl -X POST "http://localhost:8000/report-scam" \
+curl -X POST "http://localhost:8000/analyze-scam" \
   -H "X-API-KEY: your_key" \
   -H "Content-Type: application/json" \
   -d '{
@@ -154,8 +159,8 @@ async function apiRequest(endpoint, payload) {
     return await response.json();
 }
 
-// Get scam report
-const result = await apiRequest('scam-report', {
+// Get existing scam analysis
+const result = await apiRequest('get-scam-analysis', {
     crypto_address: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
     request_by_telegram_id: 123456789,
     blockchain_type: 'tron'
@@ -171,7 +176,7 @@ console.log(`Risk Score: ${result.risk_score || 'N/A'}`);
 2. **Check `address_analyzed`** field before using scam report data
 3. **Handle `CLARIFICATION_NEEDED`** responses by retrying with blockchain_type
 4. **Cache results** on your side to reduce API calls
-5. **Use `/scam-report`** for quick checks, `/check-address` for full details
+5. **Use `/get-scam-analysis`** for quick checks, `/check-address` for full details
 
 ## Interactive Documentation
 

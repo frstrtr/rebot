@@ -87,7 +87,7 @@ X-API-KEY: your_api_key_here
 
 ---
 
-### 2. Scam Report - `/scam-report`
+### 2. Get Scam Analysis - `/get-scam-analysis`
 
 **Method**: `POST`
 
@@ -145,11 +145,11 @@ X-API-KEY: your_api_key_here
 
 ---
 
-### 3. Report Scam - `/report-scam`
+### 3. Analyze Scam - `/analyze-scam`
 
 **Method**: `POST`
 
-**Purpose**: Perform new scam analysis on crypto addresses (creates new analysis).
+**Purpose**: Perform new scam analysis on crypto addresses (creates new analysis with AI).
 
 #### Request Format
 
@@ -234,9 +234,9 @@ def check_address(address, requester_id, provider_id, blockchain=None):
     response = requests.post(url, headers=headers, json=payload)
     return response.json()
 
-# Get existing scam report
-def get_scam_report(address, requester_id, blockchain=None):
-    url = f"{BASE_URL}/scam-report"
+# Get existing scam analysis
+def get_scam_analysis(address, requester_id, blockchain=None):
+    url = f"{BASE_URL}/get-scam-analysis"
     payload = {
         "crypto_address": address,
         "request_by_telegram_id": requester_id,
@@ -247,8 +247,8 @@ def get_scam_report(address, requester_id, blockchain=None):
     return response.json()
 
 # Perform new scam analysis
-def report_scam(address, requester_id, blockchain=None):
-    url = f"{BASE_URL}/report-scam"
+def analyze_scam(address, requester_id, blockchain=None):
+    url = f"{BASE_URL}/analyze-scam"
     payload = {
         "crypto_address": address,
         "request_by_telegram_id": requester_id,
@@ -295,9 +295,27 @@ async function checkAddress(address, requesterId, providerId, blockchain = null)
     return await response.json();
 }
 
-// Get existing scam report
-async function getScamReport(address, requesterId, blockchain = null) {
-    const url = `${BASE_URL}/scam-report`;
+// Get existing scam analysis
+async function getScamAnalysis(address, requesterId, blockchain = null) {
+    const url = `${BASE_URL}/get-scam-analysis`;
+    const payload = {
+        crypto_address: address,
+        request_by_telegram_id: requesterId,
+        blockchain_type: blockchain
+    };
+    
+    const response = await fetch(url, {
+        method: "POST",
+        headers: headers,
+        body: JSON.stringify(payload)
+    });
+    
+    return await response.json();
+}
+
+// Perform new scam analysis
+async function analyzeScam(address, requesterId, blockchain = null) {
+    const url = `${BASE_URL}/analyze-scam`;
     const payload = {
         crypto_address: address,
         request_by_telegram_id: requesterId,
@@ -336,8 +354,8 @@ curl -X POST "http://localhost:8000/check-address" \
     "blockchain_type": "tron"
   }'
 
-# Get scam report
-curl -X POST "http://localhost:8000/scam-report" \
+# Get existing scam analysis
+curl -X POST "http://localhost:8000/get-scam-analysis" \
   -H "X-API-KEY: your_api_key_here" \
   -H "Content-Type: application/json" \
   -d '{
@@ -346,8 +364,8 @@ curl -X POST "http://localhost:8000/scam-report" \
     "blockchain_type": "tron"
   }'
 
-# Perform scam analysis
-curl -X POST "http://localhost:8000/report-scam" \
+# Perform new scam analysis
+curl -X POST "http://localhost:8000/analyze-scam" \
   -H "X-API-KEY: your_api_key_here" \
   -H "Content-Type: application/json" \
   -d '{
@@ -433,13 +451,15 @@ curl -X POST "http://localhost:8000/report-scam" \
 
 ## API Comparison
 
-| Feature | `/check-address` | `/scam-report` | `/report-scam` |
-|---------|------------------|----------------|----------------|
+| Feature | `/check-address` | `/get-scam-analysis` | `/analyze-scam` |
+|---------|------------------|----------------------|-----------------|
 | **Purpose** | Full address validation | Get existing analysis | Create new analysis |
-| **Returns** | All public memos | Scam analysis only | New analysis results |
-| **Performance** | Comprehensive | Fast (read-only) | Slower (AI analysis) |
-| **Use Case** | Complete details | Quick scam check | Generate new report |
+| **Returns** | All public memos + risk score | Existing scam analysis | New AI analysis results |
+| **Performance** | Comprehensive | Fast (read-only) | Slower (AI + external APIs) |
+| **Use Case** | Complete address details | Quick scam check | Generate fresh analysis |
+| **External APIs** | TronScan (for risk score) | Database only | TronScan + AI (optimized) |
 | **Caching** | Uses cached data | Uses cached data | Creates new data |
+| **Token Usage** | Minimal (risk score only) | None | Optimized (reduced tokens) |
 
 ## Data Sources
 
@@ -460,12 +480,14 @@ curl -X POST "http://localhost:8000/report-scam" \
 ### Version 1.0.0 (2025-07-08)
 
 - Initial API release
-- Added `/check-address` endpoint
-- Added `/scam-report` endpoint
-- Added `/report-scam` endpoint
+- Added `/check-address` endpoint for comprehensive address validation
+- Added `/get-scam-analysis` endpoint for retrieving existing scam analysis
+- Added `/analyze-scam` endpoint for performing new AI-powered scam analysis
 - Implemented API key authentication
 - Added comprehensive error handling
-- Integrated AI risk scoring for TRON addresses
+- Integrated optimized AI risk scoring for TRON addresses
+- Reduced token usage through lightweight TronScan data fetching
+- Enhanced caching for improved performance
 
 ---
 

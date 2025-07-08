@@ -210,19 +210,27 @@ async def check_address(request: AddressCheckRequest, api_request: Request, db: 
             tron_client = TronScanAPI()
             vertex_client = VertexAIClient()
 
-            # Fetch Tron data
+            # Fetch basic Tron data (optimized for cost/speed)
             loop = asyncio.get_running_loop()
             tron_data = await loop.run_in_executor(
-                None, tron_client.get_account_info, request.crypto_address
+                None, tron_client.get_basic_account_info, request.crypto_address
             )
 
             if tron_data:
-                tron_data_str = json.dumps(tron_data)
+                # Create a focused prompt for risk scoring
+                balance_trx = tron_data.get('balance', 0) / 1_000_000  # Convert SUN to TRX
+                tx_count = tron_data.get('totalTransactionCount', 0)
+                create_time = tron_data.get('createTime')
+                
                 prompt = (
-                    f"Analyze the following TRON account data and provide a risk score from 0.0 (very low risk) "
-                    f"to 1.0 (very high risk). The data is: {tron_data_str}. "
-                    f"Consider factors like balance, transaction count, and creation date. "
-                    f"Your response must be only the numerical score (e.g., 0.75) and nothing else."
+                    f"Analyze this TRON address for risk assessment. "
+                    f"Address: {request.crypto_address}, "
+                    f"Balance: {balance_trx:.6f} TRX, "
+                    f"Total transactions: {tx_count}, "
+                    f"Creation time: {create_time}. "
+                    f"Consider account age, transaction volume, balance patterns. "
+                    f"Provide only a risk score from 0.0 (very low risk) to 1.0 (very high risk). "
+                    f"Response must be only the numerical score (e.g., 0.75)."
                 )
 
                 # Get AI analysis
@@ -492,19 +500,27 @@ async def analyze_scam(request: ScamReportRequest, api_request: Request, db: Ses
             tron_client = TronScanAPI()
             vertex_client = VertexAIClient()
 
+            # Fetch basic Tron data (optimized for cost/speed)
             loop = asyncio.get_running_loop()
             tron_data = await loop.run_in_executor(
-                None, tron_client.get_account_info, request.crypto_address
+                None, tron_client.get_basic_account_info, request.crypto_address
             )
 
             if tron_data:
-                tron_data_str = json.dumps(tron_data)
+                # Create a focused prompt for scam analysis
+                balance_trx = tron_data.get('balance', 0) / 1_000_000  # Convert SUN to TRX
+                tx_count = tron_data.get('totalTransactionCount', 0)
+                create_time = tron_data.get('createTime')
+                
                 prompt = (
-                    f"Analyze the following TRON account data and provide a scam report. "
-                    f"The data is: {tron_data_str}. "
-                    f"Consider factors like balance, transaction count, creation date, and any known scam patterns. "
-                    f"Your response should include a risk score from 0.0 (very low risk) to 1.0 (very high risk), "
-                    f"and a brief description of any potential scam indicators."
+                    f"Analyze this TRON address for scam potential. "
+                    f"Address: {request.crypto_address}, "
+                    f"Balance: {balance_trx:.6f} TRX, "
+                    f"Total transactions: {tx_count}, "
+                    f"Creation time: {create_time}. "
+                    f"Provide a risk score (0.0-1.0) and brief scam analysis. "
+                    f"Focus on: account age, transaction volume, balance patterns. "
+                    f"Respond in JSON format: {{\"risk_score\": 0.X, \"report\": \"analysis here\"}}"
                 )
 
                 # Get AI analysis
@@ -527,7 +543,8 @@ async def analyze_scam(request: ScamReportRequest, api_request: Request, db: Ses
                         if existing_record:
                             logging.info(f"Updating existing DB record (ID: {existing_record.id}) with new risk score and scam report.")
                             existing_record.risk_score = risk_score
-                            existing_record.notes = scam_report  # Assuming notes field is used for scam report
+                            existing_record.notes = scam_report
+                            existing_record.memo_type = MemoType.PUBLIC.value  # Ensure it's public
                             existing_record.updated_at = request_time
                             db.add(existing_record)
                         else:
@@ -537,12 +554,13 @@ async def analyze_scam(request: ScamReportRequest, api_request: Request, db: Ses
                                 blockchain=blockchain,
                                 risk_score=risk_score,
                                 notes=scam_report,
-                                status="to_check", # Default status
+                                memo_type=MemoType.PUBLIC.value,  # Set as public memo
+                                status="to_check",
                                 detected_at=request_time,
                                 updated_at=request_time
                             )
                             db.add(new_record)
-                            existing_record = new_record # Use the new record for the refresh
+                            existing_record = new_record
                         
                         db.commit()
                         db.refresh(existing_record)
@@ -557,7 +575,7 @@ async def analyze_scam(request: ScamReportRequest, api_request: Request, db: Ses
                         logging.error(f"Error parsing AI response for address {request.crypto_address}: {e}. Response: {ai_response}")
                     except SQLAlchemyError as db_err:
                         logging.error(f"API DB Error saving scam report for {request.crypto_address}: {db_err}", exc_info=True)
-                        db.rollback() # Rollback on error
+                        db.rollback()
             else:
                 logging.info(f"No account info found on TronScan for address {request.crypto_address}, skipping risk analysis.")
 

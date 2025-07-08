@@ -1,14 +1,25 @@
-# Scam Report API Documentation
+# Scam Analysis API Documentation
 
 ## Overview
-The `/scam-report` endpoint provides a simplified way to check if a crypto address has been analyzed for scam/fraud activity and retrieve the analysis results.
+The scam analysis endpoints provide ways to check if a crypto address has been analyzed for scam/fraud activity and retrieve or create analysis results.
 
-## Endpoint
-```
-POST /scam-report
-```
+## Endpoints
 
-## Purpose
+### 1. `/get-scam-analysis` - Retrieve Existing Analysis
+```
+POST /get-scam-analysis
+```
+**Purpose**: Check if scam analysis has been performed and retrieve existing results (read-only)
+
+### 2. `/analyze-scam` - Perform New Analysis  
+```
+POST /analyze-scam
+```
+**Purpose**: Trigger new scam analysis using AI and external APIs (active analysis)
+
+## Common Features
+
+Both endpoints share:
 - Check if scam analysis has been performed for a specific crypto address
 - Retrieve existing public scam analysis reports
 - Get risk scores if available
@@ -99,9 +110,9 @@ POST /scam-report
 
 ## Use Cases
 
-### 1. Check if address has been analyzed
+### 1. Check if address has been analyzed (read-only)
 ```bash
-curl -X POST "http://localhost:8000/scam-report" \
+curl -X POST "http://localhost:8000/get-scam-analysis" \
   -H "X-API-KEY: your_api_key" \
   -H "Content-Type: application/json" \
   -d '{
@@ -111,10 +122,22 @@ curl -X POST "http://localhost:8000/scam-report" \
   }'
 ```
 
-### 2. Handle ambiguous addresses
+### 2. Trigger new scam analysis
+```bash
+curl -X POST "http://localhost:8000/analyze-scam" \
+  -H "X-API-KEY: your_api_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "crypto_address": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+    "request_by_telegram_id": 123456789,
+    "blockchain_type": "tron"
+  }'
+```
+
+### 3. Handle ambiguous addresses
 ```bash
 # First request without blockchain_type
-curl -X POST "http://localhost:8000/scam-report" \
+curl -X POST "http://localhost:8000/get-scam-analysis" \
   -H "X-API-KEY: your_api_key" \
   -H "Content-Type: application/json" \
   -d '{
@@ -123,7 +146,7 @@ curl -X POST "http://localhost:8000/scam-report" \
   }'
 
 # If clarification needed, follow up with specific blockchain
-curl -X POST "http://localhost:8000/scam-report" \
+curl -X POST "http://localhost:8000/get-scam-analysis" \
   -H "X-API-KEY: your_api_key" \
   -H "Content-Type: application/json" \
   -d '{
@@ -141,12 +164,28 @@ curl -X POST "http://localhost:8000/scam-report" \
 
 ## Differences from `/check-address`
 
-| Feature | `/check-address` | `/scam-report` |
-|---------|------------------|----------------|
-| **Purpose** | Full address validation & memo retrieval | Simplified scam analysis check |
-| **Response** | All public memos | Only scam analysis report |
-| **Performance** | Heavier (fetches all memos) | Lighter (focused query) |
-| **Use Case** | Complete address details | Quick scam check |
+| Feature | `/check-address` | `/get-scam-analysis` | `/analyze-scam` |
+|---------|------------------|---------------------|-----------------|
+| **Purpose** | Full address validation & memo retrieval | Get existing scam analysis | Create new scam analysis |
+| **Response** | All public memos | Only scam analysis report | New analysis + report |
+| **Performance** | Heavier (fetches all memos) | Faster (focused query) | Slower (AI analysis) |
+| **Use Case** | Complete address details | Quick scam check | Trigger analysis |
+| **External APIs** | TronScan (for risk score) | Database only | TronScan + AI |
+
+## Key Differences Between Scam Endpoints
+
+### `/get-scam-analysis` (Read-Only)
+- ✅ **Fast**: Database query only
+- ✅ **Efficient**: No external API calls
+- ✅ **Cheap**: No AI token usage
+- ❌ **Limited**: Only returns existing analysis
+
+### `/analyze-scam` (Active Analysis)
+- ✅ **Comprehensive**: Performs new analysis
+- ✅ **Current**: Gets latest data from TronScan
+- ✅ **AI-Powered**: Uses optimized prompts
+- ❌ **Slower**: External API calls + AI processing
+- ❌ **Costs**: Uses AI tokens (optimized)
 
 ## Integration Examples
 
@@ -154,8 +193,9 @@ curl -X POST "http://localhost:8000/scam-report" \
 ```python
 import requests
 
-def check_scam_report(address, user_id, blockchain=None):
-    url = "http://localhost:8000/scam-report"
+def check_scam_analysis(address, user_id, blockchain=None):
+    """Get existing scam analysis (read-only)"""
+    url = "http://localhost:8000/get-scam-analysis"
     headers = {
         "X-API-KEY": "your_api_key",
         "Content-Type": "application/json"
@@ -169,19 +209,37 @@ def check_scam_report(address, user_id, blockchain=None):
     response = requests.post(url, headers=headers, json=payload)
     return response.json()
 
-# Usage
-result = check_scam_report("TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", 123456789, "tron")
+def analyze_scam(address, user_id, blockchain=None):
+    """Trigger new scam analysis"""
+    url = "http://localhost:8000/analyze-scam"
+    headers = {
+        "X-API-KEY": "your_api_key",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "crypto_address": address,
+        "request_by_telegram_id": user_id,
+        "blockchain_type": blockchain
+    }
+    
+    response = requests.post(url, headers=headers, json=payload)
+    return response.json()
+
+# Usage - Check existing analysis first
+result = check_scam_analysis("TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", 123456789, "tron")
 if result["address_analyzed"]:
-    print(f"Scam report: {result['scam_report']}")
+    print(f"Existing analysis: {result['scam_report']}")
     print(f"Risk score: {result['risk_score']}")
 else:
-    print("No scam analysis available")
+    print("No existing analysis, triggering new analysis...")
+    result = analyze_scam("TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", 123456789, "tron")
+    print(f"New analysis: {result['scam_report']}")
 ```
 
 ### JavaScript
 ```javascript
-async function checkScamReport(address, userId, blockchain = null) {
-  const response = await fetch('http://localhost:8000/scam-report', {
+async function checkScamAnalysis(address, userId, blockchain = null) {
+  const response = await fetch('http://localhost:8000/get-scam-analysis', {
     method: 'POST',
     headers: {
       'X-API-KEY': 'your_api_key',
@@ -197,16 +255,33 @@ async function checkScamReport(address, userId, blockchain = null) {
   return await response.json();
 }
 
-// Usage
-checkScamReport('TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t', 123456789, 'tron')
-  .then(result => {
-    if (result.address_analyzed) {
-      console.log('Scam report:', result.scam_report);
-      console.log('Risk score:', result.risk_score);
-    } else {
-      console.log('No scam analysis available');
-    }
+async function analyzeScam(address, userId, blockchain = null) {
+  const response = await fetch('http://localhost:8000/analyze-scam', {
+    method: 'POST',
+    headers: {
+      'X-API-KEY': 'your_api_key',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      crypto_address: address,
+      request_by_telegram_id: userId,
+      blockchain_type: blockchain
+    })
   });
+  
+  return await response.json();
+}
+
+// Usage - Check existing analysis first
+const result = await checkScamAnalysis('TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t', 123456789, 'tron');
+if (result.address_analyzed) {
+  console.log('Existing analysis:', result.scam_report);
+  console.log('Risk score:', result.risk_score);
+} else {
+  console.log('No existing analysis, triggering new analysis...');
+  const newResult = await analyzeScam('TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t', 123456789, 'tron');
+  console.log('New analysis:', newResult.scam_report);
+}
 ```
 
 ## Security Notes
@@ -220,5 +295,7 @@ checkScamReport('TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t', 123456789, 'tron')
 ## See Also
 
 - `/check-address` - Complete address validation and memo retrieval
+- `/get-scam-analysis` - Get existing scam analysis (read-only)
+- `/analyze-scam` - Trigger new scam analysis (active)
 - `/docs` - Interactive API documentation
 - API authentication documentation

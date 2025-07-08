@@ -10,7 +10,22 @@ from datetime import datetime
 from typing import Dict, Any
 
 # Configuration - Update these values based on your setup
-API_BASE_URL = "http://localhost:8000"  # Adjust port if different
+API_BASE_URL = "http://localhost:8000"  # Adjus        response = requests.post(f"{API_BASE_URL}/get-scam-analysis", 
+                               headers=HEADERS, 
+                               json=payload)
+        
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+        
+        data = response.json()
+        assert data["status"] == "OK", f"Expected OK status, got {data.get('status')}"
+        assert data["address_analyzed"] is False, "Should indicate no analysis performed"
+        assert data["scam_report"] is None, "Should have no scam report"
+        assert "No scam analysis" in data["message"], "Should indicate no analysis available"
+        
+        print(f"✅ Get scam analysis test passed - No analysis available")
+
+    def test_get_scam_analysis_ambiguous_address(self):
+        """Test get scam analysis endpoint with ambiguous address."""ent
 
 # Function to read API key from config file
 def get_api_key():
@@ -309,15 +324,15 @@ class TestExternalAPI:
         else:
             print(f"ℹ️  No risk score available for consistency test")
 
-    def test_scam_report_with_analysis(self):
-        """Test scam report endpoint with address that has analysis."""
+    def test_get_scam_analysis_with_analysis(self):
+        """Test get scam analysis endpoint with address that has analysis."""
         payload = {
             "crypto_address": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
             "request_by_telegram_id": 123456789,
             "blockchain_type": "tron"
         }
         
-        response = requests.post(f"{API_BASE_URL}/scam-report", 
+        response = requests.post(f"{API_BASE_URL}/get-scam-analysis", 
                                headers=HEADERS, 
                                json=payload)
         
@@ -332,14 +347,14 @@ class TestExternalAPI:
         if data["address_analyzed"]:
             assert data["scam_report"] is not None, "Should have scam report if analyzed"
             assert data["analysis_date"] is not None, "Should have analysis date if analyzed"
-            print(f"✅ Scam report test passed - Analysis available")
+            print(f"✅ Get scam analysis test passed - Analysis available")
             print(f"   Report: {data['scam_report'][:100]}...")
         else:
-            print(f"✅ Scam report test passed - No analysis available")
+            print(f"✅ Get scam analysis test passed - No analysis available")
             print(f"   Message: {data['message']}")
 
-    def test_scam_report_without_analysis(self):
-        """Test scam report endpoint with address that has no analysis."""
+    def test_get_scam_analysis_without_analysis(self):
+        """Test get scam analysis endpoint with address that has no analysis."""
         payload = {
             "crypto_address": "0xde0B295669a9FD93d5F28D9Ec85E40f4cb697BAe",
             "request_by_telegram_id": 123456789,
@@ -358,16 +373,16 @@ class TestExternalAPI:
         assert data["scam_report"] is None, "Should have no scam report"
         assert "No scam analysis" in data["message"], "Should indicate no analysis available"
         
-        print(f"✅ Scam report (no analysis) test passed")
+        print(f"✅ Get scam analysis (no analysis) test passed")
 
-    def test_scam_report_invalid_address(self):
-        """Test scam report endpoint with invalid address."""
+    def test_get_scam_analysis_invalid_address(self):
+        """Test get scam analysis endpoint with invalid address."""
         payload = {
             "crypto_address": "invalid_address_123",
             "request_by_telegram_id": 123456789
         }
         
-        response = requests.post(f"{API_BASE_URL}/scam-report", 
+        response = requests.post(f"{API_BASE_URL}/get-scam-analysis", 
                                headers=HEADERS, 
                                json=payload)
         
@@ -378,33 +393,33 @@ class TestExternalAPI:
         assert data["address_analyzed"] is False, "Should indicate address not analyzed"
         assert "not a valid" in data["message"].lower(), "Error message should mention invalid format"
         
-        print(f"✅ Scam report (invalid address) test passed")
+        print(f"✅ Get scam analysis (invalid address) test passed")
 
-    def test_scam_report_unauthorized(self):
-        """Test scam report endpoint without API key."""
+    def test_get_scam_analysis_unauthorized(self):
+        """Test get scam analysis endpoint without API key."""
         payload = {
             "crypto_address": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
             "request_by_telegram_id": 123456789
         }
         
         # Request without API key
-        response = requests.post(f"{API_BASE_URL}/scam-report", 
+        response = requests.post(f"{API_BASE_URL}/get-scam-analysis", 
                                headers={"Content-Type": "application/json"}, 
                                json=payload)
         
         assert response.status_code == 403, f"Expected 403, got {response.status_code}"
         
-        print(f"✅ Scam report unauthorized test passed")
+        print(f"✅ Get scam analysis unauthorized test passed")
 
-    def test_scam_report_ambiguous_address(self):
-        """Test scam report endpoint with ambiguous address."""
+    def test_get_scam_analysis_ambiguous_address(self):
+        """Test get scam analysis endpoint with ambiguous address."""
         payload = {
             "crypto_address": "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
             "request_by_telegram_id": 123456789
             # No blockchain_type specified
         }
         
-        response = requests.post(f"{API_BASE_URL}/scam-report", 
+        response = requests.post(f"{API_BASE_URL}/get-scam-analysis", 
                                headers=HEADERS, 
                                json=payload)
         
@@ -413,7 +428,7 @@ class TestExternalAPI:
         if data["status"] == "CLARIFICATION_NEEDED":
             assert "possible_blockchains" in data, "Should include possible blockchains"
             assert data["address_analyzed"] is False, "Should indicate address not analyzed"
-            print(f"✅ Scam report ambiguous address test passed - needs clarification")
+            print(f"✅ Get scam analysis ambiguous address test passed - needs clarification")
             print(f"   Possible blockchains: {data['possible_blockchains']}")
         else:
             # Address might not be ambiguous in your implementation

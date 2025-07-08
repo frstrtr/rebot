@@ -309,6 +309,116 @@ class TestExternalAPI:
         else:
             print(f"ℹ️  No risk score available for consistency test")
 
+    def test_scam_report_with_analysis(self):
+        """Test scam report endpoint with address that has analysis."""
+        payload = {
+            "crypto_address": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+            "request_by_telegram_id": 123456789,
+            "blockchain_type": "tron"
+        }
+        
+        response = requests.post(f"{API_BASE_URL}/scam-report", 
+                               headers=HEADERS, 
+                               json=payload)
+        
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+        
+        data = response.json()
+        assert data["status"] == "OK", f"Expected OK status, got {data.get('status')}"
+        assert "address_analyzed" in data, "Should have address_analyzed field"
+        assert data["blockchain_explorer_link"] is not None, "Should have explorer link"
+        assert data["bot_deeplink"] is not None, "Should have bot deeplink"
+        
+        if data["address_analyzed"]:
+            assert data["scam_report"] is not None, "Should have scam report if analyzed"
+            assert data["analysis_date"] is not None, "Should have analysis date if analyzed"
+            print(f"✅ Scam report test passed - Analysis available")
+            print(f"   Report: {data['scam_report'][:100]}...")
+        else:
+            print(f"✅ Scam report test passed - No analysis available")
+            print(f"   Message: {data['message']}")
+
+    def test_scam_report_without_analysis(self):
+        """Test scam report endpoint with address that has no analysis."""
+        payload = {
+            "crypto_address": "0xde0B295669a9FD93d5F28D9Ec85E40f4cb697BAe",
+            "request_by_telegram_id": 123456789,
+            "blockchain_type": "ethereum"
+        }
+        
+        response = requests.post(f"{API_BASE_URL}/scam-report", 
+                               headers=HEADERS, 
+                               json=payload)
+        
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+        
+        data = response.json()
+        assert data["status"] == "OK", f"Expected OK status, got {data.get('status')}"
+        assert data["address_analyzed"] is False, "Should indicate no analysis performed"
+        assert data["scam_report"] is None, "Should have no scam report"
+        assert "No scam analysis" in data["message"], "Should indicate no analysis available"
+        
+        print(f"✅ Scam report (no analysis) test passed")
+
+    def test_scam_report_invalid_address(self):
+        """Test scam report endpoint with invalid address."""
+        payload = {
+            "crypto_address": "invalid_address_123",
+            "request_by_telegram_id": 123456789
+        }
+        
+        response = requests.post(f"{API_BASE_URL}/scam-report", 
+                               headers=HEADERS, 
+                               json=payload)
+        
+        assert response.status_code == 200, "Should return 200 even for invalid addresses"
+        
+        data = response.json()
+        assert data["status"] == "ERROR", f"Expected ERROR status, got {data.get('status')}"
+        assert data["address_analyzed"] is False, "Should indicate address not analyzed"
+        assert "not a valid" in data["message"].lower(), "Error message should mention invalid format"
+        
+        print(f"✅ Scam report (invalid address) test passed")
+
+    def test_scam_report_unauthorized(self):
+        """Test scam report endpoint without API key."""
+        payload = {
+            "crypto_address": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+            "request_by_telegram_id": 123456789
+        }
+        
+        # Request without API key
+        response = requests.post(f"{API_BASE_URL}/scam-report", 
+                               headers={"Content-Type": "application/json"}, 
+                               json=payload)
+        
+        assert response.status_code == 403, f"Expected 403, got {response.status_code}"
+        
+        print(f"✅ Scam report unauthorized test passed")
+
+    def test_scam_report_ambiguous_address(self):
+        """Test scam report endpoint with ambiguous address."""
+        payload = {
+            "crypto_address": "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
+            "request_by_telegram_id": 123456789
+            # No blockchain_type specified
+        }
+        
+        response = requests.post(f"{API_BASE_URL}/scam-report", 
+                               headers=HEADERS, 
+                               json=payload)
+        
+        data = response.json()
+        
+        if data["status"] == "CLARIFICATION_NEEDED":
+            assert "possible_blockchains" in data, "Should include possible blockchains"
+            assert data["address_analyzed"] is False, "Should indicate address not analyzed"
+            print(f"✅ Scam report ambiguous address test passed - needs clarification")
+            print(f"   Possible blockchains: {data['possible_blockchains']}")
+        else:
+            # Address might not be ambiguous in your implementation
+            print(f"ℹ️  Address resolved to single blockchain: {data.get('status')}")
+
 def run_tests():
     """Run all tests with proper error handling."""
     test_instance = TestExternalAPI()
@@ -325,6 +435,11 @@ def run_tests():
         ("Wrong Blockchain Hint", test_instance.test_wrong_blockchain_hint),
         ("Response Structure", test_instance.test_response_structure),
         ("Risk Score Consistency", test_instance.test_risk_score_consistency),
+        ("Scam Report with Analysis", test_instance.test_scam_report_with_analysis),
+        ("Scam Report without Analysis", test_instance.test_scam_report_without_analysis),
+        ("Scam Report Invalid Address", test_instance.test_scam_report_invalid_address),
+        ("Scam Report Unauthorized", test_instance.test_scam_report_unauthorized),
+        ("Scam Report Ambiguous Address", test_instance.test_scam_report_ambiguous_address),
     ]
     
     passed = 0

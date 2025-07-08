@@ -28,7 +28,7 @@ from genai.vertex_ai_client import VertexAIClient
 # --- FastAPI App Initialization ---
 app = FastAPI(
     title="Rebot External API",
-    description="API to check crypto addresses, retrieve public memos, scam score and get explorer links.",
+    description="API to check crypto addresses, retrieve public memos, analyze scam potential, and get explorer links.",
     version="1.0.0"
 )
 
@@ -66,6 +66,24 @@ class AddressCheckResponse(BaseModel):
     possible_blockchains: Optional[List[str]] = Field(None, description="List of possible blockchains if clarification is needed.")
     risk_score: Optional[float] = Field(None, description="An AI-generated risk score for TRON addresses (0.0 to 1.0).")
     risk_score_updated_at: Optional[datetime] = Field(None, description="Timestamp when the risk score was last updated in UTC.")
+
+class ScamReportRequest(BaseModel):
+    crypto_address: str
+    request_by_telegram_id: int = Field(..., gt=0, le=10000000000, description="Telegram ID of the user making the request.")
+    blockchain_type: Optional[str] = Field(None, description="Optional: Specify the blockchain to resolve ambiguity (e.g., 'ethereum', 'bsc').")
+
+class ScamReportResponse(BaseModel):
+    """Response model for the scam report API."""
+    status: str = Field(..., description="OK, ERROR, or CLARIFICATION_NEEDED")
+    message: Optional[str] = Field(None, description="Error message or status description.")
+    request_datetime: datetime = Field(..., description="Timestamp of the request in UTC.")
+    address_analyzed: bool = Field(..., description="Whether scam analysis has been performed for this address.")
+    scam_report: Optional[str] = Field(None, description="The scam analysis report if available.")
+    analysis_date: Optional[datetime] = Field(None, description="When the scam analysis was performed.")
+    risk_score: Optional[float] = Field(None, description="Risk score if available (0.0 to 1.0).")
+    blockchain_explorer_link: Optional[str] = Field(None, description="Link to a block explorer for the address.")
+    bot_deeplink: Optional[str] = Field(None, description="A raw t.me URL to check the address with the bot.")
+    possible_blockchains: Optional[List[str]] = Field(None, description="List of possible blockchains if clarification is needed.")
 
 # --- Dependency for DB Session ---
 def get_db():
@@ -322,3 +340,393 @@ async def check_address(request: AddressCheckRequest, api_request: Request, db: 
         risk_score=risk_score,
         risk_score_updated_at=risk_score_updated_at
     ))
+
+@app.post("/analyze-scam", response_model=ScamReportResponse, dependencies=[Depends(get_api_key)])
+async def analyze_scam(request: ScamReportRequest, api_request: Request, db: Session = Depends(get_db)):
+    """
+    Performs new scam analysis on a crypto address and provides a report.
+    This endpoint triggers AI analysis using external APIs and may take time to complete.
+    """
+    request_time = datetime.now(timezone.utc)
+
+    # --- Audit Logging for Request ---
+    try:
+        client_ip = api_request.client.host
+        request_log = (
+            f"🔹 **API Request: /analyze-scam**\n\n"
+            f"**Client IP:** `{client_ip}`\n"
+            f"**Address:** `{request.crypto_address}`\n"
+            f"**Blockchain Hint:** `{request.blockchain_type or 'None'}`\n"
+            f"**Requested By:** `tgid://user?id={request.request_by_telegram_id}`"
+        )
+        await log_to_audit_channel_async(request_log)
+    except Exception as e:
+        logging.error(f"Failed to log API request to audit channel: {e}", exc_info=True)
+
+    # --- Response Logging Helper ---
+    async def log_and_return(response: ScamReportResponse) -> ScamReportResponse:
+        try:
+            response_log = (
+                f"🔸 **API Response: /analyze-scam**\n\n"
+                f"**Address:** `{request.crypto_address}`\n"
+                f"**Status:** `{response.status}`\n"
+                f"**Message:** `{response.message}`\n"
+                f"**Risk Score:** `{response.risk_score if response.risk_score is not None else 'N/A'}`"
+            )
+            await log_to_audit_channel_async(response_log)
+        except Exception as e:
+            logging.error(f"Failed to log API response to audit channel: {e}", exc_info=True)
+        return response
+
+    crypto_finder = CryptoAddressFinder()
+    
+    detected_map = crypto_finder.find_addresses(request.crypto_address)
+    
+    if not detected_map:
+        return await log_and_return(ScamReportResponse(
+            status="ERROR",
+            message=f"'{request.crypto_address}' is not a valid or recognized crypto address format.",
+            request_datetime=request_time,
+            address_analyzed=False
+        ))
+
+    detected_chains: Set[str] = {chain for chain, addrs in detected_map.items() if request.crypto_address in addrs}
+    
+    blockchain: Optional[str] = None
+    ambiguity_options: Set[str] = set()
+
+    if len(detected_chains) == 1:
+        single_chain = detected_chains.copy().pop()
+        group = get_ambiguity_group_members(single_chain)
+        if group:
+            ambiguity_options = group
+        else:
+            blockchain = single_chain
+    elif len(detected_chains) > 1:
+        ambiguity_options = detected_chains
+
+    if ambiguity_options:
+        if request.blockchain_type:
+            if request.blockchain_type.lower() in ambiguity_options:
+                blockchain = request.blockchain_type.lower()
+            else:
+                return await log_and_return(ScamReportResponse(
+                    status="ERROR",
+                    message=f"Provided blockchain_type '{request.blockchain_type}' is not a valid option for this address. Possible options: {sorted(list(ambiguity_options))}",
+                    request_datetime=request_time,
+                    address_analyzed=False
+                ))
+        else:
+            return await log_and_return(ScamReportResponse(
+                status="CLARIFICATION_NEEDED",
+                message="Address format is ambiguous and could belong to multiple blockchains. Please clarify by providing a 'blockchain_type'.",
+                request_datetime=request_time,
+                possible_blockchains=sorted(list(ambiguity_options)),
+                address_analyzed=False
+            ))
+    
+    if not blockchain:
+        # This case should not be hit if logic is correct, but it's a safeguard.
+        # Add logging to be sure
+        logging.error(f"API_LOGIC_ERROR: Could not resolve a single blockchain for address '{request.crypto_address}' from detected chains: {detected_chains}. Ambiguity options were: {ambiguity_options}")
+        return await log_and_return(ScamReportResponse(
+            status="ERROR",
+            message=f"Could not determine a single blockchain for '{request.crypto_address}'.",
+            request_datetime=request_time,
+            address_analyzed=False
+        ))
+
+    risk_score: Optional[float] = None
+    risk_score_updated_at: Optional[datetime] = None
+    scam_report: Optional[str] = None
+    analysis_date: Optional[datetime] = None
+
+    # --- Check for existing scam report in the database ---
+    try:
+        existing_record = db.query(CryptoAddress).filter(
+            func.lower(CryptoAddress.address) == request.crypto_address.lower(),
+            func.lower(CryptoAddress.blockchain) == blockchain.lower()
+        ).first()
+
+        if existing_record:
+            logging.info(f"Found existing record for {request.crypto_address} in DB.")
+            address_analyzed = True
+
+            if existing_record.risk_score is not None:
+                risk_score = existing_record.risk_score
+                risk_score_updated_at = existing_record.updated_at
+            else:
+                logging.info(f"No risk score found for existing record of {request.crypto_address}.")
+
+            # For scam report, we might want to check a different field or logic
+            scam_report = existing_record.notes  # Assuming notes might contain scam report info
+            analysis_date = existing_record.updated_at if existing_record.updated_at else existing_record.detected_at
+
+        else:
+            logging.info(f"No existing record found for {request.crypto_address}, proceeding with analysis.")
+            address_analyzed = False
+    except SQLAlchemyError as e:
+        logging.error(f"API DB Error checking for existing record for {request.crypto_address}: {e}", exc_info=True)
+        address_analyzed = False
+
+    # If we have an existing record and it was recently updated, we can return the existing risk score and skip the analysis
+    if address_analyzed and risk_score_updated_at:
+        time_since_update = (request_time - risk_score_updated_at).total_seconds()
+        if time_since_update < 3600:  # Less than an hour ago
+            logging.info(f"Returning existing risk score for {request.crypto_address} (updated {time_since_update} seconds ago).")
+            return await log_and_return(ScamReportResponse(
+                status="OK",
+                message="Scam analysis report retrieved from database.",
+                request_datetime=request_time,
+                address_analyzed=True,
+                scam_report=scam_report,
+                analysis_date=analysis_date,
+                risk_score=risk_score,
+                blockchain_explorer_link=Config.EXPLORER_CONFIG.get(blockchain, {}).get("url_template", "").format(address=request.crypto_address) or None,
+                bot_deeplink=f"https://t.me/{Config.BOT_USERNAME}?start={request.crypto_address}" if Config.BOT_USERNAME else None
+            ))
+
+    # --- Perform TRON address risk analysis ---
+    if blockchain == 'tron':
+        try:
+            tron_client = TronScanAPI()
+            vertex_client = VertexAIClient()
+
+            loop = asyncio.get_running_loop()
+            tron_data = await loop.run_in_executor(
+                None, tron_client.get_account_info, request.crypto_address
+            )
+
+            if tron_data:
+                tron_data_str = json.dumps(tron_data)
+                prompt = (
+                    f"Analyze the following TRON account data and provide a scam report. "
+                    f"The data is: {tron_data_str}. "
+                    f"Consider factors like balance, transaction count, creation date, and any known scam patterns. "
+                    f"Your response should include a risk score from 0.0 (very low risk) to 1.0 (very high risk), "
+                    f"and a brief description of any potential scam indicators."
+                )
+
+                # Get AI analysis
+                ai_response = await vertex_client.generate_text(prompt)
+
+                if ai_response:
+                    try:
+                        # Parse the AI's response
+                        ai_response_json = json.loads(ai_response)
+                        risk_score = ai_response_json.get("risk_score")
+                        scam_report = ai_response_json.get("report")
+
+                        if risk_score is not None:
+                            risk_score = float(risk_score)
+                            logging.info(f"Successfully generated risk score {risk_score} for TRON address {request.crypto_address}")
+                        else:
+                            logging.warning(f"Risk score not found in AI response for address {request.crypto_address}: {ai_response}")
+
+                        # --- Write the new score and report to the database ---
+                        if existing_record:
+                            logging.info(f"Updating existing DB record (ID: {existing_record.id}) with new risk score and scam report.")
+                            existing_record.risk_score = risk_score
+                            existing_record.notes = scam_report  # Assuming notes field is used for scam report
+                            existing_record.updated_at = request_time
+                            db.add(existing_record)
+                        else:
+                            logging.info(f"Creating new DB record for {request.crypto_address} with risk score and scam report.")
+                            new_record = CryptoAddress(
+                                address=request.crypto_address,
+                                blockchain=blockchain,
+                                risk_score=risk_score,
+                                notes=scam_report,
+                                status="to_check", # Default status
+                                detected_at=request_time,
+                                updated_at=request_time
+                            )
+                            db.add(new_record)
+                            existing_record = new_record # Use the new record for the refresh
+                        
+                        db.commit()
+                        db.refresh(existing_record)
+                        
+                        # Set the variables for the final response
+                        risk_score = existing_record.risk_score
+                        risk_score_updated_at = existing_record.updated_at
+                        scam_report = existing_record.notes
+                        analysis_date = existing_record.updated_at
+
+                    except (ValueError, TypeError) as e:
+                        logging.error(f"Error parsing AI response for address {request.crypto_address}: {e}. Response: {ai_response}")
+                    except SQLAlchemyError as db_err:
+                        logging.error(f"API DB Error saving scam report for {request.crypto_address}: {db_err}", exc_info=True)
+                        db.rollback() # Rollback on error
+            else:
+                logging.info(f"No account info found on TronScan for address {request.crypto_address}, skipping risk analysis.")
+
+        except Exception as e:
+            logging.error(f"Error during TRON scam analysis for {request.crypto_address}: {e}", exc_info=True)
+    
+    # Final response construction
+    explorer_link = Config.EXPLORER_CONFIG.get(blockchain, {}).get("url_template", "").format(address=request.crypto_address) or None
+    bot_deeplink = f"https://t.me/{Config.BOT_USERNAME}?start={request.crypto_address}" if Config.BOT_USERNAME else None
+
+    return await log_and_return(ScamReportResponse(
+        status="OK",
+        message="Scam analysis completed.",
+        request_datetime=request_time,
+        address_analyzed=True,
+        scam_report=scam_report,
+        analysis_date=analysis_date,
+        risk_score=risk_score,
+        blockchain_explorer_link=explorer_link,
+        bot_deeplink=bot_deeplink
+    ))
+
+@app.post("/get-scam-analysis", response_model=ScamReportResponse, dependencies=[Depends(get_api_key)])
+async def get_scam_analysis(request: ScamReportRequest, api_request: Request, db: Session = Depends(get_db)):
+    """
+    Retrieves existing scam analysis for a crypto address if it has been performed.
+    This endpoint only queries the database and does not trigger new analysis.
+    Returns whether analysis exists and the report content.
+    """
+    # --- Audit Logging for Request ---
+    try:
+        client_ip = api_request.client.host
+        request_log = (
+            f"🔹 **API Request: /get-scam-analysis**\n\n"
+            f"**Client IP:** `{client_ip}`\n"
+            f"**Address:** `{request.crypto_address}`\n"
+            f"**Blockchain Hint:** `{request.blockchain_type or 'None'}`\n"
+            f"**Requested By:** `tgid://user?id={request.request_by_telegram_id}`"
+        )
+        await log_to_audit_channel_async(request_log)
+    except Exception as e:
+        logging.error(f"Failed to log get-scam-analysis API request to audit channel: {e}", exc_info=True)
+
+    # --- Response Logging Helper ---
+    async def log_and_return(response: ScamReportResponse) -> ScamReportResponse:
+        try:
+            response_log = (
+                f"🔸 **API Response: /get-scam-analysis**\n\n"
+                f"**Address:** `{request.crypto_address}`\n"
+                f"**Status:** `{response.status}`\n"
+                f"**Analysis Available:** `{response.address_analyzed}`\n"
+                f"**Risk Score:** `{response.risk_score if response.risk_score is not None else 'N/A'}`"
+            )
+            await log_to_audit_channel_async(response_log)
+        except Exception as e:
+            logging.error(f"Failed to log get-scam-analysis API response to audit channel: {e}", exc_info=True)
+        return response
+
+    request_time = datetime.now(timezone.utc)
+    crypto_finder = CryptoAddressFinder()
+    
+    # Validate and resolve blockchain
+    detected_map = crypto_finder.find_addresses(request.crypto_address)
+    
+    if not detected_map:
+        return await log_and_return(ScamReportResponse(
+            status="ERROR",
+            message=f"'{request.crypto_address}' is not a valid or recognized crypto address format.",
+            request_datetime=request_time,
+            address_analyzed=False
+        ))
+
+    detected_chains: Set[str] = {chain for chain, addrs in detected_map.items() if request.crypto_address in addrs}
+    
+    blockchain: Optional[str] = None
+    ambiguity_options: Set[str] = set()
+
+    if len(detected_chains) == 1:
+        single_chain = detected_chains.copy().pop()
+        group = get_ambiguity_group_members(single_chain)
+        if group:
+            ambiguity_options = group
+        else:
+            blockchain = single_chain
+    elif len(detected_chains) > 1:
+        ambiguity_options = detected_chains
+
+    if ambiguity_options:
+        if request.blockchain_type:
+            if request.blockchain_type.lower() in ambiguity_options:
+                blockchain = request.blockchain_type.lower()
+            else:
+                return await log_and_return(ScamReportResponse(
+                    status="ERROR",
+                    message=f"Provided blockchain_type '{request.blockchain_type}' is not a valid option for this address. Possible options: {sorted(list(ambiguity_options))}",
+                    request_datetime=request_time,
+                    address_analyzed=False
+                ))
+        else:
+            return await log_and_return(ScamReportResponse(
+                status="CLARIFICATION_NEEDED",
+                message="Address format is ambiguous and could belong to multiple blockchains. Please clarify by providing a 'blockchain_type'.",
+                request_datetime=request_time,
+                possible_blockchains=sorted(list(ambiguity_options)),
+                address_analyzed=False
+            ))
+    
+    if not blockchain:
+        logging.error(f"SCAM_REPORT_LOGIC_ERROR: Could not resolve a single blockchain for address '{request.crypto_address}' from detected chains: {detected_chains}")
+        return await log_and_return(ScamReportResponse(
+            status="ERROR",
+            message=f"Could not determine a single blockchain for '{request.crypto_address}'.",
+            request_datetime=request_time,
+            address_analyzed=False
+        ))
+
+    # --- Query for scam analysis data ---
+    try:
+        # Look for existing records with analysis data
+        existing_record = db.query(CryptoAddress).filter(
+            func.lower(CryptoAddress.address) == request.crypto_address.lower(),
+            func.lower(CryptoAddress.blockchain) == blockchain.lower()
+        ).first()
+
+        address_analyzed = False
+        scam_report = None
+        analysis_date = None
+        risk_score = None
+
+        if existing_record:
+            # Check if we have a public memo (scam analysis)
+            if existing_record.notes and existing_record.notes.strip():
+                # Check if this is a public memo or no memo type specified (default public)
+                if existing_record.memo_type == MemoType.PUBLIC.value or existing_record.memo_type is None:
+                    address_analyzed = True
+                    scam_report = existing_record.notes
+                    analysis_date = existing_record.updated_at or existing_record.detected_at
+            
+            # Get risk score if available
+            if existing_record.risk_score is not None:
+                risk_score = existing_record.risk_score
+
+        # Generate explorer link and bot deeplink
+        explorer_link = Config.EXPLORER_CONFIG.get(blockchain, {}).get("url_template", "").format(address=request.crypto_address) or None
+        bot_deeplink = f"https://t.me/{Config.BOT_USERNAME}?start={request.crypto_address}" if Config.BOT_USERNAME else None
+
+        # Prepare response message
+        if address_analyzed:
+            message = "Scam analysis found for this address."
+        else:
+            message = "No scam analysis has been performed for this address yet."
+
+        return await log_and_return(ScamReportResponse(
+            status="OK",
+            message=message,
+            request_datetime=request_time,
+            address_analyzed=address_analyzed,
+            scam_report=scam_report,
+            analysis_date=analysis_date,
+            risk_score=risk_score,
+            blockchain_explorer_link=explorer_link,
+            bot_deeplink=bot_deeplink
+        ))
+
+    except SQLAlchemyError as e:
+        logging.error(f"API DB Error fetching scam report for {request.crypto_address}: {e}", exc_info=True)
+        return await log_and_return(ScamReportResponse(
+            status="ERROR",
+            message="A database error occurred while fetching scam report.",
+            request_datetime=request_time,
+            address_analyzed=False
+        ))

@@ -347,8 +347,45 @@ class TronScanAPI:
                 "accountType": account_info.get("accountType") if account_info else "Contract"
             }
 
-            # Add contract-specific information if available
-            if isinstance(contract_data_raw, dict):
+            # Parse contract-specific information from the correct data structure
+            if isinstance(contract_data_raw, dict) and "data" in contract_data_raw and contract_data_raw["data"]:
+                contract_data = contract_data_raw["data"][0]  # Get the first (and usually only) contract data
+                
+                contract_info.update({
+                    "contractType": contract_data.get("contractType"),
+                    "creator": contract_data.get("creator"),
+                    "name": contract_data.get("name"),
+                    "tag1": contract_data.get("tag1"),
+                    "description": contract_data.get("description"),
+                    "website": contract_data.get("website"),
+                    "github": contract_data.get("github"),
+                    "email": contract_data.get("email"),
+                    "whitepaper": contract_data.get("whitepaper"),
+                    "verified": contract_data.get("verify_status", 0) > 0,  # verify_status > 0 means verified
+                    "verify_status": contract_data.get("verify_status", 0),
+                    "compiler_version": contract_data.get("compiler_version"),
+                    "social_media": contract_data.get("social_media", []),
+                    "methodMap": contract_data.get("methodMap", {}),
+                    "vip": contract_data.get("vip", False),
+                    "publicTag": contract_data.get("publicTag"),
+                    "is_proxy": contract_data.get("is_proxy", False)
+                })
+                
+                # Add token information if available
+                if contract_data.get("tokenInfo"):
+                    token_data = contract_data["tokenInfo"]
+                    contract_info["tokenInfo"] = {
+                        "symbol": token_data.get("tokenAbbr"),
+                        "name": token_data.get("tokenName"),
+                        "decimals": token_data.get("tokenDecimal"),
+                        "tokenType": token_data.get("tokenType", "TRC20"),
+                        "vip": token_data.get("vip", False),
+                        "tokenId": token_data.get("tokenId"),
+                        "issuerAddr": token_data.get("issuerAddr")
+                    }
+                    logger.info("Successfully parsed token info for contract %s", contract_address)
+            else:
+                # Fallback: Add contract-specific information from the raw response (old format)
                 contract_info.update({
                     "contractType": contract_data_raw.get("contractType"),
                     "creator": contract_data_raw.get("creator"),
@@ -363,37 +400,6 @@ class TronScanAPI:
                     "compiler_version": contract_data_raw.get("compiler_version"),
                     "social_media": contract_data_raw.get("social_media", [])
                 })
-
-            # Get token information if it's a token contract
-            try:
-                self._rate_limit()
-                token_endpoint = f"{self.base_url}/token_trc20"
-                token_params = {"contract": contract_address}
-                
-                token_response = self.session.get(token_endpoint, params=token_params, timeout=self.timeout)
-                token_response.raise_for_status()
-                
-                token_data = token_response.json()
-                
-                if isinstance(token_data, dict) and "data" in token_data and token_data["data"]:
-                    token_info = token_data["data"][0]
-                    contract_info.update({
-                        "tokenInfo": {
-                            "symbol": token_info.get("symbol"),
-                            "name": token_info.get("name"),
-                            "decimals": token_info.get("decimals"),
-                            "totalSupply": token_info.get("total_supply"),
-                            "holderCount": token_info.get("holder_count"),
-                            "transferCount": token_info.get("transfer_count"),
-                            "tokenType": token_info.get("token_type", "TRC20"),
-                            "vip": token_info.get("vip", False)
-                        }
-                    })
-                    logger.info("Successfully fetched token info for contract %s", contract_address)
-                
-            except Exception as token_err:
-                logger.warning("Failed to fetch token info for contract %s: %s", contract_address, token_err)
-                contract_info["tokenInfo"] = None
 
             logger.info("Successfully fetched contract info for %s from TronScan.", contract_address)
             return contract_info

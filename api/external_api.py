@@ -517,6 +517,9 @@ async def analyze_scam(request: ScamReportRequest, api_request: Request, db: Ses
                 None, tron_client.is_smart_contract, request.crypto_address
             )
 
+            prompt = None
+            tron_data = None  # Initialize to avoid scope issues
+            
             if is_contract:
                 # Fetch contract-specific data
                 contract_data = await loop.run_in_executor(
@@ -567,17 +570,37 @@ async def analyze_scam(request: ScamReportRequest, api_request: Request, db: Ses
                         f"IMPORTANT: Start your analysis report with 'This is a SMART CONTRACT address.' "
                         f"Respond in JSON format: {{\"risk_score\": 0.X, \"report\": \"This is a SMART CONTRACT address. [analysis here]\"}}"
                     )
+                    logging.info(f"Generated smart contract prompt for {request.crypto_address}")
                 else:
-                    logging.error(f"Failed to fetch contract data for {request.crypto_address}")
-                    prompt = None
+                    logging.error(f"Failed to fetch contract data for {request.crypto_address}, falling back to basic analysis")
+                    # Fall back to basic account info for contracts that don't have contract data
+                    tron_data = await loop.run_in_executor(
+                        None, tron_client.get_basic_account_info, request.crypto_address
+                    )
+                    if tron_data:
+                        balance_trx = tron_data.get('balance', 0) / 1_000_000
+                        tx_count = tron_data.get('totalTransactionCount', 0)
+                        create_time = tron_data.get('date_created')
+                        
+                        prompt = (
+                            f"Analyze this TRON SMART CONTRACT for scam potential. "
+                            f"Contract Address: {request.crypto_address}, "
+                            f"Balance: {balance_trx:.6f} TRX, "
+                            f"Total transactions: {tx_count}, "
+                            f"Creation time: {create_time}. "
+                            f"Note: Contract-specific data unavailable. "
+                            f"Provide a risk score (0.0-1.0) and brief scam analysis. "
+                            f"IMPORTANT: Start your analysis report with 'This is a SMART CONTRACT address.' "
+                            f"Respond in JSON format: {{\"risk_score\": 0.X, \"report\": \"This is a SMART CONTRACT address. [analysis here]\"}}"
+                        )
+                        logging.info(f"Generated fallback smart contract prompt for {request.crypto_address}")
             else:
-                # Fetch wallet-specific data (existing logic)
+                # Fetch wallet-specific data
                 tron_data = await loop.run_in_executor(
                     None, tron_client.get_basic_account_info, request.crypto_address
                 )
-
-            if (is_contract and contract_data and prompt) or (not is_contract and tron_data):
-                if not is_contract:
+                
+                if tron_data:
                     # Create a focused prompt for wallet address analysis
                     balance_trx = tron_data.get('balance', 0) / 1_000_000  # Convert SUN to TRX
                     tx_count = tron_data.get('totalTransactionCount', 0)
@@ -628,12 +651,17 @@ async def analyze_scam(request: ScamReportRequest, api_request: Request, db: Ses
                         f"IMPORTANT: Start your analysis report with 'This is a WALLET address.' "
                         f"Respond in JSON format: {{\"risk_score\": 0.X, \"report\": \"This is a WALLET address. [analysis here]\"}}"
                     )
+                    logging.info(f"Generated wallet prompt for {request.crypto_address}")
 
+            if prompt:
                 # Get AI analysis
+                logging.info(f"[DEBUG] Sending prompt to AI for {request.crypto_address}")
                 ai_response = await vertex_client.generate_text(prompt)
+                logging.info(f"[DEBUG] AI response received: {ai_response[:200] if ai_response else 'None'}...")
 
                 if ai_response:
                     try:
+                        logging.info(f"[DEBUG] Processing AI response for {request.crypto_address}")
                         # Clean the AI response to handle markdown code blocks
                         cleaned_response = ai_response.strip()
                         if cleaned_response.startswith('```json'):
@@ -642,10 +670,16 @@ async def analyze_scam(request: ScamReportRequest, api_request: Request, db: Ses
                             cleaned_response = cleaned_response[:-3]  # Remove ```
                         cleaned_response = cleaned_response.strip()
                         
+                        logging.info(f"[DEBUG] Cleaned response: {cleaned_response}")
+                        
                         # Parse the AI's response
                         ai_response_json = json.loads(cleaned_response)
+                        logging.info(f"[DEBUG] Parsed JSON: {ai_response_json}")
+                        
                         risk_score = ai_response_json.get("risk_score")
                         scam_report = ai_response_json.get("report")
+                        
+                        logging.info(f"[DEBUG] Extracted - Risk score: {risk_score}, Report length: {len(scam_report) if scam_report else 0}")
 
                         # Add "basic AI analysis" mark to the report
                         if scam_report:
@@ -690,12 +724,14 @@ async def analyze_scam(request: ScamReportRequest, api_request: Request, db: Ses
                         analysis_date = existing_record.updated_at
 
                     except (ValueError, TypeError) as e:
-                        logging.error(f"Error parsing AI response for address {request.crypto_address}: {e}. Response: {ai_response}")
+                        logging.error(f"[DEBUG] Error parsing AI response for address {request.crypto_address}: {e}. Response: {ai_response}")
                     except SQLAlchemyError as db_err:
-                        logging.error(f"API DB Error saving scam report for {request.crypto_address}: {db_err}", exc_info=True)
+                        logging.error(f"[DEBUG] API DB Error saving scam report for {request.crypto_address}: {db_err}", exc_info=True)
                         db.rollback()
+                else:
+                    logging.warning(f"[DEBUG] No AI response received for {request.crypto_address}")
             else:
-                logging.info(f"No account info found on TronScan for address {request.crypto_address}, skipping risk analysis.")
+                logging.warning(f"[DEBUG] No prompt generated for {request.crypto_address}, skipping risk analysis.")
 
         except Exception as e:
             logging.error(f"Error during TRON scam analysis for {request.crypto_address}: {e}", exc_info=True)

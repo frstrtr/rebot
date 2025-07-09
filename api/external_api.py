@@ -511,62 +511,123 @@ async def analyze_scam(request: ScamReportRequest, api_request: Request, db: Ses
             tron_client = TronScanAPI()
             vertex_client = VertexAIClient()
 
-            # Fetch basic Tron data (optimized for cost/speed)
+            # First, check if this is a smart contract or regular address
             loop = asyncio.get_running_loop()
-            tron_data = await loop.run_in_executor(
-                None, tron_client.get_basic_account_info, request.crypto_address
+            is_contract = await loop.run_in_executor(
+                None, tron_client.is_smart_contract, request.crypto_address
             )
 
-            if tron_data:
-                # Create a focused prompt for scam analysis with enriched data
-                balance_trx = tron_data.get('balance', 0) / 1_000_000  # Convert SUN to TRX
-                tx_count = tron_data.get('totalTransactionCount', 0)
-                create_time = tron_data.get('createTime')
-                token_balances = tron_data.get('tokenBalances', [])
+            if is_contract:
+                # Fetch contract-specific data
+                contract_data = await loop.run_in_executor(
+                    None, tron_client.get_contract_info, request.crypto_address
+                )
                 
-                # Format token balances for AI analysis
-                token_info = ""
-                if token_balances:
-                    significant_tokens = []
-                    for token in token_balances[:5]:  # Top 5 tokens for analysis
-                        token_name = token.get('tokenName', 'Unknown')
-                        token_symbol = token.get('tokenSymbol', '')
-                        balance = token.get('balance', '0')
-                        token_decimal = token.get('tokenDecimal', 0)
-                        
-                        # Convert balance to readable format
-                        try:
-                            if token_decimal > 0:
-                                readable_balance = float(balance) / (10 ** token_decimal)
-                            else:
-                                readable_balance = float(balance)
-                            
-                            if readable_balance > 0:
-                                significant_tokens.append(f"{token_name} ({token_symbol}): {readable_balance:.6f}")
-                        except (ValueError, ZeroDivisionError):
-                            if balance != '0':
-                                significant_tokens.append(f"{token_name} ({token_symbol}): {balance}")
+                if contract_data:
+                    # Create a focused prompt for smart contract analysis
+                    balance_trx = contract_data.get('balance', 0) / 1_000_000  # Convert SUN to TRX
+                    tx_count = contract_data.get('totalTransactionCount', 0)
+                    create_time = contract_data.get('date_created')
+                    contract_type = contract_data.get('contractType', 'Unknown')
+                    creator = contract_data.get('creator', 'Unknown')
+                    verified = contract_data.get('verified', False)
                     
-                    if significant_tokens:
-                        token_info = f", Token holdings: {'; '.join(significant_tokens)}"
+                    # Token-specific info if available
+                    token_info = contract_data.get('tokenInfo')
+                    token_details = ""
+                    if token_info:
+                        symbol = token_info.get('symbol', 'Unknown')
+                        name = token_info.get('name', 'Unknown')
+                        total_supply = token_info.get('totalSupply', 'Unknown')
+                        holder_count = token_info.get('holderCount', 'Unknown')
+                        transfer_count = token_info.get('transferCount', 'Unknown')
+                        vip = token_info.get('vip', False)
+                        
+                        token_details = (f", Token: {name} ({symbol}), "
+                                       f"Total Supply: {total_supply}, "
+                                       f"Holders: {holder_count}, "
+                                       f"Transfers: {transfer_count}, "
+                                       f"VIP Status: {vip}")
+                    
+                    prompt = (
+                        f"Analyze this TRON SMART CONTRACT for scam potential. "
+                        f"Contract Address: {request.crypto_address}, "
+                        f"Contract Type: {contract_type}, "
+                        f"Creator: {creator}, "
+                        f"Verified: {verified}, "
+                        f"Balance: {balance_trx:.6f} TRX, "
+                        f"Total transactions: {tx_count}, "
+                        f"Creation time: {create_time}{token_details}. "
+                        f"Provide a risk score (0.0-1.0) and brief scam analysis. "
+                        f"Focus on: contract verification status, creator reputation, "
+                        f"token economics (if applicable), transaction patterns, "
+                        f"unusual contract behavior. Consider: unverified contracts are higher risk, "
+                        f"contracts with excessive permissions are suspicious, "
+                        f"tokens with unfair distribution may be scams. "
+                        f"IMPORTANT: Start your analysis report with 'This is a SMART CONTRACT address.' "
+                        f"Respond in JSON format: {{\"risk_score\": 0.X, \"report\": \"This is a SMART CONTRACT address. [analysis here]\"}}"
+                    )
+                else:
+                    logging.error(f"Failed to fetch contract data for {request.crypto_address}")
+                    prompt = None
+            else:
+                # Fetch wallet-specific data (existing logic)
+                tron_data = await loop.run_in_executor(
+                    None, tron_client.get_basic_account_info, request.crypto_address
+                )
+
+            if (is_contract and contract_data and prompt) or (not is_contract and tron_data):
+                if not is_contract:
+                    # Create a focused prompt for wallet address analysis
+                    balance_trx = tron_data.get('balance', 0) / 1_000_000  # Convert SUN to TRX
+                    tx_count = tron_data.get('totalTransactionCount', 0)
+                    create_time = tron_data.get('date_created')
+                    token_balances = tron_data.get('tokenBalances', [])
+                    
+                    # Format token balances for AI analysis
+                    token_info = ""
+                    if token_balances:
+                        significant_tokens = []
+                        for token in token_balances[:5]:  # Top 5 tokens for analysis
+                            token_name = token.get('tokenName', 'Unknown')
+                            token_symbol = token.get('tokenSymbol', '')
+                            balance = token.get('balance', '0')
+                            token_decimal = token.get('tokenDecimal', 0)
+                            
+                            # Convert balance to readable format
+                            try:
+                                if token_decimal > 0:
+                                    readable_balance = float(balance) / (10 ** token_decimal)
+                                else:
+                                    readable_balance = float(balance)
+                                
+                                if readable_balance > 0:
+                                    significant_tokens.append(f"{token_name} ({token_symbol}): {readable_balance:.6f}")
+                            except (ValueError, ZeroDivisionError):
+                                if balance != '0':
+                                    significant_tokens.append(f"{token_name} ({token_symbol}): {balance}")
+                        
+                        if significant_tokens:
+                            token_info = f", Token holdings: {'; '.join(significant_tokens)}"
+                        else:
+                            token_info = ", Token holdings: None"
                     else:
                         token_info = ", Token holdings: None"
-                else:
-                    token_info = ", Token holdings: None"
-                
-                prompt = (
-                    f"Analyze this TRON address for scam potential. "
-                    f"Address: {request.crypto_address}, "
-                    f"Balance: {balance_trx:.6f} TRX, "
-                    f"Total transactions: {tx_count}, "
-                    f"Creation time: {create_time}{token_info}. "
-                    f"Provide a risk score (0.0-1.0) and brief scam analysis. "
-                    f"Focus on: account age, transaction volume, balance patterns, token holdings diversity. "
-                    f"Consider: large token holdings may indicate accumulation schemes, "
-                    f"diverse small holdings may suggest airdrop farming, "
-                    f"stablecoin concentrations may indicate laundering. "
-                    f"Respond in JSON format: {{\"risk_score\": 0.X, \"report\": \"analysis here\"}}"
-                )
+                    
+                    prompt = (
+                        f"Analyze this TRON WALLET ADDRESS for scam potential. "
+                        f"Address: {request.crypto_address}, "
+                        f"Balance: {balance_trx:.6f} TRX, "
+                        f"Total transactions: {tx_count}, "
+                        f"Creation time: {create_time}{token_info}. "
+                        f"Provide a risk score (0.0-1.0) and brief scam analysis. "
+                        f"Focus on: account age, transaction volume, balance patterns, token holdings diversity. "
+                        f"Consider: large token holdings may indicate accumulation schemes, "
+                        f"diverse small holdings may suggest airdrop farming, "
+                        f"stablecoin concentrations may indicate laundering. "
+                        f"IMPORTANT: Start your analysis report with 'This is a WALLET address.' "
+                        f"Respond in JSON format: {{\"risk_score\": 0.X, \"report\": \"This is a WALLET address. [analysis here]\"}}"
+                    )
 
                 # Get AI analysis
                 ai_response = await vertex_client.generate_text(prompt)

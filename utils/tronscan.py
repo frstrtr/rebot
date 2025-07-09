@@ -161,11 +161,11 @@ class TronScanAPI:
                 logger.info("TronScan: Address %s likely not found, data: %s", address, account_data)
                 return None
 
-            # Extract basic account info
+            # Extract basic account info with correct field names
             basic_info = {
                 "address": account_data.get("address"),
                 "balance": account_data.get("balance", 0),
-                "createTime": account_data.get("createTime"),
+                "createTime": account_data.get("date_created"),  # Fixed: use date_created instead of createTime
                 "totalTransactionCount": account_data.get("totalTransactionCount", 0)
             }
 
@@ -215,6 +215,199 @@ class TronScanAPI:
             logger.error("An error occurred during TronScan basic API request for %s: %s", address, req_err)
         except ValueError as json_err:
             logger.error("Failed to decode JSON response from TronScan for basic info %s: %s", address, json_err)
+        
+        return None
+
+    def is_smart_contract(self, address: str) -> bool:
+        """
+        Checks if a TRON address is a smart contract by querying the contract endpoint.
+
+        Args:
+            address: The TRON address to check.
+
+        Returns:
+            True if the address is a smart contract, False if it's a regular wallet address.
+        """
+        if not address or not isinstance(address, str):
+            return False
+
+        self._rate_limit()
+        
+        # First check the account info to see if it's a Super Representative or other special account
+        account_info = self.get_account_info(address)
+        if account_info:
+            # Check if this is a Super Representative (they have special account status but are not contracts)
+            if account_info.get('is_sr', False) or account_info.get('is_committee', False):
+                logger.info(f"Address {address} is a Super Representative or Committee member, treating as wallet")
+                return False
+            
+            # Check account type - some numeric codes indicate special account types
+            account_type = account_info.get('accountType')
+            if account_type == 1:  # Normal account
+                logger.info(f"Address {address} is a normal account type, treating as wallet")
+                return False
+        
+        # Query the contract endpoint directly
+        contract_endpoint = f"{self.base_url}/contract"
+        contract_params = {"contract": address}
+
+        try:
+            response = self.session.get(contract_endpoint, params=contract_params, timeout=self.timeout)
+            response.raise_for_status()
+            
+            contract_data = response.json()
+            
+            # Check if we get actual contract data back
+            if isinstance(contract_data, dict) and "data" in contract_data:
+                data_list = contract_data["data"]
+                if isinstance(data_list, list) and len(data_list) > 0:
+                    contract_info = data_list[0]
+                    
+                    # Count meaningful contract indicators
+                    meaningful_indicators = 0
+                    
+                    # Check for strong contract indicators
+                    if contract_info.get('name'):
+                        meaningful_indicators += 1
+                    if contract_info.get('tag1'):
+                        meaningful_indicators += 1
+                    if contract_info.get('creator') and isinstance(contract_info.get('creator'), dict):
+                        creator_data = contract_info.get('creator')
+                        # Only count creator if it has meaningful data (not just empty fields)
+                        if creator_data.get('address') or creator_data.get('txHash'):
+                            meaningful_indicators += 1
+                    if contract_info.get('tokenInfo') and contract_info.get('tokenInfo'):
+                        meaningful_indicators += 1
+                    if contract_info.get('methodMap') and contract_info.get('methodMap'):
+                        meaningful_indicators += 1
+                    if contract_info.get('description'):
+                        meaningful_indicators += 1
+                    
+                    # verify_status alone is not a strong indicator as it can be 0 for non-contracts
+                    # Only count it if we have other indicators
+                    if meaningful_indicators >= 1 and contract_info.get('verify_status') is not None:
+                        meaningful_indicators += 0.5  # Half weight for verify_status
+                    
+                    # If we have at least 2 meaningful indicators, it's likely a contract
+                    if meaningful_indicators >= 2:
+                        logger.info(f"Address {address} detected as smart contract with {meaningful_indicators} indicators")
+                        return True
+                    else:
+                        logger.info(f"Address {address} detected as wallet with {meaningful_indicators} indicators")
+                        return False
+                        
+            return False
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error checking contract status for {address}: {e}")
+            return False
+
+    def get_contract_info(self, contract_address: str) -> dict | None:
+        """
+        Fetches smart contract information for a given TRON contract address.
+
+        Args:
+            contract_address: The TRON contract address.
+
+        Returns:
+            A dictionary containing contract information if successful, None otherwise.
+            Includes: address, balance, createTime, totalTransactionCount, contractType, creator, etc.
+        """
+        if not contract_address or not isinstance(contract_address, str):
+            logger.error("Invalid contract address provided for TronScan contract lookup: %s", contract_address)
+            return None
+
+        self._rate_limit()
+        
+        # Get basic contract info
+        contract_endpoint = f"{self.base_url}/contract"
+        contract_params = {"contract": contract_address}
+
+        try:
+            # Fetch contract data
+            contract_response = self.session.get(contract_endpoint, params=contract_params, timeout=self.timeout)
+            contract_response.raise_for_status()
+            
+            contract_data_raw = contract_response.json()
+
+            # Also get account data for basic info
+            account_info = self.get_account_info(contract_address)
+
+            if not contract_data_raw and not account_info:
+                logger.info("TronScan: Contract %s not found", contract_address)
+                return None
+
+            # Combine contract and account data
+            contract_info = {
+                "address": contract_address,
+                "isContract": True,
+                "balance": account_info.get("balance", 0) if account_info else 0,
+                "date_created": account_info.get("date_created") if account_info else None,
+                "totalTransactionCount": account_info.get("totalTransactionCount", 0) if account_info else 0,
+                "accountType": account_info.get("accountType") if account_info else "Contract"
+            }
+
+            # Add contract-specific information if available
+            if isinstance(contract_data_raw, dict):
+                contract_info.update({
+                    "contractType": contract_data_raw.get("contractType"),
+                    "creator": contract_data_raw.get("creator"),
+                    "name": contract_data_raw.get("name"),
+                    "tag1": contract_data_raw.get("tag1"),
+                    "description": contract_data_raw.get("description"),
+                    "website": contract_data_raw.get("website"),
+                    "github": contract_data_raw.get("github"),
+                    "email": contract_data_raw.get("email"),
+                    "whitepaper": contract_data_raw.get("whitepaper"),
+                    "verified": contract_data_raw.get("verified", False),
+                    "compiler_version": contract_data_raw.get("compiler_version"),
+                    "social_media": contract_data_raw.get("social_media", [])
+                })
+
+            # Get token information if it's a token contract
+            try:
+                self._rate_limit()
+                token_endpoint = f"{self.base_url}/token_trc20"
+                token_params = {"contract": contract_address}
+                
+                token_response = self.session.get(token_endpoint, params=token_params, timeout=self.timeout)
+                token_response.raise_for_status()
+                
+                token_data = token_response.json()
+                
+                if isinstance(token_data, dict) and "data" in token_data and token_data["data"]:
+                    token_info = token_data["data"][0]
+                    contract_info.update({
+                        "tokenInfo": {
+                            "symbol": token_info.get("symbol"),
+                            "name": token_info.get("name"),
+                            "decimals": token_info.get("decimals"),
+                            "totalSupply": token_info.get("total_supply"),
+                            "holderCount": token_info.get("holder_count"),
+                            "transferCount": token_info.get("transfer_count"),
+                            "tokenType": token_info.get("token_type", "TRC20"),
+                            "vip": token_info.get("vip", False)
+                        }
+                    })
+                    logger.info("Successfully fetched token info for contract %s", contract_address)
+                
+            except Exception as token_err:
+                logger.warning("Failed to fetch token info for contract %s: %s", contract_address, token_err)
+                contract_info["tokenInfo"] = None
+
+            logger.info("Successfully fetched contract info for %s from TronScan.", contract_address)
+            return contract_info
+
+        except requests.exceptions.HTTPError as http_err:
+            logger.error("HTTP error occurred while fetching contract %s: %s", contract_address, http_err)
+        except requests.exceptions.ConnectionError as conn_err:
+            logger.error("Connection error occurred while fetching contract %s: %s", contract_address, conn_err)
+        except requests.exceptions.Timeout as timeout_err:
+            logger.error("Timeout error occurred while fetching contract %s: %s", contract_address, timeout_err)
+        except requests.exceptions.RequestException as req_err:
+            logger.error("An error occurred during TronScan contract API request for %s: %s", contract_address, req_err)
+        except ValueError as json_err:
+            logger.error("Failed to decode JSON response from TronScan for contract %s: %s", contract_address, json_err)
         
         return None
 

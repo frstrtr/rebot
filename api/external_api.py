@@ -1,3 +1,10 @@
+"""
+Rebot External API
+This module provides an external API for checking crypto addresses, 
+retrieving public memos, analyzing scam potential,
+and generating blockchain explorer links.
+"""
+
 import logging
 from fastapi import FastAPI, Depends, HTTPException, Security, Request
 from fastapi.security import APIKeyHeader

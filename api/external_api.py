@@ -540,6 +540,10 @@ async def analyze_scam(request: ScamReportRequest, api_request: Request, db: Ses
                         risk_score = ai_response_json.get("risk_score")
                         scam_report = ai_response_json.get("report")
 
+                        # Add "basic AI analysis" mark to the report
+                        if scam_report:
+                            scam_report = f"🤖 **Basic AI Analysis**\n\n{scam_report}"
+
                         if risk_score is not None:
                             risk_score = float(risk_score)
                             logging.info(f"Successfully generated risk score {risk_score} for TRON address {request.crypto_address}")

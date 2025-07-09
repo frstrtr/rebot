@@ -486,6 +486,10 @@ async def analyze_scam(request: ScamReportRequest, api_request: Request, db: Ses
 
     # If we have an existing record and it was recently updated, we can return the existing risk score and skip the analysis
     if address_analyzed and risk_score_updated_at:
+        # Ensure both datetimes are timezone-aware for comparison
+        if risk_score_updated_at.tzinfo is None:
+            risk_score_updated_at = risk_score_updated_at.replace(tzinfo=timezone.utc)
+        
         time_since_update = (request_time - risk_score_updated_at).total_seconds()
         if time_since_update < 3600:  # Less than an hour ago
             logging.info(f"Returning existing risk score for {request.crypto_address} (updated {time_since_update} seconds ago).")
@@ -535,8 +539,16 @@ async def analyze_scam(request: ScamReportRequest, api_request: Request, db: Ses
 
                 if ai_response:
                     try:
+                        # Clean the AI response to handle markdown code blocks
+                        cleaned_response = ai_response.strip()
+                        if cleaned_response.startswith('```json'):
+                            cleaned_response = cleaned_response[7:]  # Remove ```json
+                        if cleaned_response.endswith('```'):
+                            cleaned_response = cleaned_response[:-3]  # Remove ```
+                        cleaned_response = cleaned_response.strip()
+                        
                         # Parse the AI's response
-                        ai_response_json = json.loads(ai_response)
+                        ai_response_json = json.loads(cleaned_response)
                         risk_score = ai_response_json.get("risk_score")
                         scam_report = ai_response_json.get("report")
 

@@ -169,6 +169,16 @@ class TronScanAPI:
                 "totalTransactionCount": account_data.get("totalTransactionCount", 0)
             }
 
+            # For smart contracts, try to get more accurate creation time from contract endpoint
+            if self.is_smart_contract(address):
+                try:
+                    contract_info = self.get_contract_info(address)
+                    if contract_info and contract_info.get("date_created") and contract_info.get("date_created") != 0:
+                        basic_info["createTime"] = contract_info["date_created"]
+                        logger.info(f"Updated createTime for smart contract {address} from contract data: {contract_info['date_created']}")
+                except Exception as e:
+                    logger.warning(f"Failed to get contract creation time for {address}: {e}")
+
             # Fetch token balances for enriched analysis
             try:
                 self._rate_limit()  # Rate limit for second API call
@@ -350,6 +360,11 @@ class TronScanAPI:
             # Parse contract-specific information from the correct data structure
             if isinstance(contract_data_raw, dict) and "data" in contract_data_raw and contract_data_raw["data"]:
                 contract_data = contract_data_raw["data"][0]  # Get the first (and usually only) contract data
+                
+                # Prioritize contract creation time over account creation time
+                contract_creation_time = contract_data.get("date_created")
+                if contract_creation_time and contract_creation_time != 0:
+                    contract_info["date_created"] = contract_creation_time
                 
                 contract_info.update({
                     "contractType": contract_data.get("contractType"),

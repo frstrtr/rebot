@@ -664,12 +664,24 @@ async def analyze_scam(request: ScamReportRequest, api_request: Request, db: Ses
                         logging.info(f"[DEBUG] Processing AI response for {request.crypto_address}")
                         # Clean the AI response to handle markdown code blocks
                         cleaned_response = ai_response.strip()
-                        if cleaned_response.startswith('```json'):
-                            cleaned_response = cleaned_response[7:]  # Remove ```json
-                        if cleaned_response.endswith('```'):
-                            cleaned_response = cleaned_response[:-3]  # Remove ```
-                        cleaned_response = cleaned_response.strip()
                         
+                        # Look for JSON block anywhere in the response
+                        json_start = cleaned_response.find('```json')
+                        if json_start != -1:
+                            # Extract everything after ```json
+                            cleaned_response = cleaned_response[json_start + 7:]
+                            # Remove closing ```
+                            json_end = cleaned_response.find('```')
+                            if json_end != -1:
+                                cleaned_response = cleaned_response[:json_end]
+                        else:
+                            # Try to find just { } block if no markdown
+                            json_start = cleaned_response.find('{')
+                            json_end = cleaned_response.rfind('}')
+                            if json_start != -1 and json_end != -1 and json_end > json_start:
+                                cleaned_response = cleaned_response[json_start:json_end + 1]
+                        
+                        cleaned_response = cleaned_response.strip()
                         logging.info(f"[DEBUG] Cleaned response: {cleaned_response}")
                         
                         # Parse the AI's response

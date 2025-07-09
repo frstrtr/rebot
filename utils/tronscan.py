@@ -118,36 +118,39 @@ class TronScanAPI:
         """
         Fetches basic account information for a given Tron address from TronScan
         optimized for scam analysis. Returns only essential fields to reduce API load
-        and token usage in AI analysis.
+        and token usage in AI analysis. Now includes token balances for enriched analysis.
 
         Args:
             address: The Tron address (e.g., TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t).
 
         Returns:
             A dictionary containing basic account information if successful, None otherwise.
-            Includes only: address, balance, createTime, totalTransactionCount
+            Includes: address, balance, createTime, totalTransactionCount, tokenBalances
         """
         if not address or not isinstance(address, str):
             logger.error("Invalid address provided for TronScan basic lookup: %s", address)
             return None
 
         self._rate_limit()
-        endpoint = f"{self.base_url}/account"
-        params = {"address": address}
+        
+        # Get basic account info
+        account_endpoint = f"{self.base_url}/account"
+        account_params = {"address": address}
 
         try:
-            response = self.session.get(endpoint, params=params, timeout=self.timeout)
-            response.raise_for_status()
+            # Fetch account data
+            account_response = self.session.get(account_endpoint, params=account_params, timeout=self.timeout)
+            account_response.raise_for_status()
             
-            data = response.json()
+            account_data_raw = account_response.json()
 
             # Interpret TronScan API response for account data
-            if isinstance(data, list) and data:
-                account_data = data[0]
-            elif isinstance(data, dict) and ("address" in data or "balance" in data or "message" in data):
-                account_data = data
+            if isinstance(account_data_raw, list) and account_data_raw:
+                account_data = account_data_raw[0]
+            elif isinstance(account_data_raw, dict) and ("address" in account_data_raw or "balance" in account_data_raw or "message" in account_data_raw):
+                account_data = account_data_raw
             else:
-                logger.info("TronScan: Address %s not found or unexpected response format: %s", address, data)
+                logger.info("TronScan: Address %s not found or unexpected response format: %s", address, account_data_raw)
                 return None
 
             # Check if the data actually represents an account or an error message
@@ -158,13 +161,46 @@ class TronScanAPI:
                 logger.info("TronScan: Address %s likely not found, data: %s", address, account_data)
                 return None
 
-            # Extract only essential fields for scam analysis
+            # Extract basic account info
             basic_info = {
                 "address": account_data.get("address"),
                 "balance": account_data.get("balance", 0),
                 "createTime": account_data.get("createTime"),
                 "totalTransactionCount": account_data.get("totalTransactionCount", 0)
             }
+
+            # Fetch token balances for enriched analysis
+            try:
+                self._rate_limit()  # Rate limit for second API call
+                tokens_endpoint = f"{self.base_url}/account/tokens"
+                tokens_params = {"address": address, "start": 0, "limit": 20}  # Get top 20 tokens
+                
+                tokens_response = self.session.get(tokens_endpoint, params=tokens_params, timeout=self.timeout)
+                tokens_response.raise_for_status()
+                
+                tokens_data = tokens_response.json()
+                
+                # Process token data
+                token_balances = []
+                if isinstance(tokens_data, dict) and "data" in tokens_data:
+                    for token in tokens_data.get("data", [])[:10]:  # Limit to top 10 for AI analysis
+                        if isinstance(token, dict):
+                            token_info = {
+                                "tokenName": token.get("tokenName", "Unknown"),
+                                "tokenSymbol": token.get("tokenSymbol", ""),
+                                "balance": token.get("balance", "0"),
+                                "tokenDecimal": token.get("tokenDecimal", 0),
+                                "tokenType": token.get("tokenType", ""),
+                                "tokenId": token.get("tokenId", "")
+                            }
+                            token_balances.append(token_info)
+                
+                basic_info["tokenBalances"] = token_balances
+                logger.info("Successfully fetched %d token balances for %s", len(token_balances), address)
+                
+            except Exception as token_err:
+                logger.warning("Failed to fetch token balances for %s: %s", address, token_err)
+                basic_info["tokenBalances"] = []  # Empty list if token fetch fails
 
             logger.info("Successfully fetched basic account info for %s from TronScan.", address)
             return basic_info

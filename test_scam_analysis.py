@@ -20,9 +20,9 @@ def test_analyze_scam():
         "Content-Type": "application/json"
     }
     
-    # Test with a TRON address that doesn't have analysis yet
+    # Test with a different TRON address to see token balance analysis
     data = {
-        "crypto_address": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+        "crypto_address": "TU4Hu5Soipjb6GhaDhDikeFK2NH7eMA63y",
         "request_by_telegram_id": 123456789,
         "blockchain_type": "tron"
     }

@@ -518,19 +518,53 @@ async def analyze_scam(request: ScamReportRequest, api_request: Request, db: Ses
             )
 
             if tron_data:
-                # Create a focused prompt for scam analysis
+                # Create a focused prompt for scam analysis with enriched data
                 balance_trx = tron_data.get('balance', 0) / 1_000_000  # Convert SUN to TRX
                 tx_count = tron_data.get('totalTransactionCount', 0)
                 create_time = tron_data.get('createTime')
+                token_balances = tron_data.get('tokenBalances', [])
+                
+                # Format token balances for AI analysis
+                token_info = ""
+                if token_balances:
+                    significant_tokens = []
+                    for token in token_balances[:5]:  # Top 5 tokens for analysis
+                        token_name = token.get('tokenName', 'Unknown')
+                        token_symbol = token.get('tokenSymbol', '')
+                        balance = token.get('balance', '0')
+                        token_decimal = token.get('tokenDecimal', 0)
+                        
+                        # Convert balance to readable format
+                        try:
+                            if token_decimal > 0:
+                                readable_balance = float(balance) / (10 ** token_decimal)
+                            else:
+                                readable_balance = float(balance)
+                            
+                            if readable_balance > 0:
+                                significant_tokens.append(f"{token_name} ({token_symbol}): {readable_balance:.6f}")
+                        except (ValueError, ZeroDivisionError):
+                            if balance != '0':
+                                significant_tokens.append(f"{token_name} ({token_symbol}): {balance}")
+                    
+                    if significant_tokens:
+                        token_info = f", Token holdings: {'; '.join(significant_tokens)}"
+                    else:
+                        token_info = ", Token holdings: None"
+                else:
+                    token_info = ", Token holdings: None"
                 
                 prompt = (
                     f"Analyze this TRON address for scam potential. "
                     f"Address: {request.crypto_address}, "
                     f"Balance: {balance_trx:.6f} TRX, "
                     f"Total transactions: {tx_count}, "
-                    f"Creation time: {create_time}. "
+                    f"Creation time: {create_time}{token_info}. "
                     f"Provide a risk score (0.0-1.0) and brief scam analysis. "
-                    f"Focus on: account age, transaction volume, balance patterns. "
+                    f"Focus on: account age, transaction volume, balance patterns, token holdings diversity. "
+                    f"Consider: large token holdings may indicate accumulation schemes, "
+                    f"diverse small holdings may suggest airdrop farming, "
+                    f"stablecoin concentrations may indicate laundering. "
                     f"Respond in JSON format: {{\"risk_score\": 0.X, \"report\": \"analysis here\"}}"
                 )
 

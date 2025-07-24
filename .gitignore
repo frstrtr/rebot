@@ -176,3 +176,5 @@ test.txt
 data/cache/stablecoin_blacklist.json
 
 config/external_api_secret.txt
+config/gcp_credentials.txt
+.vscode/setting.json

@@ -147,7 +147,8 @@ async def handle_ai_language_choice_callback(callback_query: types.CallbackQuery
     final_html_report = "Error: AI analysis could not be performed."
 
     try:
-        if not Config.VERTEX_AI_PROJECT_ID or not Config.VERTEX_AI_LOCATION or not Config.VERTEX_AI_MODEL_NAME:
+        # Use the consolidated GCP config variables
+        if not Config.GCP_PROJECT_ID or not Config.GCP_LOCATION or not Config.VERTEX_AI_MODEL_NAME:
             raise ValueError("Vertex AI Project ID, Location, or Model Name is not configured in Config.")
         
         vertex_ai_client = VertexAIClient() 

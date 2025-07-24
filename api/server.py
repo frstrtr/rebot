@@ -49,8 +49,8 @@ if __name__ == "__main__":
     # Pass the custom logging configuration dictionary to uvicorn.
     uvicorn.run(
         "api.external_api:app", 
-        host=host, 
-        port=port, 
-        reload=True, 
+        host=host,
+        port=port,
+        reload=False,  # Disable auto-reload for production
         log_config=LOGGING_CONFIG
     )

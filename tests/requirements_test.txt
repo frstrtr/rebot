@@ -1,0 +1,9 @@
+# Testing dependencies for the External API
+requests>=2.31.0
+pytest>=7.4.0
+uvicorn>=0.23.0
+
+# These should already be in your main requirements.txt
+# fastapi>=0.104.0
+# pydantic>=2.0.0
+# sqlalchemy>=2.0.0

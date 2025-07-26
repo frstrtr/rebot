@@ -1,0 +1,5 @@
+#Bot token
+BOT_TOKEN=your_bot_token_here
+
+#Log channel
+TARGET_AUDIT_CHANNEL_ID=-100_secret_chat_id

@@ -1,0 +1,11 @@
+op.create_table(
+    'user_watch_states',
+    sa.Column('id', sa.Integer(), primary_key=True),
+    sa.Column('user_id', sa.Integer(), sa.ForeignKey('users.id'), nullable=False, index=True),
+    sa.Column('address', sa.String(length=255), nullable=False, index=True),
+    sa.Column('blockchain', sa.String(length=50), nullable=False, index=True),
+    sa.Column('watch_memos', sa.Boolean(), nullable=False, server_default=sa.false()),
+    sa.Column('watch_events', sa.Boolean(), nullable=False, server_default=sa.false()),
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.Column('updated_at', sa.DateTime(), nullable=False),
+)

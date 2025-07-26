@@ -1,5 +1,4 @@
-"""
-Common database operations for Rebot.
+"""Common database operations for Rebot.
 Compatible with both SQLite and PostgreSQL.
 """
 
@@ -9,6 +8,7 @@ import logging
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
+
 from aiogram.types import (
     Message as TelegramMessage,
     User as TelegramUser,
@@ -20,12 +20,103 @@ from database.models import (
     Message,
     Chat,
     CryptoAddress,
-    Event, 
+    Event,
     CryptoAddressStatus,
     EventType,
-    MemoType, # Added MemoType
+    MemoType,  # Added MemoType
+    UserWatchState,  # Added UserWatchState for user watch states
+    # ReservedField,  # Uncomment if ReservedField is used in queries
 )
+
 from database.schema import json_dumps
+
+
+def get_user_watch_states(db: Session, telegram_user_id: int) -> dict:
+    """Retrieve the user's watch states for memos and blockchain events as a dict."""
+    user = db.query(User).filter(User.telegram_id == telegram_user_id).first()
+    if user and user.reserved_data:
+        try:
+            data = json.loads(user.reserved_data)
+            logging.debug(
+                f"Retrieved watch states for user {telegram_user_id}: {data.get('watch_states', {})}"
+            )
+            return data.get("watch_states", {})
+        except Exception:
+            return {}
+    return {}
+
+
+def set_user_watch_state(
+    db: Session,
+    telegram_user_id: int,
+    address: str,
+    blockchain: str,
+    watch_memos: bool = None,
+    watch_events: bool = None,
+):
+    """Set the user's watch state for a specific address/blockchain."""
+    user = db.query(User).filter(User.telegram_id == telegram_user_id).first()
+    if not user:
+        return False
+    # Find or create UserWatchState row
+    address_lc = address.lower()
+    blockchain_lc = blockchain.lower()
+    watch_state = (
+        db.query(UserWatchState)
+        .filter(
+            UserWatchState.user_id == user.id,
+            UserWatchState.address == address_lc,
+            UserWatchState.blockchain == blockchain_lc,
+        )
+        .first()
+    )
+    if not watch_state:
+        watch_state = UserWatchState(
+            user_id=user.id,
+            address=address_lc,
+            blockchain=blockchain_lc,
+            watch_memos=bool(watch_memos) if watch_memos is not None else False,
+            watch_events=bool(watch_events) if watch_events is not None else False,
+        )
+        db.add(watch_state)
+    else:
+        if watch_memos is not None:
+            watch_state.watch_memos = bool(watch_memos)
+        if watch_events is not None:
+            watch_state.watch_events = bool(watch_events)
+    db.commit()
+    return True
+
+
+def get_user_watch_state(
+    db: Session, telegram_user_id: int, address: str, blockchain: str
+) -> dict:
+    """Get the user's watch state for a specific address/blockchain. Returns keys 'watch_memos' and 'watch_events'."""
+    user = db.query(User).filter(User.telegram_id == telegram_user_id).first()
+    if not user:
+        return {"watch_memos": False, "watch_events": False}
+    address_lc = address.lower()
+    blockchain_lc = blockchain.lower()
+    watch_state = (
+        db.query(UserWatchState)
+        .filter(
+            UserWatchState.user_id == user.id,
+            UserWatchState.address == address_lc,
+            UserWatchState.blockchain == blockchain_lc,
+        )
+        .first()
+    )
+    return {
+        "watch_memos": bool(watch_state.watch_memos) if watch_state else False,
+        "watch_events": bool(watch_state.watch_events) if watch_state else False,
+    }
+
+
+"""
+Common database operations for Rebot.
+Compatible with both SQLite and PostgreSQL.
+"""
+
 
 # User operations
 def get_or_create_user(db: Session, telegram_user: TelegramUser) -> User:
@@ -95,7 +186,9 @@ def save_message(db: Session, telegram_message: TelegramMessage) -> Message:
         chat_id=chat.id,
         text=telegram_message.text or "",
         date=telegram_message.date,
-        is_command=bool(telegram_message.text and telegram_message.text.startswith("/")),
+        is_command=bool(
+            telegram_message.text and telegram_message.text.startswith("/")
+        ),
         raw_data=raw_data,
     )
     db.add(message)
@@ -125,14 +218,16 @@ def save_crypto_address(
         .filter(
             CryptoAddress.message_id == message_id,
             CryptoAddress.address == address,
-            CryptoAddress.blockchain == blockchain  # ADDED THIS CONDITION
+            CryptoAddress.blockchain == blockchain,  # ADDED THIS CONDITION
         )
         .first()
     )
 
     if existing:
         # Log or handle if you want to know it's a re-detection of the exact same entry
-        logging.debug(f"CryptoAddress {address} on {blockchain} for message_id {message_id} already exists with id {existing.id}.") # pylint: disable=logging-fstring-interpolation
+        logging.debug(
+            f"CryptoAddress {address} on {blockchain} for message_id {message_id} already exists with id {existing.id}."
+        )  # pylint: disable=logging-fstring-interpolation
         return existing
 
     # Default memo_type can be None or a specific default if desired
@@ -141,7 +236,7 @@ def save_crypto_address(
         blockchain=blockchain,
         status=CryptoAddressStatus.TO_CHECK.value,
         message_id=message_id,
-        memo_type=None, # Initialize memo_type
+        memo_type=None,  # Initialize memo_type
     )
     db.add(crypto_address)
     db.commit()
@@ -163,8 +258,10 @@ def update_crypto_address_memo(
     db: Session,
     address_id: int,
     notes: Optional[str],
-    memo_type: Optional[str], # Expects a string value from MemoType enum, e.g., "public"
-    user_id: Optional[int] = None # Optional: ID of the user updating the memo
+    memo_type: Optional[
+        str
+    ],  # Expects a string value from MemoType enum, e.g., "public"
+    user_id: Optional[int] = None,  # Optional: ID of the user updating the memo
 ) -> Optional[CryptoAddress]:
     """Update the notes and memo_type of a crypto address."""
     crypto_address = (
@@ -178,20 +275,24 @@ def update_crypto_address_memo(
                 valid_memo_type = MemoType(memo_type).value
                 crypto_address.memo_type = valid_memo_type
             except ValueError:
-                logging.error(f"Invalid memo_type: {memo_type}. Not updating memo_type.") # pylint: disable=logging-fstring-interpolation
+                logging.error(
+                    f"Invalid memo_type: {memo_type}. Not updating memo_type."
+                )  # pylint: disable=logging-fstring-interpolation
                 # Optionally, you could raise an error or handle it differently
         else:
-            crypto_address.memo_type = None # Clear memo_type if None is passed
+            crypto_address.memo_type = None  # Clear memo_type if None is passed
 
         if user_id:
             crypto_address.memo_added_by_user_id = user_id
-        
+
         crypto_address.memo_updated_at = datetime.now(timezone.utc)
-        crypto_address.updated_at = datetime.now(timezone.utc) # Also update the general updated_at
-        
+        crypto_address.updated_at = datetime.now(
+            timezone.utc
+        )  # Also update the general updated_at
+
         db.commit()
         db.refresh(crypto_address)
-        
+
         # Log memo update event (optional)
         # event_data = json_dumps({"address_id": address_id, "memo_type": crypto_address.memo_type, "updated_by": user_id})
         # create_event(db, "MEMO_UPDATED", data=event_data, crypto_address_id=address_id, user_id=user_id)
@@ -208,7 +309,7 @@ def update_crypto_address_status(
     )
     if crypto_address:
         old_status = crypto_address.status
-        crypto_address.status = CryptoAddressStatus(status).value # type: ignore
+        crypto_address.status = CryptoAddressStatus(status).value  # type: ignore
         crypto_address.updated_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(crypto_address)

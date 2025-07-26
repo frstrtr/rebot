@@ -158,6 +158,21 @@ class Event(Base):
     # Reserved fields for future use
     reserved_data = Column(Text, nullable=True)  # Stores JSON as text in SQLite
 
+class UserWatchState(Base):
+    """Stores per-user watch state for memos and blockchain events on addresses."""
+    __tablename__ = "user_watch_states"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    address = Column(String(255), nullable=False, index=True)
+    blockchain = Column(String(50), nullable=False, index=True)
+    watch_memos = Column(Boolean, default=False, nullable=False)
+    watch_events = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User", backref="watch_states")
+
 # Additional tables for future use
 class ReservedField(Base):
     """Reserved fields for future use"""

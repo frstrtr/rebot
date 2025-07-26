@@ -11,6 +11,8 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     InlineKeyboardButton,
 )
+from aiogram.exceptions import TelegramBadRequest
+
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramAPIError
 from datetime import datetime
@@ -22,6 +24,10 @@ import asyncio  # Added for periodic typing
 from extapi.tronscan.client import TronScanAPI
 from .states import AddressProcessingStates  # If TRON AI check sets states
 from .helpers import send_typing_periodically  # Added for periodic typing
+
+# Use database to store and toggle watch state
+from database.connection import SessionLocal
+from database.queries import get_user_watch_state, set_user_watch_state
 
 
 async def handle_update_report_tronscan_callback(
@@ -362,12 +368,20 @@ async def handle_watch_new_memo_callback(
         )
         return
 
-    # Simulate checkbox toggle: get current state from FSM
-    watching_key = f"watching_memos_{address}"
-    watching = user_data.get(watching_key, False)
+    db = SessionLocal()
+    telegram_user_id = callback_query.from_user.id
+    blockchain = "tron"  # or derive from context if needed
+    # Get current state from DB
+    current_state = get_user_watch_state(db, telegram_user_id, address, blockchain)
     # Toggle state
-    watching = not watching
-    await state.update_data(**{watching_key: watching})
+    new_watching = not bool(current_state.get("watch_memos", False))
+    set_user_watch_state(
+        db, telegram_user_id, address, blockchain, watch_memos=new_watching
+    )
+    db.close()
+
+    # Sync FSM state for UI consistency
+    await state.update_data(watch_memos=new_watching)
 
     # Edit the source keyboard: update the button text in the original keyboard
     keyboard = callback_query.message.reply_markup
@@ -377,9 +391,9 @@ async def handle_watch_new_memo_callback(
             new_row = []
             for button in row:
                 if button.callback_data == "watch_new_memo":
-                    checkbox = "✅" if watching else "☐"
+                    checkbox = "✅" if new_watching else "☐"
                     logging.debug(
-                        f"UserID: {callback_query.from_user.id} {'started' if watching else 'stopped'} watching new memos on {address}."
+                        f"UserID: {telegram_user_id} {'started' if new_watching else 'stopped'} watching new memos on {address}."
                     )
                     new_row.append(
                         InlineKeyboardButton(
@@ -394,8 +408,24 @@ async def handle_watch_new_memo_callback(
     else:
         reply_markup = None
 
-    # await callback_query.answer()
-    await callback_query.message.edit_reply_markup(reply_markup=reply_markup)
+    # Only update if markup actually changed
+    if reply_markup and keyboard:
+        try:
+            # Compare the inline_keyboard lists for actual change
+            if reply_markup.inline_keyboard != keyboard.inline_keyboard:
+                await callback_query.message.edit_reply_markup(
+                    reply_markup=reply_markup
+                )
+            else:
+                # No change, answer callback to avoid silent error
+                await callback_query.answer()
+        except Exception as e:
+            if isinstance(e, TelegramBadRequest) and "message is not modified" in str(
+                e
+            ):
+                await callback_query.answer()
+            else:
+                raise
     # await callback_query.message.edit_text(
     #     f"{'Now watching' if watching else 'Stopped watching'} for new memos on <code>{html.quote(address)}</code>.",
     #     parse_mode="HTML"
@@ -419,12 +449,20 @@ async def handle_watch_blockchain_events_callback(
         )
         return
 
-    # Simulate checkbox toggle: get current state from FSM
-    watching_key = f"watching_blockchain_events_{address}"
-    watching = user_data.get(watching_key, False)
+    db = SessionLocal()
+    telegram_user_id = callback_query.from_user.id
+    blockchain = "tron"  # or derive from context if needed
+    # Get current state from DB
+    current_state = get_user_watch_state(db, telegram_user_id, address, blockchain)
     # Toggle state
-    watching = not watching
-    await state.update_data(**{watching_key: watching})
+    new_watching = not bool(current_state.get("watch_events", False))
+    set_user_watch_state(
+        db, telegram_user_id, address, blockchain, watch_events=new_watching
+    )
+    db.close()
+
+    # Optionally sync FSM state for UI consistency
+    await state.update_data(watch_events=new_watching)
 
     # Edit the source keyboard: update the button text in the original keyboard
     keyboard = callback_query.message.reply_markup
@@ -434,9 +472,9 @@ async def handle_watch_blockchain_events_callback(
             new_row = []
             for button in row:
                 if button.callback_data == "watch_blockchain_events":
-                    checkbox = "✅" if watching else "☐"
+                    checkbox = "✅" if new_watching else "☐"
                     logging.debug(
-                        f"UserID: {callback_query.from_user.id} {'started' if watching else 'stopped'} watching blockchain events on {address}."
+                        f"UserID: {telegram_user_id} {'started' if new_watching else 'stopped'} watching blockchain events on {address}."
                     )
                     new_row.append(
                         InlineKeyboardButton(
@@ -451,7 +489,23 @@ async def handle_watch_blockchain_events_callback(
     else:
         reply_markup = None
 
-    await callback_query.message.edit_reply_markup(reply_markup=reply_markup)
+    # Only update if markup actually changed
+    if reply_markup and keyboard:
+        try:
+            if reply_markup.inline_keyboard != keyboard.inline_keyboard:
+                await callback_query.message.edit_reply_markup(
+                    reply_markup=reply_markup
+                )
+            else:
+                # No change, answer callback to avoid silent error
+                await callback_query.answer()
+        except Exception as e:
+            if isinstance(e, TelegramBadRequest) and "message is not modified" in str(
+                e
+            ):
+                await callback_query.answer()
+            else:
+                raise
     # await callback_query.message.edit_text(
     #     f"{'Now watching' if watching else 'Stopped watching'} for blockchain events on <code>{html.quote(address)}</code>.",
     #     parse_mode="HTML"

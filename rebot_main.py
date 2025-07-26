@@ -40,6 +40,9 @@ from handlers import (
     handle_admin_cancel_delete_memo_callback,  # ADDED for admin memo deletion cancellation
     handle_admin_request_delete_memo_callback,  # ADDED for admin memo deletion request
     handle_admin_confirm_delete_memo_callback,  # ADDED for admin memo deletion confirmatio
+    # tron specific handlers
+    handle_watch_new_memo_callback,  # Reusing the same handler for public memos
+    handle_watch_blockchain_events_callback,  # Reusing the same handler for private memos
 )
 from handlers.states import AddressProcessingStates  # Import the missing states
 
@@ -284,10 +287,20 @@ class Rebot:
             handle_admin_confirm_delete_memo_callback,
             F.data.startswith("admin_confirm_delete_memo:"),
         )
-        
+
         self.rebot_dp.callback_query.register(
             handle_admin_cancel_delete_memo_callback,
             F.data.startswith("admin_cancel_delete_memo:"),
+        )
+
+        self.rebot_dp.callback_query.register(
+            handle_watch_new_memo_callback,  # Reusing the same handler for public memos
+            F.data == "watch_new_memo",  # MODIFIED to use exact match
+        )
+
+        self.rebot_dp.callback_query.register(
+            handle_watch_blockchain_events_callback,  # Reusing the same handler for private memos
+            F.data == "watch_blockchain_events",  # MODIFIED to use exact match
         )
 
         # Register other handlers if any

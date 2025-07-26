@@ -19,6 +19,8 @@ from .ai_callbacks import (
 from .tron_callbacks import (
     handle_update_report_tronscan_callback,
     handle_ai_scam_check_tron_callback,
+    handle_watch_new_memo_callback,
+    handle_watch_blockchain_events_callback,
 )
 from .evm_callbacks import (
     handle_show_token_transfers_evm_callback,
@@ -52,4 +54,6 @@ __all__ = [
     "handle_admin_request_delete_memo_callback",
     "handle_admin_confirm_delete_memo_callback",
     "handle_admin_cancel_delete_memo_callback",
+    "handle_watch_new_memo_callback",
+    "handle_watch_blockchain_events_callback",
 ]

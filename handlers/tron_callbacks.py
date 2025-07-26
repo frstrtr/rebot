@@ -98,6 +98,214 @@ async def handle_update_report_tronscan_callback(callback_query: types.CallbackQ
     finally:
         await api_client.close_session()
 
+async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery, state: FSMContext):
+    """Handles the 'AI Scam Check (TRC20)' button click. Gathers data and prompts for language."""
+    await callback_query.answer("Performing AI Scam Check for TRC20 transactions...")
+    user_data = await state.get_data()
+    address = user_data.get("current_action_address")
+
+    if not address:
+        logging.warning(f"Could not retrieve address from state for AI Scam Check. UserID: {callback_query.from_user.id}")
+        await callback_query.message.answer("Error: Could not retrieve address for the AI report. Please try again.", show_alert=True)
+        return
+
+    try:
+        await callback_query.message.edit_text(
+            text=f"{callback_query.message.text}\n\n🔄 Gathering comprehensive data for <code>{html.quote(address)}</code>. This may take a moment...",
+            parse_mode="HTML",
+            reply_markup=None
+        )
+    except TelegramAPIError as e:
+        logging.warning(f"Could not edit message text/markup in handle_ai_scam_check_tron_callback: {e}")
+        # If edit fails, send a new message
+        await callback_query.message.answer(f"🔄 Gathering comprehensive data for <code>{html.quote(address)}</code> for AI analysis. This may take a moment...", parse_mode="HTML")
+
+    # --- Start periodic typing ---
+    stop_typing_event = asyncio.Event()
+    typing_task = asyncio.create_task(
+        send_typing_periodically(callback_query.bot, callback_query.from_user.id, stop_typing_event)
+    )
+    # --- End periodic typing ---
+
+    tron_api_client = TronScanAPI()
+    enriched_data_for_ai = f"Comprehensive AI Scam Analysis Request for TRON Address: {html.quote(address)}\n"
+    enriched_data_for_ai += f"Report requested on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
+    fetch_limit_trc20_history = 50
+    full_blacklist_entries = []
+
+    try:
+        try:
+            blacklist_response = await tron_api_client.get_stablecoin_blacklist(limit=100000) 
+            if blacklist_response and isinstance(blacklist_response.get('data'), list):
+                full_blacklist_entries = blacklist_response['data']
+                logging.info(f"Fetched {len(full_blacklist_entries)} entries from stablecoin blacklist for AI check of {address}.")
+            else:
+                logging.warning(f"Could not fetch or parse stablecoin blacklist for AI check of {address}. Response: {blacklist_response}")
+        except Exception as e_bl:
+            logging.error(f"Error fetching stablecoin blacklist for AI for {address}: {e_bl}")
+            enriched_data_for_ai += f"Section: Blacklist Status\n--------------------------\nError fetching stablecoin blacklist: {html.quote(str(e_bl))}\n--------------------------\n\n"
+
+        enriched_data_for_ai += await _format_account_info_for_ai(address, tron_api_client)
+        enriched_data_for_ai += await _format_blacklist_status_for_ai(address, full_blacklist_entries)
+        enriched_data_for_ai += await _format_account_tags_for_ai(address, tron_api_client)
+        enriched_data_for_ai += await _format_trc20_balances_for_ai(address, tron_api_client, max_to_show=10)
+        enriched_data_for_ai += await _format_account_transfer_amounts_for_ai(address, tron_api_client, max_details_to_show=10)
+        enriched_data_for_ai += await _format_related_accounts_for_ai(address, tron_api_client, full_blacklist_entries, max_to_show=10)
+        
+        trc20_history_summary = f"Section: Recent TRC20 Transactions (Analysis based on up to {fetch_limit_trc20_history} most recent transactions)\n--------------------------\n"
+        history_data = await tron_api_client.get_trc20_transaction_history(
+            address=address, limit=fetch_limit_trc20_history, start=0
+        )
+        if history_data and history_data.get("token_transfers"):
+            transactions = history_data.get("token_transfers", [])
+            total_found_api = history_data.get("total", len(transactions)) # Total transactions API claims to have for this address/query
+            
+            trc20_history_summary += f"Fetched {len(transactions)} TRC20 transactions for analysis.\n"
+            trc20_history_summary += f"The API reports a total of {total_found_api} TRC20 transactions for this address.\n"
+
+            if not transactions:
+                trc20_history_summary += "No TRC20 transactions were found in the fetched batch.\n"
+            else:
+                if len(transactions) < total_found_api:
+                    trc20_history_summary += f"Note: The transaction list below is partial, showing the {len(transactions)} most recent ones due to the fetch limit of {fetch_limit_trc20_history}. More older transactions exist.\n"
+                elif len(transactions) == total_found_api and total_found_api > 0 :
+                    trc20_history_summary += "Note: The transaction list below should represent all TRC20 transactions for this address as reported by the API for this query.\n"
+                elif total_found_api == 0 and len(transactions) == 0:
+                    trc20_history_summary += "No TRC20 transactions reported by the API for this address.\n"
+                else: # len(transactions) > 0 and (total_found_api might be less than len(transactions) or 0, which is unusual)
+                    trc20_history_summary += f"Displaying {len(transactions)} fetched. API total count is {total_found_api} (interpret with caution if inconsistent).\n"
+
+                for tx_idx, tx in enumerate(transactions):
+                    raw_timestamp_ms = tx.get('block_ts')
+                    human_readable_timestamp = "N/A"
+                    if raw_timestamp_ms is not None:
+                        try: human_readable_timestamp = datetime.fromtimestamp(float(raw_timestamp_ms) / 1000.0).strftime("%Y-%m-%d %H:%M:%S")
+                        except (ValueError, TypeError): human_readable_timestamp = "Invalid Timestamp"
+                    token_info = tx.get('tokenInfo', {})
+                    token_abbr = token_info.get('tokenAbbr', 'N/A')
+                    token_name = token_info.get('tokenName', 'Unknown Token')
+                    token_decimals = int(token_info.get('tokenDecimal', 0))
+                    quant_raw = tx.get('quant')
+                    amount_formatted = "N/A"
+                    if quant_raw is not None:
+                        try: amount_formatted = str(int(quant_raw) / (10**token_decimals))
+                        except (ValueError, TypeError): amount_formatted = f"{quant_raw} (raw)"
+                    trc20_history_summary += (
+                        f"Tx {tx_idx + 1}:\n"
+                        f"  Time: {human_readable_timestamp}, TxID: {html.quote(tx.get('transaction_id', 'N/A'))}\n"
+                        f"  From: {html.quote(tx.get('from_address', 'N/A'))}, To: {html.quote(tx.get('to_address', 'N/A'))}\n"
+                        f"  Token: {html.quote(token_name)} ({html.quote(token_abbr)}), Amount: {html.quote(amount_formatted)} {html.quote(token_abbr)}\n"
+                        f"  Confirmed: {tx.get('confirmed', 'N/A')}\n---\n"
+                    )
+        elif history_data: 
+            trc20_history_summary += "No TRC20 transactions found (API returned data but no 'token_transfers' list) or response format unexpected for history.\n"
+        else: 
+            trc20_history_summary += "Failed to fetch TRC20 transaction history from TronScan. Completeness of transaction data cannot be determined.\n"
+        trc20_history_summary += "--------------------------\n\n"
+        enriched_data_for_ai += trc20_history_summary
+        
+        if "Could not retrieve" in enriched_data_for_ai and "Failed to fetch" in enriched_data_for_ai and "No TRC20 transactions found" in enriched_data_for_ai: # Basic check
+            await callback_query.message.answer("Could not fetch sufficient transaction data for AI analysis. Please try again later or check the address on an explorer.")
+            return
+        logging.debug(f"Gathered AI Scam Check data for {address}:\n{enriched_data_for_ai}...")
+        await state.update_data(
+            ai_enriched_data=enriched_data_for_ai,
+            current_action_address=address
+        )
+
+        language_buttons = [
+            [
+                InlineKeyboardButton(text="🇬🇧 English", callback_data="ai_lang:en"),
+                InlineKeyboardButton(text="🇷🇺 Русский", callback_data="ai_lang:ru"),
+            ]
+        ]
+        reply_markup_lang = InlineKeyboardMarkup(inline_keyboard=language_buttons)
+        
+        await callback_query.message.edit_text(
+            text=f"Data gathered for <code>{html.quote(address)}</code>.\n📊 Please choose the report language:",
+            parse_mode="HTML",
+            reply_markup=reply_markup_lang
+        )
+        await state.set_state(AddressProcessingStates.awaiting_ai_language_choice)
+
+    except Exception as e:
+        logging.error(f"Error during AI Scam Check data gathering for {address}: {e}", exc_info=True)
+        await callback_query.message.answer(f"Sorry, an error occurred while gathering data for {html.quote(address)}.")
+    finally:
+        await tron_api_client.close_session()
+        # --- Stop periodic typing ---
+        stop_typing_event.set()
+        try:
+            await typing_task
+        except asyncio.CancelledError:
+            logging.info(f"Typing task for chat {callback_query.from_user.id} was cancelled during Tron data gathering.")
+        except Exception as e_task_await:
+            logging.error(f"Error awaiting typing task for chat {callback_query.from_user.id} during Tron data gathering: {e_task_await}", exc_info=True)
+        # --- End stop periodic typing ---
+
+async def handle_watch_new_memo_callback(callback_query: types.CallbackQuery, state: FSMContext):
+    """Handles the 'Watch New Memo' button click."""
+    user_data = await state.get_data()
+    address = user_data.get("current_action_address")
+
+    if not address:
+        logging.warning(f"Could not retrieve address from state for Watch New Memo. UserID: {callback_query.from_user.id}")
+        await callback_query.message.answer("Error: Could not retrieve address for watching memos. Please try again.", show_alert=True)
+        return
+
+    # Simulate checkbox toggle: get current state from FSM
+    watching_key = f"watching_memos_{address}"
+    watching = user_data.get(watching_key, False)
+    # Toggle state
+    watching = not watching
+    await state.update_data(**{watching_key: watching})
+
+    # Build keyboard with checkbox
+    checkbox = "✅" if watching else "☐"
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=f"👀 Watch Memos {checkbox}", callback_data="watch_new_memo")]
+        ]
+    )
+    await callback_query.answer()
+    await callback_query.message.edit_text(
+        f"{'Now watching' if watching else 'Stopped watching'} for new memos on <code>{html.quote(address)}</code>.",
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
+
+async def handle_watch_blockchain_events_callback(callback_query: types.CallbackQuery, state: FSMContext):
+    """Handles the 'Watch Blockchain Events' button click."""
+    user_data = await state.get_data()
+    address = user_data.get("current_action_address")
+
+    if not address:
+        logging.warning(f"Could not retrieve address from state for Watch Blockchain Events. UserID: {callback_query.from_user.id}")
+        await callback_query.message.answer("Error: Could not retrieve address for watching blockchain events. Please try again.", show_alert=True)
+        return
+
+    # await callback_query.answer()
+    # Simulate checkbox toggle: get current state from FSM
+    watching_key = f"watching_blockchain_events_{address}"
+    watching = user_data.get(watching_key, False)
+    # Toggle state
+    watching = not watching
+    await state.update_data(**{watching_key: watching})
+
+    # Build keyboard with checkbox
+    checkbox = "✅" if watching else "☐"
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=f"👀 Watch Blockchain Events {checkbox}", callback_data="watch_blockchain_events")]
+        ]
+    )
+    await callback_query.message.edit_text(
+        f"{'Now watching' if watching else 'Stopped watching'} for blockchain events on <code>{html.quote(address)}</code>.",
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
+
+
 async def _format_account_info_for_ai(address: str, api_client: TronScanAPI) -> str:
     """Formats account info for AI processing, including scam-relevant details."""
     info_summary = "Section: Account Overview & Risk Indicators\n--------------------------\n"
@@ -368,148 +576,3 @@ async def _format_related_accounts_for_ai(address: str, api_client: TronScanAPI,
         related_summary += f"Error fetching related accounts: {html.quote(str(e))}\n"
     related_summary += "--------------------------\n\n"
     return related_summary
-
-async def handle_ai_scam_check_tron_callback(callback_query: types.CallbackQuery, state: FSMContext):
-    """Handles the 'AI Scam Check (TRC20)' button click. Gathers data and prompts for language."""
-    await callback_query.answer("Performing AI Scam Check for TRC20 transactions...")
-    user_data = await state.get_data()
-    address = user_data.get("current_action_address")
-
-    if not address:
-        logging.warning(f"Could not retrieve address from state for AI Scam Check. UserID: {callback_query.from_user.id}")
-        await callback_query.message.answer("Error: Could not retrieve address for the AI report. Please try again.", show_alert=True)
-        return
-
-    try:
-        await callback_query.message.edit_text(
-            text=f"{callback_query.message.text}\n\n🔄 Gathering comprehensive data for <code>{html.quote(address)}</code>. This may take a moment...",
-            parse_mode="HTML",
-            reply_markup=None
-        )
-    except TelegramAPIError as e:
-        logging.warning(f"Could not edit message text/markup in handle_ai_scam_check_tron_callback: {e}")
-        # If edit fails, send a new message
-        await callback_query.message.answer(f"🔄 Gathering comprehensive data for <code>{html.quote(address)}</code> for AI analysis. This may take a moment...", parse_mode="HTML")
-
-    # --- Start periodic typing ---
-    stop_typing_event = asyncio.Event()
-    typing_task = asyncio.create_task(
-        send_typing_periodically(callback_query.bot, callback_query.from_user.id, stop_typing_event)
-    )
-    # --- End periodic typing ---
-
-    tron_api_client = TronScanAPI()
-    enriched_data_for_ai = f"Comprehensive AI Scam Analysis Request for TRON Address: {html.quote(address)}\n"
-    enriched_data_for_ai += f"Report requested on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
-    fetch_limit_trc20_history = 50
-    full_blacklist_entries = []
-
-    try:
-        try:
-            blacklist_response = await tron_api_client.get_stablecoin_blacklist(limit=100000) 
-            if blacklist_response and isinstance(blacklist_response.get('data'), list):
-                full_blacklist_entries = blacklist_response['data']
-                logging.info(f"Fetched {len(full_blacklist_entries)} entries from stablecoin blacklist for AI check of {address}.")
-            else:
-                logging.warning(f"Could not fetch or parse stablecoin blacklist for AI check of {address}. Response: {blacklist_response}")
-        except Exception as e_bl:
-            logging.error(f"Error fetching stablecoin blacklist for AI for {address}: {e_bl}")
-            enriched_data_for_ai += f"Section: Blacklist Status\n--------------------------\nError fetching stablecoin blacklist: {html.quote(str(e_bl))}\n--------------------------\n\n"
-
-        enriched_data_for_ai += await _format_account_info_for_ai(address, tron_api_client)
-        enriched_data_for_ai += await _format_blacklist_status_for_ai(address, full_blacklist_entries)
-        enriched_data_for_ai += await _format_account_tags_for_ai(address, tron_api_client)
-        enriched_data_for_ai += await _format_trc20_balances_for_ai(address, tron_api_client, max_to_show=10)
-        enriched_data_for_ai += await _format_account_transfer_amounts_for_ai(address, tron_api_client, max_details_to_show=10)
-        enriched_data_for_ai += await _format_related_accounts_for_ai(address, tron_api_client, full_blacklist_entries, max_to_show=10)
-        
-        trc20_history_summary = f"Section: Recent TRC20 Transactions (Analysis based on up to {fetch_limit_trc20_history} most recent transactions)\n--------------------------\n"
-        history_data = await tron_api_client.get_trc20_transaction_history(
-            address=address, limit=fetch_limit_trc20_history, start=0
-        )
-        if history_data and history_data.get("token_transfers"):
-            transactions = history_data.get("token_transfers", [])
-            total_found_api = history_data.get("total", len(transactions)) # Total transactions API claims to have for this address/query
-            
-            trc20_history_summary += f"Fetched {len(transactions)} TRC20 transactions for analysis.\n"
-            trc20_history_summary += f"The API reports a total of {total_found_api} TRC20 transactions for this address.\n"
-
-            if not transactions:
-                trc20_history_summary += "No TRC20 transactions were found in the fetched batch.\n"
-            else:
-                if len(transactions) < total_found_api:
-                    trc20_history_summary += f"Note: The transaction list below is partial, showing the {len(transactions)} most recent ones due to the fetch limit of {fetch_limit_trc20_history}. More older transactions exist.\n"
-                elif len(transactions) == total_found_api and total_found_api > 0 :
-                    trc20_history_summary += "Note: The transaction list below should represent all TRC20 transactions for this address as reported by the API for this query.\n"
-                elif total_found_api == 0 and len(transactions) == 0:
-                    trc20_history_summary += "No TRC20 transactions reported by the API for this address.\n"
-                else: # len(transactions) > 0 and (total_found_api might be less than len(transactions) or 0, which is unusual)
-                    trc20_history_summary += f"Displaying {len(transactions)} fetched. API total count is {total_found_api} (interpret with caution if inconsistent).\n"
-
-                for tx_idx, tx in enumerate(transactions):
-                    raw_timestamp_ms = tx.get('block_ts')
-                    human_readable_timestamp = "N/A"
-                    if raw_timestamp_ms is not None:
-                        try: human_readable_timestamp = datetime.fromtimestamp(float(raw_timestamp_ms) / 1000.0).strftime("%Y-%m-%d %H:%M:%S")
-                        except (ValueError, TypeError): human_readable_timestamp = "Invalid Timestamp"
-                    token_info = tx.get('tokenInfo', {})
-                    token_abbr = token_info.get('tokenAbbr', 'N/A')
-                    token_name = token_info.get('tokenName', 'Unknown Token')
-                    token_decimals = int(token_info.get('tokenDecimal', 0))
-                    quant_raw = tx.get('quant')
-                    amount_formatted = "N/A"
-                    if quant_raw is not None:
-                        try: amount_formatted = str(int(quant_raw) / (10**token_decimals))
-                        except (ValueError, TypeError): amount_formatted = f"{quant_raw} (raw)"
-                    trc20_history_summary += (
-                        f"Tx {tx_idx + 1}:\n"
-                        f"  Time: {human_readable_timestamp}, TxID: {html.quote(tx.get('transaction_id', 'N/A'))}\n"
-                        f"  From: {html.quote(tx.get('from_address', 'N/A'))}, To: {html.quote(tx.get('to_address', 'N/A'))}\n"
-                        f"  Token: {html.quote(token_name)} ({html.quote(token_abbr)}), Amount: {html.quote(amount_formatted)} {html.quote(token_abbr)}\n"
-                        f"  Confirmed: {tx.get('confirmed', 'N/A')}\n---\n"
-                    )
-        elif history_data: 
-            trc20_history_summary += "No TRC20 transactions found (API returned data but no 'token_transfers' list) or response format unexpected for history.\n"
-        else: 
-            trc20_history_summary += "Failed to fetch TRC20 transaction history from TronScan. Completeness of transaction data cannot be determined.\n"
-        trc20_history_summary += "--------------------------\n\n"
-        enriched_data_for_ai += trc20_history_summary
-        
-        if "Could not retrieve" in enriched_data_for_ai and "Failed to fetch" in enriched_data_for_ai and "No TRC20 transactions found" in enriched_data_for_ai: # Basic check
-            await callback_query.message.answer("Could not fetch sufficient transaction data for AI analysis. Please try again later or check the address on an explorer.")
-            return
-        logging.debug(f"Gathered AI Scam Check data for {address}:\n{enriched_data_for_ai}...")
-        await state.update_data(
-            ai_enriched_data=enriched_data_for_ai,
-            current_action_address=address
-        )
-
-        language_buttons = [
-            [
-                InlineKeyboardButton(text="🇬🇧 English", callback_data="ai_lang:en"),
-                InlineKeyboardButton(text="🇷🇺 Русский", callback_data="ai_lang:ru"),
-            ]
-        ]
-        reply_markup_lang = InlineKeyboardMarkup(inline_keyboard=language_buttons)
-        
-        await callback_query.message.edit_text(
-            text=f"Data gathered for <code>{html.quote(address)}</code>.\n📊 Please choose the report language:",
-            parse_mode="HTML",
-            reply_markup=reply_markup_lang
-        )
-        await state.set_state(AddressProcessingStates.awaiting_ai_language_choice)
-
-    except Exception as e:
-        logging.error(f"Error during AI Scam Check data gathering for {address}: {e}", exc_info=True)
-        await callback_query.message.answer(f"Sorry, an error occurred while gathering data for {html.quote(address)}.")
-    finally:
-        await tron_api_client.close_session()
-        # --- Stop periodic typing ---
-        stop_typing_event.set()
-        try:
-            await typing_task
-        except asyncio.CancelledError:
-            logging.info(f"Typing task for chat {callback_query.from_user.id} was cancelled during Tron data gathering.")
-        except Exception as e_task_await:
-            logging.error(f"Error awaiting typing task for chat {callback_query.from_user.id} during Tron data gathering: {e_task_await}", exc_info=True)
-        # --- End stop periodic typing ---

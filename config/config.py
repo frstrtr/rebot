@@ -1,12 +1,15 @@
 # config.py
 """Loads configuration settings for the bot, including admin IDs, API tokens, and explorer configurations."""
 
-
-from aiogram.enums import ParseMode
+# standard library imports
 import os
 import logging
 from typing import Optional, List
+# third-party imports
+from dotenv import load_dotenv
+from aiogram.enums import ParseMode
 
+load_dotenv()
 
 class Config:
     PARSE_MODE = ParseMode.HTML
@@ -21,7 +24,7 @@ class Config:
     RESET_COLOR = "\033[0m"  # Standardized name for reset
 
     # Bot identity
-    BOT_USERNAME: Optional[str] = "cryptoscamreportbot" # Add bot username here or load from env/file
+    BOT_USERNAME: Optional[str] = os.environ.get("BOT_USERNAME", "cryptoscamreportbot") # Load from .env or fallback
 
     ETH_USDC_CONTRACT_ADDRESS = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
     ETH_USDT_CONTRACT_ADDRESS = "0xdAC17F958D2ee523a2206206994597C13D831ec7"
@@ -63,35 +66,17 @@ class Config:
     ADMINS = _load_admins()  # Load admin IDs when the class is defined
 
     @staticmethod
-    def _load_api_token(filename="tronscan_api_token.txt") -> Optional[str]:
-        """Loads an API token from the first line of a file."""
-        token = None
-        script_dir = os.path.dirname(__file__)
-        file_path = os.path.join(script_dir, filename)
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                token = f.readline().strip()
-            if not token:
-                logging.warning(
-                    f"Token file '{filename}' found in {script_dir} but is empty."
-                )  # pylint: disable=logging-fstring-interpolation
-                return None
-        except FileNotFoundError:
-            logging.warning(
-                f"API token file '{filename}' not found in {script_dir}. Token not loaded."
-            )  # pylint: disable=logging-fstring-interpolation
-        except OSError as e:
-            logging.error(
-                f"Error reading API token file '{filename}': {e}"
-            )  # pylint: disable=logging-fstring-interpolation
+    def _load_api_token(env_var_name: str) -> Optional[str]:
+        """Loads an API token from environment variable or .env file (via python-dotenv)."""
+        token = os.environ.get(env_var_name)
+        if not token:
+            logging.warning(f"API token environment variable '{env_var_name}' not set. Token not loaded.")
         return token
 
     # External API Configurations
-    EXTERNAL_API_SECRET = _load_api_token("external_api_secret.txt")
+    EXTERNAL_API_SECRET = _load_api_token("EXTERNAL_API_SECRET")
 
-    ETHERSCAN_API_KEY = _load_api_token(
-        "etherscan_api_token.txt"
-    )  # Optional, can be None if not set
+    ETHERSCAN_API_KEY = _load_api_token("ETHERSCAN_API_KEY")  # Optional, can be None if not set
     # If targeting Etherscan API v2 specifically, it might be:
     ETHERSCAN_API_BASE_URL = "https://api.etherscan.io/v2/api"
     ETHERSCAN_CHAIN_ID = (
@@ -108,7 +93,7 @@ class Config:
     # ETHERSCAN_API_BASE_URL_SEPOLIA = "https://api-sepolia.etherscan.io/api"
     # ETHERSCAN_CHAIN_ID_SEPOLIA = "11155111"
 
-    TRONSCAN_API_KEY = _load_api_token("tronscan_api_token.txt")
+    TRONSCAN_API_KEY = _load_api_token("TRONSCAN_API_KEY")
     TRONSCAN_API_BASE_URL = "https://apilist.tronscan.org/api/"
 
     # Groups of chains where addresses can have the same format,

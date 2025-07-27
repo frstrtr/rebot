@@ -34,15 +34,21 @@ from database.schema import json_dumps
 def get_user_watch_states(db: Session, telegram_user_id: int) -> dict:
     """Retrieve the user's watch states for memos and blockchain events as a dict."""
     user = db.query(User).filter(User.telegram_id == telegram_user_id).first()
-    if user and user.reserved_data:
-        try:
-            data = json.loads(user.reserved_data)
-            logging.debug(
-                f"Retrieved watch states for user {telegram_user_id}: {data.get('watch_states', {})}"
-            )
-            return data.get("watch_states", {})
-        except Exception:
-            return {}
+    states = {}
+    if not user:
+        return states
+    # Query all UserWatchState rows for this user
+    rows = db.query(UserWatchState).filter(UserWatchState.user_id == user.id).all()
+    for row in rows:
+        blockchain_lc = row.blockchain.lower()
+        # For TRON, use original-case address as key; for others, lowercase
+        key_address = row.address if blockchain_lc == "tron" else row.address.lower()
+        key = f"{key_address}:{blockchain_lc}"
+        states[key] = {
+            "watch_memos": bool(row.watch_memos),
+            "watch_events": bool(row.watch_events),
+        }
+    return states
     return {}
 
 
@@ -61,55 +67,30 @@ def set_user_watch_state(
     # Find or create UserWatchState row
     address_lc = address.lower()
     blockchain_lc = blockchain.lower()
-    watch_state = (
-        db.query(UserWatchState)
-        .filter(
-            UserWatchState.user_id == user.id,
-            UserWatchState.address == address_lc,
-            UserWatchState.blockchain == blockchain_lc,
-        )
-        .first()
-    )
+    blockchain_lc = blockchain.lower()
+    # For TRON, store address in original case; for others, lowercase
+    db_address = address if blockchain_lc == "tron" else address.lower()
+    watch_state = db.query(UserWatchState).filter(
+        UserWatchState.user_id == user.id,
+        UserWatchState.address == db_address,
+        UserWatchState.blockchain == blockchain_lc
+    ).first()
     if not watch_state:
         watch_state = UserWatchState(
             user_id=user.id,
-            address=address_lc,
+            address=db_address,
             blockchain=blockchain_lc,
-            watch_memos=bool(watch_memos) if watch_memos is not None else False,
-            watch_events=bool(watch_events) if watch_events is not None else False,
+            watch_memos=watch_memos if watch_memos is not None else False,
+            watch_events=watch_events if watch_events is not None else False,
         )
         db.add(watch_state)
     else:
         if watch_memos is not None:
-            watch_state.watch_memos = bool(watch_memos)
+            watch_state.watch_memos = watch_memos
         if watch_events is not None:
-            watch_state.watch_events = bool(watch_events)
+            watch_state.watch_events = watch_events
     db.commit()
     return True
-
-
-def get_user_watch_state(
-    db: Session, telegram_user_id: int, address: str, blockchain: str
-) -> dict:
-    """Get the user's watch state for a specific address/blockchain. Returns keys 'watch_memos' and 'watch_events'."""
-    user = db.query(User).filter(User.telegram_id == telegram_user_id).first()
-    if not user:
-        return {"watch_memos": False, "watch_events": False}
-    address_lc = address.lower()
-    blockchain_lc = blockchain.lower()
-    watch_state = (
-        db.query(UserWatchState)
-        .filter(
-            UserWatchState.user_id == user.id,
-            UserWatchState.address == address_lc,
-            UserWatchState.blockchain == blockchain_lc,
-        )
-        .first()
-    )
-    return {
-        "watch_memos": bool(watch_state.watch_memos) if watch_state else False,
-        "watch_events": bool(watch_state.watch_events) if watch_state else False,
-    }
 
 
 """
@@ -387,3 +368,46 @@ def get_address_history(db: Session, address: str):
         .order_by(desc(CryptoAddress.detected_at))
         .all()
     )
+
+
+def get_all_watched_addresses(db: Session):
+    """
+    Return all UserWatchState rows where either watch_memos or watch_events is True, with user object attached.
+    """
+    watched = (
+        db.query(UserWatchState)
+        .filter((UserWatchState.watch_memos == True) | (UserWatchState.watch_events == True))
+        .all()
+    )
+    # Attach user object for each watch
+    for w in watched:
+        w.user = db.query(User).filter(User.id == w.user_id).first()
+    return watched
+
+
+def get_address_memos(address: str):
+    """
+    Query memos for a given address from the CryptoAddress table, returning a list of dicts with id, notes, memo_type, and timestamp.
+    """
+    from database.connection import SessionLocal
+    db = SessionLocal()
+    results = (
+        db.query(CryptoAddress)
+        .filter(
+            CryptoAddress.address == address,
+            CryptoAddress.notes.isnot(None),
+            CryptoAddress.notes != "",
+        )
+        .order_by(CryptoAddress.blockchain, CryptoAddress.id)
+        .all()
+    )
+    memos = []
+    for r in results:
+        memos.append({
+            "id": r.id,
+            "notes": r.notes,
+            "memo_type": r.memo_type,
+            "timestamp": r.memo_updated_at or r.detected_at,
+        })
+    db.close()
+    return memos

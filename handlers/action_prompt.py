@@ -13,11 +13,13 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
 from database import get_or_create_user, CryptoAddress
+from database.queries import get_user_watch_states
 from database.models import MemoType
 from .common import EXPLORER_CONFIG  # , ADMINS
 from .helpers import _create_bot_deeplink_html  # MODIFIED: Import the helper function
 
 # pylint: disable=logging-fstring-interpolation
+
 
 async def _send_action_prompt(
     target_message: Message,
@@ -179,6 +181,23 @@ async def _send_action_prompt(
     if (
         blockchain.lower() == "tron"
     ):  # and is_admin: # XXX Show these buttons only for TRON and if user is admin
+        # --- Watch state logic ---
+        watch_memos_checkbox = "☐"
+        watch_events_checkbox = "☐"
+        telegram_user_id = acting_telegram_user_id
+        # Query DB for watch states
+        state_dict = get_user_watch_states(db, telegram_user_id)
+        key = f"{address}:{blockchain.lower()}"
+        watch_state = state_dict.get(key, {})
+        if watch_state.get("watch_memos", False):
+            watch_memos_checkbox = "☑"
+        if watch_state.get("watch_events", False):
+            watch_events_checkbox = "☑"
+        # Update FSM state for UI consistency
+        await state.update_data(
+            watch_memos=watch_state.get("watch_memos", False),
+            watch_events=watch_state.get("watch_events", False),
+        )
         update_report_button = InlineKeyboardButton(
             text="📊 Get TRC20 Report",
             callback_data="update_report_tronscan",  # No address needed, get from FSM
@@ -188,10 +207,12 @@ async def _send_action_prompt(
             callback_data="ai_scam_check_tron",  # Callback data for the new handler
         )
         watch_new_memo_button = InlineKeyboardButton(
-            text="👀 Watch Memos", callback_data="watch_new_memo"
+            text=f"👀 Watch Memos {watch_memos_checkbox}",
+            callback_data="watch_new_memo",
         )
         watch_blockchain_events_button = InlineKeyboardButton(
-            text="🔔 Watch TXs", callback_data="watch_blockchain_events"
+            text=f"🔔 Watch TXs {watch_events_checkbox}",
+            callback_data="watch_blockchain_events",
         )
     elif blockchain.lower() in [
         "ethereum",

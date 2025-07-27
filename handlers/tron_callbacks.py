@@ -4,6 +4,7 @@ Handles TRON-specific callbacks (e.g., for TronScan API interactions).
 """
 
 import logging
+import re  # For regex extraction of addresses from messages
 from aiogram import html, types
 from aiogram.types import (
     CallbackQuery,
@@ -27,7 +28,7 @@ from .helpers import send_typing_periodically  # Added for periodic typing
 
 # Use database to store and toggle watch state
 from database.connection import SessionLocal
-from database.queries import get_user_watch_state, set_user_watch_state
+from database.queries import get_user_watch_states, set_user_watch_state
 
 
 async def handle_update_report_tronscan_callback(
@@ -357,32 +358,39 @@ async def handle_watch_new_memo_callback(
     """Handles the 'Watch New Memo' button click."""
     user_data = await state.get_data()
     address = user_data.get("current_action_address")
-
     if not address:
-        logging.warning(
-            f"Could not retrieve address from state for Watch New Memo. UserID: {callback_query.from_user.id}"
-        )
-        await callback_query.message.answer(
-            "Error: Could not retrieve address for watching memos. Please try again.",
-            show_alert=True,
-        )
-        return
-
+        # Try to extract address from message text (fallback)
+        import re
+        msg_text = callback_query.message.text or ""
+        match = re.search(r"Address:\s*<code>([a-zA-Z0-9]+)</code>", msg_text)
+        if match:
+            address = match.group(1)
+            await state.update_data(current_action_address=address)
+            logging.info(f"FSM fallback: Extracted address {address} from message text for Watch New Memo handler.")
+        else:
+            logging.warning(
+                f"Could not retrieve address from state or message for Watch New Memo. UserID: {callback_query.from_user.id}"
+            )
+            await callback_query.message.answer(
+                "Error: Could not retrieve address for watching memos. Please try again.",
+                show_alert=True,
+            )
+            return
     db = SessionLocal()
     telegram_user_id = callback_query.from_user.id
     blockchain = "tron"  # or derive from context if needed
     # Get current state from DB
-    current_state = get_user_watch_state(db, telegram_user_id, address, blockchain)
+    state_dict = get_user_watch_states(db, telegram_user_id)
+    key = f"{address}:{blockchain.lower()}"
+    current_state = state_dict.get(key, {})
     # Toggle state
     new_watching = not bool(current_state.get("watch_memos", False))
     set_user_watch_state(
         db, telegram_user_id, address, blockchain, watch_memos=new_watching
     )
     db.close()
-
     # Sync FSM state for UI consistency
     await state.update_data(watch_memos=new_watching)
-
     # Edit the source keyboard: update the button text in the original keyboard
     keyboard = callback_query.message.reply_markup
     if keyboard:
@@ -391,7 +399,7 @@ async def handle_watch_new_memo_callback(
             new_row = []
             for button in row:
                 if button.callback_data == "watch_new_memo":
-                    checkbox = "✅" if new_watching else "☐"
+                    checkbox = "☑" if new_watching else "☐"
                     logging.debug(
                         f"UserID: {telegram_user_id} {'started' if new_watching else 'stopped'} watching new memos on {address}."
                     )
@@ -407,7 +415,6 @@ async def handle_watch_new_memo_callback(
         reply_markup = InlineKeyboardMarkup(inline_keyboard=new_keyboard)
     else:
         reply_markup = None
-
     # Only update if markup actually changed
     if reply_markup and keyboard:
         try:
@@ -438,32 +445,41 @@ async def handle_watch_blockchain_events_callback(
     """Handles the 'Watch Blockchain Events' button click."""
     user_data = await state.get_data()
     address = user_data.get("current_action_address")
-
     if not address:
-        logging.warning(
-            f"Could not retrieve address from state for Watch Blockchain Events. UserID: {callback_query.from_user.id}"
-        )
-        await callback_query.message.answer(
-            "Error: Could not retrieve address for watching blockchain events. Please try again.",
-            show_alert=True,
-        )
-        return
-
+        # Try to extract address from message text (fallback)
+        msg_text = callback_query.message.text or ""
+        match = re.search(r"Address:\s*<code>([a-zA-Z0-9]+)</code>", msg_text)
+        if match:
+            address = match.group(1)
+            await state.update_data(current_action_address=address)
+            logging.info(f"FSM fallback: Extracted address {address} from message text for Watch Blockchain Events handler.")
+        else:
+            logging.warning(
+                f"Could not retrieve address from state or message for Watch Blockchain Events. UserID: {callback_query.from_user.id}"
+            )
+            await callback_query.message.answer(
+                "Error: Could not retrieve address for watching blockchain events. Please try again.",
+                show_alert=True,
+            )
+            return
     db = SessionLocal()
     telegram_user_id = callback_query.from_user.id
     blockchain = "tron"  # or derive from context if needed
     # Get current state from DB
-    current_state = get_user_watch_state(db, telegram_user_id, address, blockchain)
+    state_dict = get_user_watch_states(db, telegram_user_id)
+    key = f"{address}:{blockchain.lower()}"
+    current_state = state_dict.get(key, {})
     # Toggle state
     new_watching = not bool(current_state.get("watch_events", False))
+    # Always store TRON address in original case
+    blockchain_lc = blockchain.lower()
+    db_address = address if blockchain_lc == "tron" else address.lower()
     set_user_watch_state(
-        db, telegram_user_id, address, blockchain, watch_events=new_watching
+        db, telegram_user_id, db_address, blockchain, watch_events=new_watching
     )
     db.close()
-
     # Optionally sync FSM state for UI consistency
     await state.update_data(watch_events=new_watching)
-
     # Edit the source keyboard: update the button text in the original keyboard
     keyboard = callback_query.message.reply_markup
     if keyboard:
@@ -472,7 +488,7 @@ async def handle_watch_blockchain_events_callback(
             new_row = []
             for button in row:
                 if button.callback_data == "watch_blockchain_events":
-                    checkbox = "✅" if new_watching else "☐"
+                    checkbox = "☑" if new_watching else "☐"
                     logging.debug(
                         f"UserID: {telegram_user_id} {'started' if new_watching else 'stopped'} watching blockchain events on {address}."
                     )
@@ -488,7 +504,6 @@ async def handle_watch_blockchain_events_callback(
         reply_markup = InlineKeyboardMarkup(inline_keyboard=new_keyboard)
     else:
         reply_markup = None
-
     # Only update if markup actually changed
     if reply_markup and keyboard:
         try:

@@ -4,6 +4,7 @@
 AIogram bot main module
 """
 
+import logging
 import asyncio
 import logging
 import sys
@@ -354,7 +355,6 @@ async def poll_and_notify(bot):
             if state.get("watch_events"):
                 prev_data = last_state.get(address)
                 changes, _current_, full_response = get_tron_account_changes(address, prev_data)
-                import logging
                 logging.info(f"poll_and_notify: address={address} changes={changes}")
                 details = changes.get('details', {})
                 lines = []
@@ -395,6 +395,8 @@ async def poll_and_notify(bot):
                 # Show token changes
                 for token in details.get("withPriceTokens", []):
                     tid = token.get("tokenId")
+                    # if tid == "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t":
+                    #     print (f"Token: {tid}")
                     name = token.get("tokenName", {}).get("curr") if isinstance(token.get("tokenName"), dict) else token.get("tokenName")
                     abbr = token.get("tokenAbbr", {}).get("curr") if isinstance(token.get("tokenAbbr"), dict) else token.get("tokenAbbr")
                     balance = token.get("balance", {})
@@ -402,9 +404,17 @@ async def poll_and_notify(bot):
                     token_decimal = None
                     # Try to get tokenDecimal from current token snapshot
                     if "tokenDecimal" in token:
-                        token_decimal = token["tokenDecimal"] if isinstance(token["tokenDecimal"], int) else None
+                        td = token["tokenDecimal"]
+                        if isinstance(td, dict):
+                            token_decimal = td.get("curr") if isinstance(td.get("curr"), int) else None
+                        elif isinstance(td, int):
+                            token_decimal = td
                     elif "tokenDecimal" in token.get("curr", {}):
-                        token_decimal = token["curr"]["tokenDecimal"] if isinstance(token["curr"].get("tokenDecimal"), int) else None
+                        td = token["curr"]["tokenDecimal"]
+                        if isinstance(td, dict):
+                            token_decimal = td.get("curr") if isinstance(td.get("curr"), int) else None
+                        elif isinstance(td, int):
+                            token_decimal = td
                     balance_prev = balance.get("prev")
                     balance_curr = balance.get("curr")
                     amount_prev = amount.get("prev")

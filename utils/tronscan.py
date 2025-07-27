@@ -739,7 +739,7 @@ def get_tron_account_changes(address: str, previous_data: dict = None):
         response = requests.get(API_URL, timeout=10)
         response.raise_for_status()
         current = response.json()
-        logger.debug("Fetched TronScan v2 account info for %s: %s", address, current)
+        # logger.debug("Fetched TronScan v2 account info for %s: %s", address, current)
     except Exception as e:
         logger.error(f"Failed to fetch TronScan v2 account info for {address}: {e}")
         changes = {"changed": False, "reason": f"API error: {e}", "details": {}}
@@ -790,7 +790,7 @@ def get_tron_account_changes(address: str, previous_data: dict = None):
         prev_t = prev_map.get(tid, {})
         curr_t = curr_map.get(tid, {})
         token_diff = {}
-        for tk in ["balance", "tokenName", "tokenAbbr", "amount"]:
+        for tk in ["balance", "tokenName", "tokenAbbr", "amount", "tokenDecimal"]:
             prev_v = safe_get(prev_t, tk)
             curr_v = safe_get(curr_t, tk)
             if prev_v != curr_v:

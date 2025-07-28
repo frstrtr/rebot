@@ -15,5 +15,7 @@ Use all type of reports recorded for the given address and related addresses
 Seed phrase scan
 Add evidance images save to reports
 
-Notification option subscription with TRX/USDT balance change
-Notification option memo added/deleted
+✅ Notification option subscription with TRX/USDT balance change
+✅ Notification option memo added/deleted
+
+Optimize tronscan api query if more then one user watching updates for the given address

@@ -444,7 +444,7 @@ def get_all_watched_addresses(db: Session):
     return watched
 
 
-def get_address_memos(address: str):
+def get_address_public_memos(address: str):
     """
     Query memos for a given address from the CryptoAddress table, returning a list of dicts with id, notes, memo_type, and timestamp.
     """
@@ -457,6 +457,7 @@ def get_address_memos(address: str):
             CryptoAddress.address == address,
             CryptoAddress.notes.isnot(None),
             CryptoAddress.notes != "",
+            CryptoAddress.memo_type == "public",
         )
         .order_by(CryptoAddress.blockchain, CryptoAddress.id)
         .all()

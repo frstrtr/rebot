@@ -25,7 +25,7 @@ from database.connection import SessionLocal
 
 from database.queries import (
     get_all_watched_addresses,
-    get_address_memos,
+    get_address_public_memos,
     get_user_watch_states,
     update_user_watch_state_last_memo_id,
     update_user_watch_state_last_state,
@@ -354,7 +354,7 @@ async def poll_and_notify(bot):
 
             # Poll memos if enabled
             if state.get("watch_memos"):
-                memos = get_address_memos(address)
+                memos = get_address_public_memos(address)
                 last_memo_id = state.get("last_memo_id")
                 new_memos = [m for m in memos if m["id"] != last_memo_id]
                 if new_memos:

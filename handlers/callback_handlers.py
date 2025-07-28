@@ -8,11 +8,17 @@ from aiogram import html, types
 # from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramAPIError
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
 
 # from datetime import datetime  # Keep if used by any remaining handlers
 
 from database import SessionLocal, get_or_create_user, save_crypto_address
 from database.models import MemoType
+from database.models import UserWatchState
+from database.models import User
+
+
 
 # from database.queries import update_crypto_address_memo
 
@@ -424,3 +430,177 @@ async def handle_request_memo_callback(
             text=prompt_message_text, parse_mode="HTML", disable_web_page_preview=True
         )
     await state.set_state(AddressProcessingStates.awaiting_memo)
+
+
+async def handle_my_watchlist_callback(
+    callback_query: types.CallbackQuery, state: FSMContext
+):
+    """Handles the 'My watchlist' button click."""
+    await callback_query.answer("Loading your watchlist...")
+    data = await state.get_data()
+    telegram_user_id = data.get("user_id")
+    if not telegram_user_id:
+        telegram_user_id = callback_query.from_user.id
+    if not telegram_user_id:
+        logging.error("User ID not found in state or callback for my_watchlist_callback.")
+        await callback_query.message.answer("Error: User context missing.")
+        return
+
+    db_session = SessionLocal()
+    try:
+        # Get internal user object from telegram_user_id
+        user = db_session.query(User).filter(User.telegram_id == telegram_user_id).first()
+        if not user:
+            await callback_query.message.answer("Error: User not found in database.")
+            return
+        # Only show addresses where user is actively watching memos or events
+        watchlist = db_session.query(UserWatchState).filter(
+            UserWatchState.user_id == user.id,
+            (UserWatchState.watch_events == True) | (UserWatchState.watch_memos == True)
+        ).all()
+
+        logging.debug(f"Watchlist query result count: {len(watchlist)} for user_id={user.id}")
+        if not watchlist:
+            # Show all for debug
+            all_states = db_session.query(UserWatchState).filter(UserWatchState.user_id == user.id).all()
+            logging.debug(f"All UserWatchState for user_id={user.id}: {[{'address': s.address, 'blockchain': s.blockchain, 'watch_events': s.watch_events, 'watch_memos': s.watch_memos} for s in all_states]}")
+            await callback_query.message.answer("Your watchlist is empty.")
+            return
+
+        # For TRON, show address as is; for others, lowercase
+        def display_addr(item):
+            if item.blockchain.lower() == "tron":
+                return item.address
+            return item.address.lower()
+
+        keyboard = []
+        for item in watchlist:
+            addr_disp = display_addr(item)
+            # Checkbox for events
+            events_cb = "☑" if item.watch_events else "☐"
+            memos_cb = "☑" if item.watch_memos else "☐"
+            # Callback data encodes address, blockchain, and action
+            events_btn = InlineKeyboardButton(
+                text=f"{events_cb} Events",
+                callback_data=f"toggle_watch_events:{item.id}"
+            )
+            memos_btn = InlineKeyboardButton(
+                text=f"{memos_cb} Memos",
+                callback_data=f"toggle_watch_memos:{item.id}"
+            )
+            addr_btn = InlineKeyboardButton(
+                text=f"{addr_disp} ({item.blockchain})",
+                callback_data=f"noop_watchlist:{item.id}"
+            )
+            keyboard.append([addr_btn])
+            keyboard.append([events_btn, memos_btn])
+
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+        await callback_query.message.answer(
+            "Your watchlist:",
+            reply_markup=reply_markup,
+            disable_web_page_preview=True,
+        )
+    except Exception as e:
+        logging.exception(f"Error fetching watchlist: {e}")
+        await callback_query.message.answer(
+            "An error occurred while fetching your watchlist."
+        )
+    finally:
+        if db_session.is_active:
+            db_session.close()
+
+
+async def handle_toggle_watch_events_callback(callback_query: types.CallbackQuery, state: FSMContext):
+    """Toggle watch_events for a UserWatchState row by id."""
+    try:
+        _prefix, row_id = callback_query.data.split(":", 1)
+        row_id = int(row_id)
+    except Exception:
+        await callback_query.answer("Invalid callback data.", show_alert=True)
+        return
+    db_session = SessionLocal()
+    try:
+        row = db_session.query(UserWatchState).filter(UserWatchState.id == row_id).first()
+        if not row:
+            await callback_query.answer("Watch entry not found.", show_alert=True)
+            return
+        row.watch_events = not row.watch_events
+        db_session.commit()
+        await callback_query.answer(f"Watch events {'enabled' if row.watch_events else 'disabled'}.")
+
+        # Only update the button row for this entry, not redraw the whole keyboard
+        msg = callback_query.message
+        kb = msg.reply_markup
+        if not kb or not kb.inline_keyboard:
+            # fallback: redraw all
+            await handle_my_watchlist_callback(callback_query, state)
+            return
+        # Find the button row for this row_id (events/memos row)
+        new_kb = [list(row) for row in kb.inline_keyboard]
+        for i, row_btns in enumerate(new_kb):
+            for j, btn in enumerate(row_btns):
+                if btn.callback_data == f"toggle_watch_events:{row_id}":
+                    # Update the text for the events checkbox only
+                    events_cb = "☑" if row.watch_events else "☐"
+                    new_kb[i][j] = type(btn)(
+                        text=f"{events_cb} Events",
+                        callback_data=btn.callback_data
+                    )
+                    break
+        await msg.edit_reply_markup(reply_markup=InlineKeyboardMarkup(inline_keyboard=new_kb))
+    except Exception as e:
+        logging.exception(f"Error toggling watch_events: {e}")
+        await callback_query.answer("Error updating watch state.", show_alert=True)
+    finally:
+        if db_session.is_active:
+            db_session.close()
+
+async def handle_toggle_watch_memos_callback(callback_query: types.CallbackQuery, state: FSMContext):
+    """Toggle watch_memos for a UserWatchState row by id."""
+    try:
+        _prefix, row_id = callback_query.data.split(":", 1)
+        row_id = int(row_id)
+    except Exception:
+        await callback_query.answer("Invalid callback data.", show_alert=True)
+        return
+    db_session = SessionLocal()
+    try:
+        row = db_session.query(UserWatchState).filter(UserWatchState.id == row_id).first()
+        if not row:
+            await callback_query.answer("Watch entry not found.", show_alert=True)
+            return
+        row.watch_memos = not row.watch_memos
+        db_session.commit()
+        await callback_query.answer(f"Watch memos {'enabled' if row.watch_memos else 'disabled'}.")
+
+        # Only update the button row for this entry, not redraw the whole keyboard
+        msg = callback_query.message
+        kb = msg.reply_markup
+        if not kb or not kb.inline_keyboard:
+            # fallback: redraw all
+            await handle_my_watchlist_callback(callback_query, state)
+            return
+        # Find the button row for this row_id (events/memos row)
+        new_kb = [list(row) for row in kb.inline_keyboard]
+        for i, row_btns in enumerate(new_kb):
+            for j, btn in enumerate(row_btns):
+                if btn.callback_data == f"toggle_watch_memos:{row_id}":
+                    # Update the text for the memos checkbox only
+                    memos_cb = "☑" if row.watch_memos else "☐"
+                    new_kb[i][j] = type(btn)(
+                        text=f"{memos_cb} Memos",
+                        callback_data=btn.callback_data
+                    )
+                    break
+        await msg.edit_reply_markup(reply_markup=InlineKeyboardMarkup(inline_keyboard=new_kb))
+    except Exception as e:
+        logging.exception(f"Error toggling watch_memos: {e}")
+        await callback_query.answer("Error updating watch state.", show_alert=True)
+    finally:
+        if db_session.is_active:
+            db_session.close()
+
+async def handle_noop_watchlist_callback(callback_query: types.CallbackQuery, state: FSMContext):
+    """No-op for address button (for UI consistency)."""
+    await callback_query.answer()

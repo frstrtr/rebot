@@ -59,6 +59,10 @@ from handlers import (
     # tron specific handlers
     handle_watch_new_memo_callback,  # Reusing the same handler for public memos
     handle_watch_blockchain_events_callback,  # Reusing the same handler for private memos
+    handle_my_watchlist_callback,  # New handler for "My watchlist" button
+    handle_toggle_watch_events_callback,
+    handle_toggle_watch_memos_callback,
+    handle_noop_watchlist_callback,
 )
 from handlers.states import AddressProcessingStates  # Import the missing states
 
@@ -320,6 +324,24 @@ class Rebot:
             F.data == "watch_blockchain_events",  # MODIFIED to use exact match
         )
 
+        self.rebot_dp.callback_query.register(
+            handle_my_watchlist_callback,
+            F.data == "my_watchlist",
+        )
+        # Register the new handlers (add to your dispatcher setup)
+        self.rebot_dp.callback_query.register(
+            handle_toggle_watch_events_callback,
+            lambda c: c.data.startswith("toggle_watch_events:"),
+        )
+        self.rebot_dp.callback_query.register(
+            handle_toggle_watch_memos_callback,
+            lambda c: c.data.startswith("toggle_watch_memos:"),
+        )
+        self.rebot_dp.callback_query.register(
+            handle_noop_watchlist_callback,
+            lambda c: c.data.startswith("noop_watchlist:"),
+        )
+
         # Register other handlers if any
         # self.rebot_dp.my_chat_member.register(member_status_update_handler)
         # self.rebot_dp.errors.register(unhandled_updates_handler)
@@ -343,11 +365,16 @@ async def poll_and_notify(bot):
         watched = get_all_watched_addresses(db)
         # Group watches by (address, blockchain) to avoid duplicate API calls
         from collections import defaultdict
+
         addr_chain_to_watches = defaultdict(list)
         for watch in watched:
-            addr_chain_to_watches[(watch.address, watch.blockchain.lower())].append(watch)
+            addr_chain_to_watches[(watch.address, watch.blockchain.lower())].append(
+                watch
+            )
 
-        tron_api_cache = {}  # (address, blockchain) -> (changes, _current_, full_response)
+        tron_api_cache = (
+            {}
+        )  # (address, blockchain) -> (changes, _current_, full_response)
 
         for (address, blockchain), watches in addr_chain_to_watches.items():
             # Only fetch API response once per address+blockchain per cycle
@@ -355,7 +382,9 @@ async def poll_and_notify(bot):
             for watch in watches:
                 telegram_user_id = watch.user.telegram_id  # For messaging only
                 db_user_id = watch.user_id  # Internal DB ID for all DB updates
-                logging.info(f"Polling address changes: {address} for user: {telegram_user_id}")
+                logging.info(
+                    f"Polling address changes: {address} for user: {telegram_user_id}"
+                )
 
                 state_dict = get_user_watch_states(db, telegram_user_id) or {}
                 key = f"{address}:{blockchain}"
@@ -372,7 +401,9 @@ async def poll_and_notify(bot):
                             telegram_user_id, f"New memos for {address}: {new_memos}"
                         )
                         # Update persistent last_memo_id
-                        update_user_watch_state_last_memo_id(db, db_user_id, address, blockchain, new_memos[-1]["id"])
+                        update_user_watch_state_last_memo_id(
+                            db, db_user_id, address, blockchain, new_memos[-1]["id"]
+                        )
 
                 # Poll balances if enabled
                 if state.get("watch_events"):
@@ -381,24 +412,49 @@ async def poll_and_notify(bot):
                     if prev_data is None:
                         # First run: fetch and store current state, do not notify
                         if cache_key not in tron_api_cache:
-                            _changes, _current_, full_response = get_tron_account_changes(address, None)
-                            tron_api_cache[cache_key] = (_changes, _current_, full_response)
+                            _changes, _current_, full_response = (
+                                get_tron_account_changes(address, None)
+                            )
+                            tron_api_cache[cache_key] = (
+                                _changes,
+                                _current_,
+                                full_response,
+                            )
                         else:
-                            _changes, _current_, full_response = tron_api_cache[cache_key]
-                        updated = update_user_watch_state_last_state(db, db_user_id, address, blockchain, full_response)
+                            _changes, _current_, full_response = tron_api_cache[
+                                cache_key
+                            ]
+                        updated = update_user_watch_state_last_state(
+                            db, db_user_id, address, blockchain, full_response
+                        )
                         if not updated:
                             from database.queries import set_user_watch_state
-                            set_user_watch_state(db, telegram_user_id, address, blockchain, watch_events=True)
-                            update_user_watch_state_last_state(db, db_user_id, address, blockchain, full_response)
-                        logging.info(f"First run for {address}: state stored, no notification sent.")
+
+                            set_user_watch_state(
+                                db,
+                                telegram_user_id,
+                                address,
+                                blockchain,
+                                watch_events=True,
+                            )
+                            update_user_watch_state_last_state(
+                                db, db_user_id, address, blockchain, full_response
+                            )
+                        logging.info(
+                            f"First run for {address}: state stored, no notification sent."
+                        )
                         continue
                     # Only fetch API if not already fetched for this address+blockchain+prev_data
                     if cache_key not in tron_api_cache:
-                        changes, _current_, full_response = get_tron_account_changes(address, prev_data)
+                        changes, _current_, full_response = get_tron_account_changes(
+                            address, prev_data
+                        )
                         tron_api_cache[cache_key] = (changes, _current_, full_response)
                     else:
                         changes, _current_, full_response = tron_api_cache[cache_key]
-                    logging.info(f"poll_and_notify: address={address} changes={changes['changed'] is True}")
+                    logging.info(
+                        f"poll_and_notify: address={address} changes={changes['changed'] is True}"
+                    )
                     # If changes were detected, format and send the message
                     if changes["changed"] is True:
                         logging.debug(f"Changes detected for {address}")
@@ -419,13 +475,19 @@ async def poll_and_notify(bot):
                             curr_v = v.get("curr")
                             if k == "latest_operation_time":
                                 # Show only the last value in human-readable format
-                                latest_op_human = details.get("latest_operation_time_human")
+                                latest_op_human = details.get(
+                                    "latest_operation_time_human"
+                                )
                                 if latest_op_human:
-                                    lines.append(f"<b>■ {k}</b>: <b>{latest_op_human}</b>")
+                                    lines.append(
+                                        f"<b>■ {k}</b>: <b>{latest_op_human}</b>"
+                                    )
                                 elif curr_v is not None:
                                     # Fallback: try to format curr_v as datetime
                                     try:
-                                        dt = datetime.datetime.fromtimestamp(float(curr_v))
+                                        dt = datetime.datetime.fromtimestamp(
+                                            float(curr_v)
+                                        )
                                         lines.append(
                                             f"<b>■ {k}</b>: <b>{dt.strftime('%Y-%m-%d %H:%M:%S')}</b>"
                                         )
@@ -437,14 +499,23 @@ async def poll_and_notify(bot):
                                 # Always show TRX, shift decimal 6 places left
                                 def fmt_trx(val):
                                     try:
-                                        return f"{float(val) / 1e6:.6f}".rstrip("0").rstrip(".")
+                                        return f"{float(val) / 1e6:.6f}".rstrip(
+                                            "0"
+                                        ).rstrip(".")
                                     except Exception:
                                         return str(val)
-                                if prev_v is not None and curr_v is not None and prev_v != curr_v:
+
+                                if (
+                                    prev_v is not None
+                                    and curr_v is not None
+                                    and prev_v != curr_v
+                                ):
                                     try:
                                         diff = float(curr_v) - float(prev_v)
                                         sign = "+" if diff > 0 else "-"
-                                        diff_fmt = f"{abs(diff) / 1e6:.6f}".rstrip("0").rstrip(".")
+                                        diff_fmt = f"{abs(diff) / 1e6:.6f}".rstrip(
+                                            "0"
+                                        ).rstrip(".")
                                         diff_str = f" ({sign}{diff_fmt})"
                                     except Exception:
                                         diff_str = ""
@@ -452,7 +523,9 @@ async def poll_and_notify(bot):
                                         f"<b>■ TRX balance</b> changed: <b>{fmt_trx(prev_v)}</b> → <b>{fmt_trx(curr_v)}</b>{diff_str}"
                                     )
                                 elif curr_v is not None:
-                                    lines.append(f"<b>■ TRX balance</b>: <b>{fmt_trx(curr_v)}</b>")
+                                    lines.append(
+                                        f"<b>■ TRX balance</b>: <b>{fmt_trx(curr_v)}</b>"
+                                    )
                                 continue
                             if (
                                 prev_v is not None
@@ -520,12 +593,18 @@ async def poll_and_notify(bot):
                                 curr_fmt = format_balance(balance_curr, token_decimal)
                                 if token_decimal is not None:
                                     diff_shifted = diff / (10**token_decimal)
-                                    diff_fmt = f"{abs(diff_shifted):.6f}".rstrip("0").rstrip(".")
+                                    diff_fmt = f"{abs(diff_shifted):.6f}".rstrip(
+                                        "0"
+                                    ).rstrip(".")
                                     change_line = f"└─ balance: {prev_fmt} → {curr_fmt} ({sign}{diff_fmt})"
                                 else:
-                                    diff_fmt = f"{abs(diff):.6f}".rstrip("0").rstrip(".")
+                                    diff_fmt = f"{abs(diff):.6f}".rstrip("0").rstrip(
+                                        "."
+                                    )
                                     change_line = f"└─ balance: {prev_fmt} → {curr_fmt} ({sign}{diff_fmt})"
-                                token_line = f"¤ Token <b>{name}</b> ({abbr}):\n{change_line}"
+                                token_line = (
+                                    f"¤ Token <b>{name}</b> ({abbr}):\n{change_line}"
+                                )
                                 lines.append(token_line)
                         # Always show static info
                         bot_username = getattr(bot, "username", Config.BOT_USERNAME)
@@ -543,7 +622,9 @@ async def poll_and_notify(bot):
                             lines.append(f"╬ Date Created: <b>{date_created_human}</b>")
                         latest_op_human = details.get("latest_operation_time_human")
                         if latest_op_human:
-                            lines.append(f"╬ Latest Operation: <b>{latest_op_human}</b>")
+                            lines.append(
+                                f"╬ Latest Operation: <b>{latest_op_human}</b>"
+                            )
                         activation_status = details.get("activated")
                         if activation_status:
                             lines.append(f"╬ Activated: <b>{activation_status}</b>")
@@ -578,7 +659,9 @@ async def poll_and_notify(bot):
                                 disable_web_page_preview=True,
                             )
                     # Always update persistent last_state with the latest full response
-                    update_user_watch_state_last_state(db, db_user_id, address, blockchain, full_response)
+                    update_user_watch_state_last_state(
+                        db, db_user_id, address, blockchain, full_response
+                    )
         db.close()
         await asyncio.sleep(30)
 

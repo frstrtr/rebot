@@ -237,6 +237,15 @@ async def _send_action_prompt(
 
     if blockchain.lower() == "tron":
         # TRON-specific layout
+        # Add row with "My watchlist" and "My memos" buttons
+        my_watchlist_button = InlineKeyboardButton(
+            text="📋 My watchlist", callback_data="my_watchlist"
+        )
+        my_memos_button = InlineKeyboardButton(
+            text="📝 Reserved", callback_data="my_reserved"
+        )
+        keyboard_layout.append([my_watchlist_button, my_memos_button])
+
         third_row_tron = []
         if update_report_button:
             third_row_tron.append(update_report_button)

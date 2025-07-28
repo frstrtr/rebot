@@ -11,6 +11,10 @@ from .callback_handlers import (
     handle_show_private_memos_callback,
     handle_request_memo_callback,
     handle_skip_address_action_stage_callback,
+    handle_my_watchlist_callback,
+    handle_toggle_watch_events_callback,
+    handle_toggle_watch_memos_callback,
+    handle_noop_watchlist_callback,
 )
 from .ai_callbacks import (
     handle_ai_language_choice_callback,
@@ -56,4 +60,8 @@ __all__ = [
     "handle_admin_cancel_delete_memo_callback",
     "handle_watch_new_memo_callback",
     "handle_watch_blockchain_events_callback",
+    "handle_my_watchlist_callback",
+    "handle_toggle_watch_events_callback",
+    "handle_toggle_watch_memos_callback",
+    "handle_noop_watchlist_callback",
 ]

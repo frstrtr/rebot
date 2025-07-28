@@ -394,7 +394,6 @@ async def poll_and_notify(bot):
                         "totalTransactionCount",
                         "transactions",
                         "latest_operation_time",
-                        "activated",
                     ]
                     for k in root_keys:
                         v = details.get(k, {})
@@ -446,7 +445,6 @@ async def poll_and_notify(bot):
                             else token.get("tokenAbbr")
                         )
                         balance = token.get("balance", {})
-                        amount = token.get("amount", {})
                         token_decimal = None
                         # Try to get tokenDecimal from current token snapshot
                         if "tokenDecimal" in token:
@@ -507,6 +505,9 @@ async def poll_and_notify(bot):
                     latest_op_human = details.get("latest_operation_time_human")
                     if latest_op_human:
                         lines.append(f"Latest Operation: <b>{latest_op_human}</b>")
+                    activation_status = details.get("activated")
+                    if activation_status:
+                        lines.append(f"Activated: <b>{activation_status}</b>")
 
                     msg = "\n".join(lines)
 

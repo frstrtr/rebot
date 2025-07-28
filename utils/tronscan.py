@@ -751,9 +751,9 @@ def get_tron_account_changes(address: str, previous_data: dict = None):
     # Keys to check for changes
     root_keys = [
         "transactions_out", "balance", "transactions_in", "totalTransactionCount",
-        "transactions", "latest_operation_time", "activated"
+        "transactions", "latest_operation_time"
     ]
-    static_keys = ["publicTag", "date_created", "address"]
+    static_keys = ["publicTag", "date_created", "address", "activated"]
 
     # Helper to get value safely
     def safe_get(d, k, default=None):
@@ -784,6 +784,7 @@ def get_tron_account_changes(address: str, previous_data: dict = None):
         curr_v_norm = normalize_val(curr_v)
         if prev_v is not None and curr_v is not None:
             if prev_v_norm != curr_v_norm:
+                logger.debug("Change detected for %s: prev=%s, curr=%s", k, prev_v, curr_v)
                 changes["changed"] = True
                 details[k] = {"prev": prev_v, "curr": curr_v}
             else:
@@ -810,13 +811,14 @@ def get_tron_account_changes(address: str, previous_data: dict = None):
         prev_t = prev_map.get(tid, {})
         curr_t = curr_map.get(tid, {})
         token_diff = {}
-        for tk in ["balance", "tokenName", "tokenAbbr", "amount", "tokenDecimal"]:
+        for tk in ["balance", "tokenName", "tokenAbbr", "tokenDecimal"]:
             prev_v = safe_get(prev_t, tk)
             curr_v = safe_get(curr_t, tk)
             prev_v_norm = normalize_val(prev_v)
             curr_v_norm = normalize_val(curr_v)
             if prev_v is not None and curr_v is not None:
                 if prev_v_norm != curr_v_norm:
+                    logger.debug("Change detected for token %s (%s): prev=%s, curr=%s", tid, tk, prev_v, curr_v)
                     changes["changed"] = True
                     token_diff[tk] = {"prev": prev_v, "curr": curr_v}
                 else:

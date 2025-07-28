@@ -1,10 +1,3 @@
-from database.queries import (
-    get_all_watched_addresses,
-    get_address_memos,
-    get_user_watch_states,
-    update_user_watch_state_last_memo_id,
-    update_user_watch_state_last_state,
-)
 # rebot_main.py
 
 """
@@ -349,12 +342,13 @@ async def poll_and_notify(bot):
         db = SessionLocal()
         watched = get_all_watched_addresses(db)
         for watch in watched:
-            user_id = watch.user.telegram_id
-            logging.info(f"Polling address changes: {watch.address} for user: {user_id}")
+            telegram_user_id = watch.user.telegram_id  # For messaging only
+            db_user_id = watch.user_id  # Internal DB ID for all DB updates
+            logging.info(f"Polling address changes: {watch.address} for user: {telegram_user_id}")
             address = watch.address
             blockchain = watch.blockchain
 
-            state_dict = get_user_watch_states(db, user_id) or {}
+            state_dict = get_user_watch_states(db, telegram_user_id) or {}
             key = f"{address}:{blockchain.lower()}"
             state = state_dict.get(key, {})
 
@@ -366,10 +360,10 @@ async def poll_and_notify(bot):
                 if new_memos:
                     logging.info(f"New memos for {address} available: {new_memos}")
                     await bot.send_message(
-                        user_id, f"New memos for {address}: {new_memos}"
+                        telegram_user_id, f"New memos for {address}: {new_memos}"
                     )
                     # Update persistent last_memo_id
-                    update_user_watch_state_last_memo_id(db, user_id, address, blockchain, new_memos[-1]["id"])
+                    update_user_watch_state_last_memo_id(db, db_user_id, address, blockchain, new_memos[-1]["id"])
 
             # Poll balances if enabled
             if state.get("watch_events"):
@@ -377,26 +371,18 @@ async def poll_and_notify(bot):
                 if prev_data is None:
                     # First run: fetch and store current state, do not notify
                     _changes, _current_, full_response = get_tron_account_changes(address, None)
-                    # Try to update, if fails (row missing), create it
-                    # Always use internal user DB ID for update
-                    # Get internal user object
-                    user_obj = db.query(User).filter(User.telegram_id == user_id).first()
-                    internal_user_id = user_obj.id if user_obj else user_id
-                    updated = update_user_watch_state_last_state(db, internal_user_id, address, blockchain, full_response)
+                    updated = update_user_watch_state_last_state(db, db_user_id, address, blockchain, full_response)
                     if not updated:
                         from database.queries import set_user_watch_state
-                        set_user_watch_state(db, user_id, address, blockchain, watch_events=True)
-                        # After creation, get internal user ID again
-                        user_obj = db.query(User).filter(User.telegram_id == user_id).first()
-                        internal_user_id = user_obj.id if user_obj else user_id
-                        update_user_watch_state_last_state(db, internal_user_id, address, blockchain, full_response)
+                        set_user_watch_state(db, telegram_user_id, address, blockchain, watch_events=True)
+                        update_user_watch_state_last_state(db, db_user_id, address, blockchain, full_response)
                     logging.info(f"First run for {address}: state stored, no notification sent.")
                     continue
                 changes, _current_, full_response = get_tron_account_changes(address, prev_data)
                 logging.info(f"poll_and_notify: address={address} changes={changes['changed'] is True}")
                 # If changes were detected, format and send the message
                 if changes["changed"] is True:
-                    logging.info(f"Changes detected for {address}: {changes}")
+                    logging.debug(f"Changes detected for {address}")
                     # Prepare message details
                     details = changes.get("details", {})
                     lines = []
@@ -485,53 +471,24 @@ async def poll_and_notify(bot):
                                 token_decimal = td
                         balance_prev = balance.get("prev")
                         balance_curr = balance.get("curr")
-                        amount_prev = amount.get("prev")
-                        amount_curr = amount.get("curr")
-                        # Only show if balance or amount changed
-                        show_token = False
-                        change_lines = []
-
-                        # Balance change
+                        # Only show if balance changed (ignore amount-only changes)
                         if (
                             balance_prev is not None
                             and balance_curr is not None
                             and balance_prev != balance_curr
                         ):
-                            show_token = True
                             diff = float(balance_curr) - float(balance_prev)
                             sign = "+" if diff > 0 else "-"
                             prev_fmt = format_balance(balance_prev, token_decimal)
                             curr_fmt = format_balance(balance_curr, token_decimal)
                             if token_decimal is not None:
-                                # Shift diff decimal point for balance diff by token_decimal, match formatted balances
                                 diff_shifted = diff / (10**token_decimal)
-                                diff_fmt = f"{abs(diff_shifted):.6f}".rstrip(
-                                    "0"
-                                ).rstrip(".")
-                                change_lines.append(
-                                    f"balance: {prev_fmt} → {curr_fmt} ({sign}{diff_fmt})"
-                                )
+                                diff_fmt = f"{abs(diff_shifted):.6f}".rstrip("0").rstrip(".")
+                                change_line = f"balance: {prev_fmt} → {curr_fmt} ({sign}{diff_fmt})"
                             else:
                                 diff_fmt = f"{abs(diff):.6f}".rstrip("0").rstrip(".")
-                                change_lines.append(
-                                    f"balance: {prev_fmt} → {curr_fmt} ({sign}{diff_fmt})"
-                                )
-                        # Amount change
-                        if (
-                            amount_prev is not None
-                            and amount_curr is not None
-                            and amount_prev != amount_curr
-                        ):
-                            show_token = True
-                            diff = float(amount_curr) - float(amount_prev)
-                            sign = "+" if diff > 0 else "-"
-                            change_lines.append(
-                                f"amount: {amount_prev} → {amount_curr} ({sign}{abs(diff)})"
-                            )
-                        if show_token:
-                            token_line = f"Token <b>{name}</b> ({abbr}): " + ", ".join(
-                                change_lines
-                            )
+                                change_line = f"balance: {prev_fmt} → {curr_fmt} ({sign}{diff_fmt})"
+                            token_line = f"Token <b>{name}</b> ({abbr}): {change_line}"
                             lines.append(token_line)
                     # Always show static info
                     bot_username = getattr(bot, "username", Config.BOT_USERNAME)
@@ -575,13 +532,13 @@ async def poll_and_notify(bot):
                     for idx, chunk in enumerate(msg_chunks, 1):
                         part_info = f"\n--- End of Part {idx} of {total_parts} ---"
                         await bot.send_message(
-                            user_id,
+                            telegram_user_id,
                             chunk + part_info,
                             parse_mode="HTML",
                             disable_web_page_preview=True,
                         )
                 # Always update persistent last_state with the latest full response
-                update_user_watch_state_last_state(db, user_id, address, blockchain, full_response)
+                update_user_watch_state_last_state(db, db_user_id, address, blockchain, full_response)
         db.close()
         await asyncio.sleep(30)
 

@@ -44,12 +44,65 @@ def get_user_watch_states(db: Session, telegram_user_id: int) -> dict:
         # For TRON, use original-case address as key; for others, lowercase
         key_address = row.address if blockchain_lc == "tron" else row.address.lower()
         key = f"{key_address}:{blockchain_lc}"
+        # Parse last_state from JSON if present
+        last_state = None
+        if row.last_state:
+            try:
+                last_state = json.loads(row.last_state)
+            except Exception:
+                last_state = None
         states[key] = {
             "watch_memos": bool(row.watch_memos),
             "watch_events": bool(row.watch_events),
+            "last_memo_id": row.last_memo_id,
+            "last_state": last_state,
+            "_row": row,  # Expose row for advanced usage
         }
     return states
-    return {}
+
+
+# --- UserWatchState helpers for persistent polling state ---
+def get_user_watch_state_row(db: Session, user_id: int, address: str, blockchain: str):
+    blockchain_lc = blockchain.lower()
+    db_address = address if blockchain_lc == "tron" else address.lower()
+    return (
+        db.query(UserWatchState)
+        .filter(
+            UserWatchState.user_id == user_id,
+            UserWatchState.address == db_address,
+            UserWatchState.blockchain == blockchain_lc,
+        )
+        .first()
+    )
+
+
+def update_user_watch_state_last_memo_id(
+    db: Session, user_id: int, address: str, blockchain: str, last_memo_id: int
+):
+    row = get_user_watch_state_row(db, user_id, address, blockchain)
+    if row:
+        row.last_memo_id = last_memo_id
+        row.updated_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(row)
+        return True
+    return False
+
+
+def update_user_watch_state_last_state(
+    db: Session, user_id: int, address: str, blockchain: str, last_state: dict
+):
+    row = get_user_watch_state_row(db, user_id, address, blockchain)
+    if row:
+        try:
+            row.last_state = json.dumps(last_state) if last_state is not None else None
+        except Exception:
+            row.last_state = None
+        row.updated_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(row)
+        return True
+    return False
 
 
 def set_user_watch_state(
@@ -70,11 +123,15 @@ def set_user_watch_state(
     blockchain_lc = blockchain.lower()
     # For TRON, store address in original case; for others, lowercase
     db_address = address if blockchain_lc == "tron" else address.lower()
-    watch_state = db.query(UserWatchState).filter(
-        UserWatchState.user_id == user.id,
-        UserWatchState.address == db_address,
-        UserWatchState.blockchain == blockchain_lc
-    ).first()
+    watch_state = (
+        db.query(UserWatchState)
+        .filter(
+            UserWatchState.user_id == user.id,
+            UserWatchState.address == db_address,
+            UserWatchState.blockchain == blockchain_lc,
+        )
+        .first()
+    )
     if not watch_state:
         watch_state = UserWatchState(
             user_id=user.id,
@@ -376,7 +433,9 @@ def get_all_watched_addresses(db: Session):
     """
     watched = (
         db.query(UserWatchState)
-        .filter((UserWatchState.watch_memos == True) | (UserWatchState.watch_events == True))
+        .filter(
+            (UserWatchState.watch_memos == True) | (UserWatchState.watch_events == True)
+        )
         .all()
     )
     # Attach user object for each watch
@@ -390,6 +449,7 @@ def get_address_memos(address: str):
     Query memos for a given address from the CryptoAddress table, returning a list of dicts with id, notes, memo_type, and timestamp.
     """
     from database.connection import SessionLocal
+
     db = SessionLocal()
     results = (
         db.query(CryptoAddress)
@@ -403,11 +463,13 @@ def get_address_memos(address: str):
     )
     memos = []
     for r in results:
-        memos.append({
-            "id": r.id,
-            "notes": r.notes,
-            "memo_type": r.memo_type,
-            "timestamp": r.memo_updated_at or r.detected_at,
-        })
+        memos.append(
+            {
+                "id": r.id,
+                "notes": r.notes,
+                "memo_type": r.memo_type,
+                "timestamp": r.memo_updated_at or r.detected_at,
+            }
+        )
     db.close()
     return memos

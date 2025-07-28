@@ -3,7 +3,7 @@ SQLAlchemy models for Rebot database.
 Compatible with both SQLite and PostgreSQL.
 """
 import enum
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import (
     Column, Integer, String, Float, Text, DateTime, 
     ForeignKey, Boolean, JSON
@@ -58,8 +58,8 @@ class User(Base):
     last_name = Column(String(255), nullable=True)
     language_code = Column(String(10), nullable=True)
     is_bot = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     
     # Relationships
     messages = relationship("Message", back_populates="user")
@@ -119,8 +119,8 @@ class CryptoAddress(Base):
     blockchain = Column(String(50), nullable=False)
     status = Column(String(20), nullable=False, default="to_check")  # Using string for enum compatibility
     message_id = Column(Integer, ForeignKey("messages.id"), nullable=True) # MODIFIED: Allow null for API-added addresses
-    detected_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    detected_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     
     # Relationships
     message = relationship("Message", back_populates="crypto_addresses")
@@ -149,7 +149,7 @@ class Event(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     crypto_address_id = Column(Integer, ForeignKey("crypto_addresses.id"), nullable=True)
     data = Column(Text, nullable=True)  # Stores JSON as text in SQLite
-    timestamp = Column(DateTime, default=datetime.utcnow)
+    timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     
     # Relationships
     user = relationship("User", back_populates="events")
@@ -168,6 +168,8 @@ class UserWatchState(Base):
     blockchain = Column(String(50), nullable=False, index=True)
     watch_memos = Column(Boolean, default=False, nullable=False)
     watch_events = Column(Boolean, default=False, nullable=False)
+    last_memo_id = Column(Integer, nullable=True)  # New: last memo id seen for this address
+    last_state = Column(Text, nullable=True)  # New: JSON-serialized last state for this address
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

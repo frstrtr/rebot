@@ -761,13 +761,33 @@ def get_tron_account_changes(address: str, previous_data: dict = None):
 
     changes = {"changed": False, "details": {}}
     details = {}
-    # Compare root keys
+    # Compare root keys with normalization
+    def normalize_val(val):
+        # Try to cast to int or float if possible, else str
+        if val is None:
+            return None
+        if isinstance(val, bool):
+            return val
+        try:
+            # Try int first
+            return int(val)
+        except Exception:
+            try:
+                return float(val)
+            except Exception:
+                return str(val)
+
     for k in root_keys:
         prev_v = safe_get(previous_data, k) if previous_data else None
         curr_v = safe_get(current, k)
-        if prev_v != curr_v:
-            changes["changed"] = True
-            details[k] = {"prev": prev_v, "curr": curr_v}
+        prev_v_norm = normalize_val(prev_v)
+        curr_v_norm = normalize_val(curr_v)
+        if prev_v is not None and curr_v is not None:
+            if prev_v_norm != curr_v_norm:
+                changes["changed"] = True
+                details[k] = {"prev": prev_v, "curr": curr_v}
+            else:
+                details[k] = {"curr": curr_v}
         else:
             details[k] = {"curr": curr_v}
 
@@ -793,9 +813,14 @@ def get_tron_account_changes(address: str, previous_data: dict = None):
         for tk in ["balance", "tokenName", "tokenAbbr", "amount", "tokenDecimal"]:
             prev_v = safe_get(prev_t, tk)
             curr_v = safe_get(curr_t, tk)
-            if prev_v != curr_v:
-                changes["changed"] = True
-                token_diff[tk] = {"prev": prev_v, "curr": curr_v}
+            prev_v_norm = normalize_val(prev_v)
+            curr_v_norm = normalize_val(curr_v)
+            if prev_v is not None and curr_v is not None:
+                if prev_v_norm != curr_v_norm:
+                    changes["changed"] = True
+                    token_diff[tk] = {"prev": prev_v, "curr": curr_v}
+                else:
+                    token_diff[tk] = {"curr": curr_v}
             else:
                 token_diff[tk] = {"curr": curr_v}
         token_diff["tokenId"] = tid
@@ -811,7 +836,7 @@ def get_tron_account_changes(address: str, previous_data: dict = None):
         try:
             if ts:
                 # TronScan returns ms timestamps
-                return datetime.datetime.utcfromtimestamp(int(ts)/1000).strftime('%Y-%m-%d %H:%M:%S UTC')
+                return datetime.datetime.fromtimestamp(int(ts)/1000, tz=datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
         except Exception:
             pass
         return None

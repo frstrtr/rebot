@@ -466,7 +466,7 @@ async def handle_watch_blockchain_events_callback(
     telegram_user_id = callback_query.from_user.id
     blockchain = "tron"  # or derive from context if needed
     # Get current state from DB
-    state_dict = get_user_watch_states(db, telegram_user_id)
+    state_dict = get_user_watch_states(db, telegram_user_id) or {}
     key = f"{address}:{blockchain.lower()}"
     current_state = state_dict.get(key, {})
     # Toggle state

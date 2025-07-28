@@ -1,3 +1,10 @@
+from database.queries import (
+    get_all_watched_addresses,
+    get_address_memos,
+    get_user_watch_states,
+    update_user_watch_state_last_memo_id,
+    update_user_watch_state_last_state,
+)
 # rebot_main.py
 
 """
@@ -22,11 +29,17 @@ from config.credentials import Credentials
 from config.config import Config  # Config is already imported
 from database import create_tables
 from database.connection import SessionLocal
+
 from database.queries import (
     get_all_watched_addresses,
     get_address_memos,
     get_user_watch_states,
+    update_user_watch_state_last_memo_id,
+    update_user_watch_state_last_state,
 )
+
+# Import User model for DB ID lookups
+from database.models import User
 from utils.tronscan import get_tron_account_changes
 
 from handlers import (
@@ -332,42 +345,58 @@ async def main():
 
 async def poll_and_notify(bot):
     """Background polling task for memos and balance changes."""
-    last_memo_ids = {}  # address: last_memo_id
-    last_state = {}  # address: last_balance
-
     while True:
         db = SessionLocal()
         watched = get_all_watched_addresses(db)
         for watch in watched:
             user_id = watch.user.telegram_id
+            logging.info(f"Polling address changes: {watch.address} for user: {user_id}")
             address = watch.address
             blockchain = watch.blockchain
 
-            state_dict = get_user_watch_states(db, user_id)
+            state_dict = get_user_watch_states(db, user_id) or {}
             key = f"{address}:{blockchain.lower()}"
             state = state_dict.get(key, {})
 
             # Poll memos if enabled
             if state.get("watch_memos"):
                 memos = get_address_memos(address)
-                new_memos = [m for m in memos if m.id != last_memo_ids.get(address)]
+                last_memo_id = state.get("last_memo_id")
+                new_memos = [m for m in memos if m["id"] != last_memo_id]
                 if new_memos:
+                    logging.info(f"New memos for {address} available: {new_memos}")
                     await bot.send_message(
                         user_id, f"New memos for {address}: {new_memos}"
                     )
-                    last_memo_ids[address] = new_memos[-1].id
+                    # Update persistent last_memo_id
+                    update_user_watch_state_last_memo_id(db, user_id, address, blockchain, new_memos[-1]["id"])
 
             # Poll balances if enabled
             if state.get("watch_events"):
-                prev_data = last_state.get(address)
-                changes, _current_, full_response = get_tron_account_changes(
-                    address, prev_data
-                )
-                logging.info(
-                    f"poll_and_notify: address={address} changes={changes['changed'] is True}"
-                )
+                prev_data = state.get("last_state")
+                if prev_data is None:
+                    # First run: fetch and store current state, do not notify
+                    _changes, _current_, full_response = get_tron_account_changes(address, None)
+                    # Try to update, if fails (row missing), create it
+                    # Always use internal user DB ID for update
+                    # Get internal user object
+                    user_obj = db.query(User).filter(User.telegram_id == user_id).first()
+                    internal_user_id = user_obj.id if user_obj else user_id
+                    updated = update_user_watch_state_last_state(db, internal_user_id, address, blockchain, full_response)
+                    if not updated:
+                        from database.queries import set_user_watch_state
+                        set_user_watch_state(db, user_id, address, blockchain, watch_events=True)
+                        # After creation, get internal user ID again
+                        user_obj = db.query(User).filter(User.telegram_id == user_id).first()
+                        internal_user_id = user_obj.id if user_obj else user_id
+                        update_user_watch_state_last_state(db, internal_user_id, address, blockchain, full_response)
+                    logging.info(f"First run for {address}: state stored, no notification sent.")
+                    continue
+                changes, _current_, full_response = get_tron_account_changes(address, prev_data)
+                logging.info(f"poll_and_notify: address={address} changes={changes['changed'] is True}")
                 # If changes were detected, format and send the message
                 if changes["changed"] is True:
+                    logging.info(f"Changes detected for {address}: {changes}")
                     # Prepare message details
                     details = changes.get("details", {})
                     lines = []
@@ -420,8 +449,6 @@ async def poll_and_notify(bot):
                     # Show token changes
                     for token in details.get("withPriceTokens", []):
                         tid = token.get("tokenId")
-                        # if tid == "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t": # check USDT contract
-                        #     print (f"Token: {tid}")
                         name = (
                             token.get("tokenName", {}).get("curr")
                             if isinstance(token.get("tokenName"), dict)
@@ -553,7 +580,8 @@ async def poll_and_notify(bot):
                             parse_mode="HTML",
                             disable_web_page_preview=True,
                         )
-                    last_state[address] = full_response
+                # Always update persistent last_state with the latest full response
+                update_user_watch_state_last_state(db, user_id, address, blockchain, full_response)
         db.close()
         await asyncio.sleep(30)
 

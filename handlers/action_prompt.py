@@ -186,7 +186,7 @@ async def _send_action_prompt(
         watch_events_checkbox = "☐"
         telegram_user_id = acting_telegram_user_id
         # Query DB for watch states
-        state_dict = get_user_watch_states(db, telegram_user_id)
+        state_dict = get_user_watch_states(db, telegram_user_id) or {}
         key = f"{address}:{blockchain.lower()}"
         watch_state = state_dict.get(key, {})
         if watch_state.get("watch_memos", False):

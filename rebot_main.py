@@ -341,225 +341,244 @@ async def poll_and_notify(bot):
     while True:
         db = SessionLocal()
         watched = get_all_watched_addresses(db)
+        # Group watches by (address, blockchain) to avoid duplicate API calls
+        from collections import defaultdict
+        addr_chain_to_watches = defaultdict(list)
         for watch in watched:
-            telegram_user_id = watch.user.telegram_id  # For messaging only
-            db_user_id = watch.user_id  # Internal DB ID for all DB updates
-            logging.info(f"Polling address changes: {watch.address} for user: {telegram_user_id}")
-            address = watch.address
-            blockchain = watch.blockchain
+            addr_chain_to_watches[(watch.address, watch.blockchain.lower())].append(watch)
 
-            state_dict = get_user_watch_states(db, telegram_user_id) or {}
-            key = f"{address}:{blockchain.lower()}"
-            state = state_dict.get(key, {})
+        tron_api_cache = {}  # (address, blockchain) -> (changes, _current_, full_response)
 
-            # Poll memos if enabled
-            if state.get("watch_memos"):
-                memos = get_address_public_memos(address)
-                last_memo_id = state.get("last_memo_id")
-                new_memos = [m for m in memos if m["id"] != last_memo_id]
-                if new_memos:
-                    logging.info(f"New memos for {address} available: {new_memos}")
-                    await bot.send_message(
-                        telegram_user_id, f"New memos for {address}: {new_memos}"
-                    )
-                    # Update persistent last_memo_id
-                    update_user_watch_state_last_memo_id(db, db_user_id, address, blockchain, new_memos[-1]["id"])
+        for (address, blockchain), watches in addr_chain_to_watches.items():
+            # Only fetch API response once per address+blockchain per cycle
+            # For each user watching this address+blockchain
+            for watch in watches:
+                telegram_user_id = watch.user.telegram_id  # For messaging only
+                db_user_id = watch.user_id  # Internal DB ID for all DB updates
+                logging.info(f"Polling address changes: {address} for user: {telegram_user_id}")
 
-            # Poll balances if enabled
-            if state.get("watch_events"):
-                prev_data = state.get("last_state")
-                if prev_data is None:
-                    # First run: fetch and store current state, do not notify
-                    _changes, _current_, full_response = get_tron_account_changes(address, None)
-                    updated = update_user_watch_state_last_state(db, db_user_id, address, blockchain, full_response)
-                    if not updated:
-                        from database.queries import set_user_watch_state
-                        set_user_watch_state(db, telegram_user_id, address, blockchain, watch_events=True)
-                        update_user_watch_state_last_state(db, db_user_id, address, blockchain, full_response)
-                    logging.info(f"First run for {address}: state stored, no notification sent.")
-                    continue
-                changes, _current_, full_response = get_tron_account_changes(address, prev_data)
-                logging.info(f"poll_and_notify: address={address} changes={changes['changed'] is True}")
-                # If changes were detected, format and send the message
-                if changes["changed"] is True:
-                    logging.debug(f"Changes detected for {address}")
-                    # Prepare message details
-                    details = changes.get("details", {})
-                    lines = [f"<code>{address}</code>\n"]
-                    # Show changes for root keys
-                    root_keys = [
-                        "balance",
-                        "transactions_out",
-                        "transactions_in",
-                        "transactions",
-                        "latest_operation_time",
-                    ]
-                    for k in root_keys:
-                        v = details.get(k, {})
-                        prev_v = v.get("prev")
-                        curr_v = v.get("curr")
-                        if k == "latest_operation_time":
-                            # Show only the last value in human-readable format
-                            latest_op_human = details.get("latest_operation_time_human")
-                            if latest_op_human:
-                                lines.append(f"<b>■ {k}</b>: <b>{latest_op_human}</b>")
-                            elif curr_v is not None:
-                                # Fallback: try to format curr_v as datetime
-                                try:
-                                    dt = datetime.datetime.fromtimestamp(float(curr_v))
+                state_dict = get_user_watch_states(db, telegram_user_id) or {}
+                key = f"{address}:{blockchain}"
+                state = state_dict.get(key, {})
+
+                # Poll memos if enabled
+                if state.get("watch_memos"):
+                    memos = get_address_public_memos(address)
+                    last_memo_id = state.get("last_memo_id")
+                    new_memos = [m for m in memos if m["id"] != last_memo_id]
+                    if new_memos:
+                        logging.info(f"New memos for {address} available: {new_memos}")
+                        await bot.send_message(
+                            telegram_user_id, f"New memos for {address}: {new_memos}"
+                        )
+                        # Update persistent last_memo_id
+                        update_user_watch_state_last_memo_id(db, db_user_id, address, blockchain, new_memos[-1]["id"])
+
+                # Poll balances if enabled
+                if state.get("watch_events"):
+                    prev_data = state.get("last_state")
+                    cache_key = (address, blockchain)
+                    if prev_data is None:
+                        # First run: fetch and store current state, do not notify
+                        if cache_key not in tron_api_cache:
+                            _changes, _current_, full_response = get_tron_account_changes(address, None)
+                            tron_api_cache[cache_key] = (_changes, _current_, full_response)
+                        else:
+                            _changes, _current_, full_response = tron_api_cache[cache_key]
+                        updated = update_user_watch_state_last_state(db, db_user_id, address, blockchain, full_response)
+                        if not updated:
+                            from database.queries import set_user_watch_state
+                            set_user_watch_state(db, telegram_user_id, address, blockchain, watch_events=True)
+                            update_user_watch_state_last_state(db, db_user_id, address, blockchain, full_response)
+                        logging.info(f"First run for {address}: state stored, no notification sent.")
+                        continue
+                    # Only fetch API if not already fetched for this address+blockchain+prev_data
+                    if cache_key not in tron_api_cache:
+                        changes, _current_, full_response = get_tron_account_changes(address, prev_data)
+                        tron_api_cache[cache_key] = (changes, _current_, full_response)
+                    else:
+                        changes, _current_, full_response = tron_api_cache[cache_key]
+                    logging.info(f"poll_and_notify: address={address} changes={changes['changed'] is True}")
+                    # If changes were detected, format and send the message
+                    if changes["changed"] is True:
+                        logging.debug(f"Changes detected for {address}")
+                        # Prepare message details
+                        details = changes.get("details", {})
+                        lines = [f"<code>{address}</code>\n"]
+                        # Show changes for root keys
+                        root_keys = [
+                            "balance",
+                            "transactions_out",
+                            "transactions_in",
+                            "transactions",
+                            "latest_operation_time",
+                        ]
+                        for k in root_keys:
+                            v = details.get(k, {})
+                            prev_v = v.get("prev")
+                            curr_v = v.get("curr")
+                            if k == "latest_operation_time":
+                                # Show only the last value in human-readable format
+                                latest_op_human = details.get("latest_operation_time_human")
+                                if latest_op_human:
+                                    lines.append(f"<b>■ {k}</b>: <b>{latest_op_human}</b>")
+                                elif curr_v is not None:
+                                    # Fallback: try to format curr_v as datetime
+                                    try:
+                                        dt = datetime.datetime.fromtimestamp(float(curr_v))
+                                        lines.append(
+                                            f"<b>■ {k}</b>: <b>{dt.strftime('%Y-%m-%d %H:%M:%S')}</b>"
+                                        )
+                                    except Exception:
+                                        lines.append(f"<b>{k}</b>: <b>{curr_v}</b>")
+                                # Do not show diff for this key
+                                continue
+                            if k == "balance":
+                                # Always show TRX, shift decimal 6 places left
+                                def fmt_trx(val):
+                                    try:
+                                        return f"{float(val) / 1e6:.6f}".rstrip("0").rstrip(".")
+                                    except Exception:
+                                        return str(val)
+                                if prev_v is not None and curr_v is not None and prev_v != curr_v:
+                                    try:
+                                        diff = float(curr_v) - float(prev_v)
+                                        sign = "+" if diff > 0 else "-"
+                                        diff_fmt = f"{abs(diff) / 1e6:.6f}".rstrip("0").rstrip(".")
+                                        diff_str = f" ({sign}{diff_fmt})"
+                                    except Exception:
+                                        diff_str = ""
                                     lines.append(
-                                        f"<b>■ {k}</b>: <b>{dt.strftime('%Y-%m-%d %H:%M:%S')}</b>"
+                                        f"<b>■ TRX balance</b> changed: <b>{fmt_trx(prev_v)}</b> → <b>{fmt_trx(curr_v)}</b>{diff_str}"
                                     )
-                                except Exception:
-                                    lines.append(f"<b>{k}</b>: <b>{curr_v}</b>")
-                            # Do not show diff for this key
-                            continue
-                        if k == "balance":
-                            # Always show TRX, shift decimal 6 places left
-                            def fmt_trx(val):
-                                try:
-                                    return f"{float(val) / 1e6:.6f}".rstrip("0").rstrip(".")
-                                except Exception:
-                                    return str(val)
-                            if prev_v is not None and curr_v is not None and prev_v != curr_v:
+                                elif curr_v is not None:
+                                    lines.append(f"<b>■ TRX balance</b>: <b>{fmt_trx(curr_v)}</b>")
+                                continue
+                            if (
+                                prev_v is not None
+                                and curr_v is not None
+                                and prev_v != curr_v
+                            ):
                                 try:
                                     diff = float(curr_v) - float(prev_v)
                                     sign = "+" if diff > 0 else "-"
-                                    diff_fmt = f"{abs(diff) / 1e6:.6f}".rstrip("0").rstrip(".")
-                                    diff_str = f" ({sign}{diff_fmt})"
+                                    diff_str = f" ({sign}{int(abs(diff))})"
                                 except Exception:
                                     diff_str = ""
                                 lines.append(
-                                    f"<b>■ TRX balance</b> changed: <b>{fmt_trx(prev_v)}</b> → <b>{fmt_trx(curr_v)}</b>{diff_str}"
+                                    f"<b>■ {k}</b> changed: <b>{prev_v}</b> → <b>{curr_v}</b>{diff_str}"
                                 )
                             elif curr_v is not None:
-                                lines.append(f"<b>■ TRX balance</b>: <b>{fmt_trx(curr_v)}</b>")
-                            continue
-                        if (
-                            prev_v is not None
-                            and curr_v is not None
-                            and prev_v != curr_v
-                        ):
-                            try:
-                                diff = float(curr_v) - float(prev_v)
-                                sign = "+" if diff > 0 else "-"
-                                diff_str = f" ({sign}{int(abs(diff))})"
-                            except Exception:
-                                diff_str = ""
-                            lines.append(
-                                f"<b>■ {k}</b> changed: <b>{prev_v}</b> → <b>{curr_v}</b>{diff_str}"
+                                lines.append(f"<b>■ {k}</b>: <b>{curr_v}</b>")
+                        # Show token changes
+                        for token in details.get("withPriceTokens", []):
+                            tid = token.get("tokenId")
+                            name = (
+                                token.get("tokenName", {}).get("curr")
+                                if isinstance(token.get("tokenName"), dict)
+                                else token.get("tokenName")
                             )
-                        elif curr_v is not None:
-                            lines.append(f"<b>■ {k}</b>: <b>{curr_v}</b>")
-                    # Show token changes
-                    for token in details.get("withPriceTokens", []):
-                        tid = token.get("tokenId")
-                        name = (
-                            token.get("tokenName", {}).get("curr")
-                            if isinstance(token.get("tokenName"), dict)
-                            else token.get("tokenName")
+                            abbr = (
+                                token.get("tokenAbbr", {}).get("curr")
+                                if isinstance(token.get("tokenAbbr"), dict)
+                                else token.get("tokenAbbr")
+                            )
+                            balance = token.get("balance", {})
+                            token_decimal = None
+                            # Try to get tokenDecimal from current token snapshot
+                            if "tokenDecimal" in token:
+                                td = token["tokenDecimal"]
+                                if isinstance(td, dict):
+                                    token_decimal = (
+                                        td.get("curr")
+                                        if isinstance(td.get("curr"), int)
+                                        else None
+                                    )
+                                elif isinstance(td, int):
+                                    token_decimal = td
+                            elif "tokenDecimal" in token.get("curr", {}):
+                                td = token["curr"]["tokenDecimal"]
+                                if isinstance(td, dict):
+                                    token_decimal = (
+                                        td.get("curr")
+                                        if isinstance(td.get("curr"), int)
+                                        else None
+                                    )
+                                elif isinstance(td, int):
+                                    token_decimal = td
+                            balance_prev = balance.get("prev")
+                            balance_curr = balance.get("curr")
+                            # Only show if balance changed (ignore amount-only changes)
+                            if (
+                                balance_prev is not None
+                                and balance_curr is not None
+                                and balance_prev != balance_curr
+                            ):
+                                diff = float(balance_curr) - float(balance_prev)
+                                sign = "+" if diff > 0 else "-"
+                                prev_fmt = format_balance(balance_prev, token_decimal)
+                                curr_fmt = format_balance(balance_curr, token_decimal)
+                                if token_decimal is not None:
+                                    diff_shifted = diff / (10**token_decimal)
+                                    diff_fmt = f"{abs(diff_shifted):.6f}".rstrip("0").rstrip(".")
+                                    change_line = f"└─ balance: {prev_fmt} → {curr_fmt} ({sign}{diff_fmt})"
+                                else:
+                                    diff_fmt = f"{abs(diff):.6f}".rstrip("0").rstrip(".")
+                                    change_line = f"└─ balance: {prev_fmt} → {curr_fmt} ({sign}{diff_fmt})"
+                                token_line = f"¤ Token <b>{name}</b> ({abbr}):\n{change_line}"
+                                lines.append(token_line)
+                        # Always show static info
+                        bot_username = getattr(bot, "username", Config.BOT_USERNAME)
+                        deeplink = f"https://t.me/{bot_username}?start={address}"
+                        tronscan_link = f"https://tronscan.org/#/address/{address}"
+                        lines.append(f'╬ Deeplink: <a href="{deeplink}">{address}</a>')
+                        lines.append(
+                            f'╬ Tronscan: <a href="{tronscan_link}">{address}</a>'
                         )
-                        abbr = (
-                            token.get("tokenAbbr", {}).get("curr")
-                            if isinstance(token.get("tokenAbbr"), dict)
-                            else token.get("tokenAbbr")
-                        )
-                        balance = token.get("balance", {})
-                        token_decimal = None
-                        # Try to get tokenDecimal from current token snapshot
-                        if "tokenDecimal" in token:
-                            td = token["tokenDecimal"]
-                            if isinstance(td, dict):
-                                token_decimal = (
-                                    td.get("curr")
-                                    if isinstance(td.get("curr"), int)
-                                    else None
-                                )
-                            elif isinstance(td, int):
-                                token_decimal = td
-                        elif "tokenDecimal" in token.get("curr", {}):
-                            td = token["curr"]["tokenDecimal"]
-                            if isinstance(td, dict):
-                                token_decimal = (
-                                    td.get("curr")
-                                    if isinstance(td.get("curr"), int)
-                                    else None
-                                )
-                            elif isinstance(td, int):
-                                token_decimal = td
-                        balance_prev = balance.get("prev")
-                        balance_curr = balance.get("curr")
-                        # Only show if balance changed (ignore amount-only changes)
-                        if (
-                            balance_prev is not None
-                            and balance_curr is not None
-                            and balance_prev != balance_curr
-                        ):
-                            diff = float(balance_curr) - float(balance_prev)
-                            sign = "+" if diff > 0 else "-"
-                            prev_fmt = format_balance(balance_prev, token_decimal)
-                            curr_fmt = format_balance(balance_curr, token_decimal)
-                            if token_decimal is not None:
-                                diff_shifted = diff / (10**token_decimal)
-                                diff_fmt = f"{abs(diff_shifted):.6f}".rstrip("0").rstrip(".")
-                                change_line = f"└─ balance: {prev_fmt} → {curr_fmt} ({sign}{diff_fmt})"
-                            else:
-                                diff_fmt = f"{abs(diff):.6f}".rstrip("0").rstrip(".")
-                                change_line = f"└─ balance: {prev_fmt} → {curr_fmt} ({sign}{diff_fmt})"
-                            token_line = f"¤ Token <b>{name}</b> ({abbr}):\n{change_line}"
-                            lines.append(token_line)
-                    # Always show static info
-                    bot_username = getattr(bot, "username", Config.BOT_USERNAME)
-                    deeplink = f"https://t.me/{bot_username}?start={address}"
-                    tronscan_link = f"https://tronscan.org/#/address/{address}"
-                    lines.append(f'╬ Deeplink: <a href="{deeplink}">{address}</a>')
-                    lines.append(
-                        f'╬ Tronscan: <a href="{tronscan_link}">{address}</a>'
-                    )
-                    public_tag = details.get("publicTag")
-                    if public_tag:
-                        lines.append(f"╬ Public Tag: <b>{public_tag}</b>")
-                    date_created_human = details.get("date_created_human")
-                    if date_created_human:
-                        lines.append(f"╬ Date Created: <b>{date_created_human}</b>")
-                    latest_op_human = details.get("latest_operation_time_human")
-                    if latest_op_human:
-                        lines.append(f"╬ Latest Operation: <b>{latest_op_human}</b>")
-                    activation_status = details.get("activated")
-                    if activation_status:
-                        lines.append(f"╬ Activated: <b>{activation_status}</b>")
+                        public_tag = details.get("publicTag")
+                        if public_tag:
+                            lines.append(f"╬ Public Tag: <b>{public_tag}</b>")
+                        date_created_human = details.get("date_created_human")
+                        if date_created_human:
+                            lines.append(f"╬ Date Created: <b>{date_created_human}</b>")
+                        latest_op_human = details.get("latest_operation_time_human")
+                        if latest_op_human:
+                            lines.append(f"╬ Latest Operation: <b>{latest_op_human}</b>")
+                        activation_status = details.get("activated")
+                        if activation_status:
+                            lines.append(f"╬ Activated: <b>{activation_status}</b>")
 
-                    msg = "\n".join(lines)
+                        msg = "\n".join(lines)
 
-                    def split_message(text, max_length):
-                        lines = text.split("\n")
-                        chunks = []
-                        current_chunk = []
-                        current_len = 0
-                        for line in lines:
-                            if current_len + len(line) + 1 > max_length:
+                        def split_message(text, max_length):
+                            lines = text.split("\n")
+                            chunks = []
+                            current_chunk = []
+                            current_len = 0
+                            for line in lines:
+                                if current_len + len(line) + 1 > max_length:
+                                    chunks.append("\n".join(current_chunk))
+                                    current_chunk = [line]
+                                    current_len = len(line) + 1
+                                else:
+                                    current_chunk.append(line)
+                                    current_len += len(line) + 1
+                            if current_chunk:
                                 chunks.append("\n".join(current_chunk))
-                                current_chunk = [line]
-                                current_len = len(line) + 1
-                            else:
-                                current_chunk.append(line)
-                                current_len += len(line) + 1
-                        if current_chunk:
-                            chunks.append("\n".join(current_chunk))
-                        return chunks
+                            return chunks
 
-                    msg_chunks = split_message(msg, MAX_MSG_LENGTH - 50)
-                    total_parts = len(msg_chunks)
-                    for idx, chunk in enumerate(msg_chunks, 1):
-                        part_info = f"\n--- End of Part {idx} of {total_parts} ---"
-                        await bot.send_message(
-                            telegram_user_id,
-                            chunk + part_info,
-                            parse_mode="HTML",
-                            disable_web_page_preview=True,
-                        )
-                # Always update persistent last_state with the latest full response
-                update_user_watch_state_last_state(db, db_user_id, address, blockchain, full_response)
+                        msg_chunks = split_message(msg, MAX_MSG_LENGTH - 50)
+                        total_parts = len(msg_chunks)
+                        for idx, chunk in enumerate(msg_chunks, 1):
+                            part_info = f"\n--- End of Part {idx} of {total_parts} ---"
+                            await bot.send_message(
+                                telegram_user_id,
+                                chunk + part_info,
+                                parse_mode="HTML",
+                                disable_web_page_preview=True,
+                            )
+                    # Always update persistent last_state with the latest full response
+                    update_user_watch_state_last_state(db, db_user_id, address, blockchain, full_response)
         db.close()
         await asyncio.sleep(30)
 

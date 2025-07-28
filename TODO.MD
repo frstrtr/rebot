@@ -19,3 +19,4 @@ Add evidance images save to reports
 ✅ Notification option memo added/deleted
 
 Optimize tronscan api query if more then one user watching updates for the given address
+#BUG Look for other blockchain events changes - since sometimes it fires notification update

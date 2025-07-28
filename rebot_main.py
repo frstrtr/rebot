@@ -385,13 +385,12 @@ async def poll_and_notify(bot):
                     logging.debug(f"Changes detected for {address}")
                     # Prepare message details
                     details = changes.get("details", {})
-                    lines = []
+                    lines = [f"<code>{address}</code>\n"]
                     # Show changes for root keys
                     root_keys = [
-                        "transactions_out",
                         "balance",
+                        "transactions_out",
                         "transactions_in",
-                        "totalTransactionCount",
                         "transactions",
                         "latest_operation_time",
                     ]
@@ -403,17 +402,38 @@ async def poll_and_notify(bot):
                             # Show only the last value in human-readable format
                             latest_op_human = details.get("latest_operation_time_human")
                             if latest_op_human:
-                                lines.append(f"<b>{k}</b>: <b>{latest_op_human}</b>")
+                                lines.append(f"<b>■ {k}</b>: <b>{latest_op_human}</b>")
                             elif curr_v is not None:
                                 # Fallback: try to format curr_v as datetime
                                 try:
                                     dt = datetime.datetime.fromtimestamp(float(curr_v))
                                     lines.append(
-                                        f"<b>{k}</b>: <b>{dt.strftime('%Y-%m-%d %H:%M:%S')}</b>"
+                                        f"<b>■ {k}</b>: <b>{dt.strftime('%Y-%m-%d %H:%M:%S')}</b>"
                                     )
                                 except Exception:
                                     lines.append(f"<b>{k}</b>: <b>{curr_v}</b>")
                             # Do not show diff for this key
+                            continue
+                        if k == "balance":
+                            # Always show TRX, shift decimal 6 places left
+                            def fmt_trx(val):
+                                try:
+                                    return f"{float(val) / 1e6:.6f}".rstrip("0").rstrip(".")
+                                except Exception:
+                                    return str(val)
+                            if prev_v is not None and curr_v is not None and prev_v != curr_v:
+                                try:
+                                    diff = float(curr_v) - float(prev_v)
+                                    sign = "+" if diff > 0 else "-"
+                                    diff_fmt = f"{abs(diff) / 1e6:.6f}".rstrip("0").rstrip(".")
+                                    diff_str = f" ({sign}{diff_fmt})"
+                                except Exception:
+                                    diff_str = ""
+                                lines.append(
+                                    f"<b>■ TRX balance</b> changed: <b>{fmt_trx(prev_v)}</b> → <b>{fmt_trx(curr_v)}</b>{diff_str}"
+                                )
+                            elif curr_v is not None:
+                                lines.append(f"<b>■ TRX balance</b>: <b>{fmt_trx(curr_v)}</b>")
                             continue
                         if (
                             prev_v is not None
@@ -427,10 +447,10 @@ async def poll_and_notify(bot):
                             except Exception:
                                 diff_str = ""
                             lines.append(
-                                f"<b>{k}</b> changed: <b>{prev_v}</b> → <b>{curr_v}</b>{diff_str}"
+                                f"<b>■ {k}</b> changed: <b>{prev_v}</b> → <b>{curr_v}</b>{diff_str}"
                             )
                         elif curr_v is not None:
-                            lines.append(f"<b>{k}</b>: <b>{curr_v}</b>")
+                            lines.append(f"<b>■ {k}</b>: <b>{curr_v}</b>")
                     # Show token changes
                     for token in details.get("withPriceTokens", []):
                         tid = token.get("tokenId")
@@ -482,32 +502,32 @@ async def poll_and_notify(bot):
                             if token_decimal is not None:
                                 diff_shifted = diff / (10**token_decimal)
                                 diff_fmt = f"{abs(diff_shifted):.6f}".rstrip("0").rstrip(".")
-                                change_line = f"balance: {prev_fmt} → {curr_fmt} ({sign}{diff_fmt})"
+                                change_line = f"└─ balance: {prev_fmt} → {curr_fmt} ({sign}{diff_fmt})"
                             else:
                                 diff_fmt = f"{abs(diff):.6f}".rstrip("0").rstrip(".")
-                                change_line = f"balance: {prev_fmt} → {curr_fmt} ({sign}{diff_fmt})"
-                            token_line = f"Token <b>{name}</b> ({abbr}): {change_line}"
+                                change_line = f"└─ balance: {prev_fmt} → {curr_fmt} ({sign}{diff_fmt})"
+                            token_line = f"¤ Token <b>{name}</b> ({abbr}):\n{change_line}"
                             lines.append(token_line)
                     # Always show static info
                     bot_username = getattr(bot, "username", Config.BOT_USERNAME)
                     deeplink = f"https://t.me/{bot_username}?start={address}"
                     tronscan_link = f"https://tronscan.org/#/address/{address}"
-                    lines.append(f'Address: <a href="{deeplink}">{address}</a>')
+                    lines.append(f'╬ Deeplink: <a href="{deeplink}">{address}</a>')
                     lines.append(
-                        f'TronScan: <a href="{tronscan_link}">{tronscan_link}</a>'
+                        f'╬ Tronscan: <a href="{tronscan_link}">{address}</a>'
                     )
                     public_tag = details.get("publicTag")
                     if public_tag:
-                        lines.append(f"Public Tag: <b>{public_tag}</b>")
+                        lines.append(f"╬ Public Tag: <b>{public_tag}</b>")
                     date_created_human = details.get("date_created_human")
                     if date_created_human:
-                        lines.append(f"Date Created: <b>{date_created_human}</b>")
+                        lines.append(f"╬ Date Created: <b>{date_created_human}</b>")
                     latest_op_human = details.get("latest_operation_time_human")
                     if latest_op_human:
-                        lines.append(f"Latest Operation: <b>{latest_op_human}</b>")
+                        lines.append(f"╬ Latest Operation: <b>{latest_op_human}</b>")
                     activation_status = details.get("activated")
                     if activation_status:
-                        lines.append(f"Activated: <b>{activation_status}</b>")
+                        lines.append(f"╬ Activated: <b>{activation_status}</b>")
 
                     msg = "\n".join(lines)
 

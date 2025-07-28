@@ -750,8 +750,11 @@ def get_tron_account_changes(address: str, previous_data: dict = None):
 
     # Keys to check for changes
     root_keys = [
-        "transactions_out", "balance", "transactions_in", "totalTransactionCount",
-        "transactions", "latest_operation_time"
+        "transactions_out",
+        "balance",
+        "transactions_in",
+        "transactions",
+        "latest_operation_time",
     ]
     static_keys = ["publicTag", "date_created", "address", "activated"]
 
@@ -761,6 +764,7 @@ def get_tron_account_changes(address: str, previous_data: dict = None):
 
     changes = {"changed": False, "details": {}}
     details = {}
+
     # Compare root keys with normalization
     def normalize_val(val):
         # Try to cast to int or float if possible, else str
@@ -784,7 +788,9 @@ def get_tron_account_changes(address: str, previous_data: dict = None):
         curr_v_norm = normalize_val(curr_v)
         if prev_v is not None and curr_v is not None:
             if prev_v_norm != curr_v_norm:
-                logger.debug("Change detected for %s: prev=%s, curr=%s", k, prev_v, curr_v)
+                logger.debug(
+                    "Change detected for %s: prev=%s, curr=%s", k, prev_v, curr_v
+                )
                 changes["changed"] = True
                 details[k] = {"prev": prev_v, "curr": curr_v}
             else:
@@ -793,9 +799,12 @@ def get_tron_account_changes(address: str, previous_data: dict = None):
             details[k] = {"curr": curr_v}
 
     # Parse withPriceTokens
-    prev_tokens = safe_get(previous_data, "withPriceTokens", []) if previous_data else []
+    prev_tokens = (
+        safe_get(previous_data, "withPriceTokens", []) if previous_data else []
+    )
     curr_tokens = safe_get(current, "withPriceTokens", [])
     token_changes = []
+
     # Build token dicts by tokenId for easy comparison
     def token_map(tokens):
         m = {}
@@ -804,6 +813,7 @@ def get_tron_account_changes(address: str, previous_data: dict = None):
             if tid:
                 m[tid] = t
         return m
+
     prev_map = token_map(prev_tokens)
     curr_map = token_map(curr_tokens)
     all_token_ids = set(prev_map.keys()) | set(curr_map.keys())
@@ -818,7 +828,13 @@ def get_tron_account_changes(address: str, previous_data: dict = None):
             curr_v_norm = normalize_val(curr_v)
             if prev_v is not None and curr_v is not None:
                 if prev_v_norm != curr_v_norm:
-                    logger.debug("Change detected for token %s (%s): prev=%s, curr=%s", tid, tk, prev_v, curr_v)
+                    logger.debug(
+                        "Change detected for token %s (%s): prev=%s, curr=%s",
+                        tid,
+                        tk,
+                        prev_v,
+                        curr_v,
+                    )
                     changes["changed"] = True
                     token_diff[tk] = {"prev": prev_v, "curr": curr_v}
                 else:
@@ -833,17 +849,23 @@ def get_tron_account_changes(address: str, previous_data: dict = None):
     for k in static_keys:
         v = safe_get(current, k)
         details[k] = v
+
     # Human readable date_created and latest_operation_time
     def human_ts(ts):
         try:
             if ts:
                 # TronScan returns ms timestamps
-                return datetime.datetime.fromtimestamp(int(ts)/1000, tz=datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+                return datetime.datetime.fromtimestamp(
+                    int(ts) / 1000, tz=datetime.timezone.utc
+                ).strftime("%Y-%m-%d %H:%M:%S UTC")
         except Exception:
             pass
         return None
+
     details["date_created_human"] = human_ts(safe_get(current, "date_created"))
-    details["latest_operation_time_human"] = human_ts(safe_get(current, "latest_operation_time"))
+    details["latest_operation_time_human"] = human_ts(
+        safe_get(current, "latest_operation_time")
+    )
 
     changes["details"] = details
     # Return changed as a separate bool as well

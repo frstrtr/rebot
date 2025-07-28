@@ -6,6 +6,8 @@ It includes methods to check if an address is a smart contract, fetch basic acco
 import requests
 import logging
 import time
+import datetime
+
 
 # Configure logging - can be configured by the application using this module
 # logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -732,8 +734,6 @@ def get_tron_account_changes(address: str, previous_data: dict = None):
     previous_data should be a dict from a prior v2 API call.
     """
 
-
-    import datetime
     API_URL = f"https://apilist.tronscanapi.com/api/accountv2?address={address}"
     try:
         response = requests.get(API_URL, timeout=10)
@@ -819,4 +819,5 @@ def get_tron_account_changes(address: str, previous_data: dict = None):
     details["latest_operation_time_human"] = human_ts(safe_get(current, "latest_operation_time"))
 
     changes["details"] = details
+    # Return changed as a separate bool as well
     return changes, current, current

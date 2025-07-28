@@ -10,7 +10,7 @@ import logging
 import sys
 import contextvars
 import os
-import time
+import datetime
 from logging.handlers import TimedRotatingFileHandler
 
 from aiogram import Bot, Dispatcher, BaseMiddleware, F
@@ -22,7 +22,11 @@ from config.credentials import Credentials
 from config.config import Config  # Config is already imported
 from database import create_tables
 from database.connection import SessionLocal
-from database.queries import get_all_watched_addresses, get_address_memos, get_user_watch_states
+from database.queries import (
+    get_all_watched_addresses,
+    get_address_memos,
+    get_user_watch_states,
+)
 from utils.tronscan import get_tron_account_changes
 
 from handlers import (
@@ -328,8 +332,8 @@ async def main():
 
 async def poll_and_notify(bot):
     """Background polling task for memos and balance changes."""
-    last_memo_ids = {}    # address: last_memo_id
-    last_state = {}    # address: last_balance
+    last_memo_ids = {}  # address: last_memo_id
+    last_state = {}  # address: last_balance
 
     while True:
         db = SessionLocal()
@@ -348,147 +352,211 @@ async def poll_and_notify(bot):
                 memos = get_address_memos(address)
                 new_memos = [m for m in memos if m.id != last_memo_ids.get(address)]
                 if new_memos:
-                    await bot.send_message(user_id, f"New memos for {address}: {new_memos}")
+                    await bot.send_message(
+                        user_id, f"New memos for {address}: {new_memos}"
+                    )
                     last_memo_ids[address] = new_memos[-1].id
 
             # Poll balances if enabled
             if state.get("watch_events"):
                 prev_data = last_state.get(address)
-                changes, _current_, full_response = get_tron_account_changes(address, prev_data)
-                logging.info(f"poll_and_notify: address={address} changes={changes}")
-                details = changes.get('details', {})
-                lines = []
-                # Show changes for root keys
-                root_keys = [
-                    "transactions_out", "balance", "transactions_in", "totalTransactionCount",
-                    "transactions", "latest_operation_time", "activated"
-                ]
-                for k in root_keys:
-                    v = details.get(k, {})
-                    prev_v = v.get("prev")
-                    curr_v = v.get("curr")
-                    if k == "latest_operation_time":
-                        # Show only the last value in human-readable format
-                        latest_op_human = details.get("latest_operation_time_human")
-                        if latest_op_human:
-                            lines.append(f"<b>{k}</b>: <b>{latest_op_human}</b>")
-                        elif curr_v is not None:
-                            # Fallback: try to format curr_v as datetime
+                changes, _current_, full_response = get_tron_account_changes(
+                    address, prev_data
+                )
+                logging.info(
+                    f"poll_and_notify: address={address} changes={changes['changed'] is True}"
+                )
+                # If changes were detected, format and send the message
+                if changes["changed"] is True:
+                    # Prepare message details
+                    details = changes.get("details", {})
+                    lines = []
+                    # Show changes for root keys
+                    root_keys = [
+                        "transactions_out",
+                        "balance",
+                        "transactions_in",
+                        "totalTransactionCount",
+                        "transactions",
+                        "latest_operation_time",
+                        "activated",
+                    ]
+                    for k in root_keys:
+                        v = details.get(k, {})
+                        prev_v = v.get("prev")
+                        curr_v = v.get("curr")
+                        if k == "latest_operation_time":
+                            # Show only the last value in human-readable format
+                            latest_op_human = details.get("latest_operation_time_human")
+                            if latest_op_human:
+                                lines.append(f"<b>{k}</b>: <b>{latest_op_human}</b>")
+                            elif curr_v is not None:
+                                # Fallback: try to format curr_v as datetime
+                                try:
+                                    dt = datetime.datetime.fromtimestamp(float(curr_v))
+                                    lines.append(
+                                        f"<b>{k}</b>: <b>{dt.strftime('%Y-%m-%d %H:%M:%S')}</b>"
+                                    )
+                                except Exception:
+                                    lines.append(f"<b>{k}</b>: <b>{curr_v}</b>")
+                            # Do not show diff for this key
+                            continue
+                        if (
+                            prev_v is not None
+                            and curr_v is not None
+                            and prev_v != curr_v
+                        ):
                             try:
-                                import datetime
-                                dt = datetime.datetime.fromtimestamp(float(curr_v))
-                                lines.append(f"<b>{k}</b>: <b>{dt.strftime('%Y-%m-%d %H:%M:%S')}</b>")
+                                diff = float(curr_v) - float(prev_v)
+                                sign = "+" if diff > 0 else "-"
+                                diff_str = f" ({sign}{int(abs(diff))})"
                             except Exception:
-                                lines.append(f"<b>{k}</b>: <b>{curr_v}</b>")
-                        # Do not show diff for this key
-                        continue
-                    if prev_v is not None and curr_v is not None and prev_v != curr_v:
-                        try:
-                            diff = float(curr_v) - float(prev_v)
+                                diff_str = ""
+                            lines.append(
+                                f"<b>{k}</b> changed: <b>{prev_v}</b> → <b>{curr_v}</b>{diff_str}"
+                            )
+                        elif curr_v is not None:
+                            lines.append(f"<b>{k}</b>: <b>{curr_v}</b>")
+                    # Show token changes
+                    for token in details.get("withPriceTokens", []):
+                        tid = token.get("tokenId")
+                        # if tid == "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t": # check USDT contract
+                        #     print (f"Token: {tid}")
+                        name = (
+                            token.get("tokenName", {}).get("curr")
+                            if isinstance(token.get("tokenName"), dict)
+                            else token.get("tokenName")
+                        )
+                        abbr = (
+                            token.get("tokenAbbr", {}).get("curr")
+                            if isinstance(token.get("tokenAbbr"), dict)
+                            else token.get("tokenAbbr")
+                        )
+                        balance = token.get("balance", {})
+                        amount = token.get("amount", {})
+                        token_decimal = None
+                        # Try to get tokenDecimal from current token snapshot
+                        if "tokenDecimal" in token:
+                            td = token["tokenDecimal"]
+                            if isinstance(td, dict):
+                                token_decimal = (
+                                    td.get("curr")
+                                    if isinstance(td.get("curr"), int)
+                                    else None
+                                )
+                            elif isinstance(td, int):
+                                token_decimal = td
+                        elif "tokenDecimal" in token.get("curr", {}):
+                            td = token["curr"]["tokenDecimal"]
+                            if isinstance(td, dict):
+                                token_decimal = (
+                                    td.get("curr")
+                                    if isinstance(td.get("curr"), int)
+                                    else None
+                                )
+                            elif isinstance(td, int):
+                                token_decimal = td
+                        balance_prev = balance.get("prev")
+                        balance_curr = balance.get("curr")
+                        amount_prev = amount.get("prev")
+                        amount_curr = amount.get("curr")
+                        # Only show if balance or amount changed
+                        show_token = False
+                        change_lines = []
+
+                        # Balance change
+                        if (
+                            balance_prev is not None
+                            and balance_curr is not None
+                            and balance_prev != balance_curr
+                        ):
+                            show_token = True
+                            diff = float(balance_curr) - float(balance_prev)
                             sign = "+" if diff > 0 else "-"
-                            diff_str = f" ({sign}{int(abs(diff))})"
-                        except Exception:
-                            diff_str = ""
-                        lines.append(f"<b>{k}</b> changed: <b>{prev_v}</b> → <b>{curr_v}</b>{diff_str}")
-                    elif curr_v is not None:
-                        lines.append(f"<b>{k}</b>: <b>{curr_v}</b>")
-                # Show token changes
-                for token in details.get("withPriceTokens", []):
-                    tid = token.get("tokenId")
-                    # if tid == "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t":
-                    #     print (f"Token: {tid}")
-                    name = token.get("tokenName", {}).get("curr") if isinstance(token.get("tokenName"), dict) else token.get("tokenName")
-                    abbr = token.get("tokenAbbr", {}).get("curr") if isinstance(token.get("tokenAbbr"), dict) else token.get("tokenAbbr")
-                    balance = token.get("balance", {})
-                    amount = token.get("amount", {})
-                    token_decimal = None
-                    # Try to get tokenDecimal from current token snapshot
-                    if "tokenDecimal" in token:
-                        td = token["tokenDecimal"]
-                        if isinstance(td, dict):
-                            token_decimal = td.get("curr") if isinstance(td.get("curr"), int) else None
-                        elif isinstance(td, int):
-                            token_decimal = td
-                    elif "tokenDecimal" in token.get("curr", {}):
-                        td = token["curr"]["tokenDecimal"]
-                        if isinstance(td, dict):
-                            token_decimal = td.get("curr") if isinstance(td.get("curr"), int) else None
-                        elif isinstance(td, int):
-                            token_decimal = td
-                    balance_prev = balance.get("prev")
-                    balance_curr = balance.get("curr")
-                    amount_prev = amount.get("prev")
-                    amount_curr = amount.get("curr")
-                    # Only show if balance or amount changed
-                    show_token = False
-                    change_lines = []
+                            prev_fmt = format_balance(balance_prev, token_decimal)
+                            curr_fmt = format_balance(balance_curr, token_decimal)
+                            if token_decimal is not None:
+                                # Shift diff decimal point for balance diff by token_decimal, match formatted balances
+                                diff_shifted = diff / (10**token_decimal)
+                                diff_fmt = f"{abs(diff_shifted):.6f}".rstrip(
+                                    "0"
+                                ).rstrip(".")
+                                change_lines.append(
+                                    f"balance: {prev_fmt} → {curr_fmt} ({sign}{diff_fmt})"
+                                )
+                            else:
+                                diff_fmt = f"{abs(diff):.6f}".rstrip("0").rstrip(".")
+                                change_lines.append(
+                                    f"balance: {prev_fmt} → {curr_fmt} ({sign}{diff_fmt})"
+                                )
+                        # Amount change
+                        if (
+                            amount_prev is not None
+                            and amount_curr is not None
+                            and amount_prev != amount_curr
+                        ):
+                            show_token = True
+                            diff = float(amount_curr) - float(amount_prev)
+                            sign = "+" if diff > 0 else "-"
+                            change_lines.append(
+                                f"amount: {amount_prev} → {amount_curr} ({sign}{abs(diff)})"
+                            )
+                        if show_token:
+                            token_line = f"Token <b>{name}</b> ({abbr}): " + ", ".join(
+                                change_lines
+                            )
+                            lines.append(token_line)
+                    # Always show static info
+                    bot_username = getattr(bot, "username", Config.BOT_USERNAME)
+                    deeplink = f"https://t.me/{bot_username}?start={address}"
+                    tronscan_link = f"https://tronscan.org/#/address/{address}"
+                    lines.append(f'Address: <a href="{deeplink}">{address}</a>')
+                    lines.append(
+                        f'TronScan: <a href="{tronscan_link}">{tronscan_link}</a>'
+                    )
+                    public_tag = details.get("publicTag")
+                    if public_tag:
+                        lines.append(f"Public Tag: <b>{public_tag}</b>")
+                    date_created_human = details.get("date_created_human")
+                    if date_created_human:
+                        lines.append(f"Date Created: <b>{date_created_human}</b>")
+                    latest_op_human = details.get("latest_operation_time_human")
+                    if latest_op_human:
+                        lines.append(f"Latest Operation: <b>{latest_op_human}</b>")
 
-                    # Balance change
-                    if balance_prev is not None and balance_curr is not None and balance_prev != balance_curr:
-                        show_token = True
-                        diff = float(balance_curr) - float(balance_prev)
-                        sign = "+" if diff > 0 else "-"
-                        prev_fmt = format_balance(balance_prev, token_decimal)
-                        curr_fmt = format_balance(balance_curr, token_decimal)
-                        if token_decimal is not None:
-                            # Shift diff decimal point for balance diff by token_decimal, match formatted balances
-                            diff_shifted = diff / (10 ** token_decimal)
-                            diff_fmt = f"{abs(diff_shifted):.6f}".rstrip('0').rstrip('.')
-                            change_lines.append(f"balance: {prev_fmt} → {curr_fmt} ({sign}{diff_fmt})")
-                        else:
-                            diff_fmt = f"{abs(diff):.6f}".rstrip('0').rstrip('.')
-                            change_lines.append(f"balance: {prev_fmt} → {curr_fmt} ({sign}{diff_fmt})")
-                    # Amount change
-                    if amount_prev is not None and amount_curr is not None and amount_prev != amount_curr:
-                        show_token = True
-                        diff = float(amount_curr) - float(amount_prev)
-                        sign = "+" if diff > 0 else "-"
-                        change_lines.append(f"amount: {amount_prev} → {amount_curr} ({sign}{abs(diff)})")
-                    if show_token:
-                        token_line = f"Token <b>{name}</b> ({abbr}): " + ", ".join(change_lines)
-                        lines.append(token_line)
-                # Always show static info
-                bot_username = getattr(bot, "username", Config.BOT_USERNAME)
-                deeplink = f"https://t.me/{bot_username}?start={address}"
-                tronscan_link = f"https://tronscan.org/#/address/{address}"
-                lines.append(f"Address: <a href=\"{deeplink}\">{address}</a>")
-                lines.append(f"TronScan: <a href=\"{tronscan_link}\">{tronscan_link}</a>")
-                public_tag = details.get("publicTag")
-                if public_tag:
-                    lines.append(f"Public Tag: <b>{public_tag}</b>")
-                date_created_human = details.get("date_created_human")
-                if date_created_human:
-                    lines.append(f"Date Created: <b>{date_created_human}</b>")
-                latest_op_human = details.get("latest_operation_time_human")
-                if latest_op_human:
-                    lines.append(f"Latest Operation: <b>{latest_op_human}</b>")
+                    msg = "\n".join(lines)
 
-                msg = "\n".join(lines)
-                def split_message(text, max_length):
-                    lines = text.split('\n')
-                    chunks = []
-                    current_chunk = []
-                    current_len = 0
-                    for line in lines:
-                        if current_len + len(line) + 1 > max_length:
-                            chunks.append('\n'.join(current_chunk))
-                            current_chunk = [line]
-                            current_len = len(line) + 1
-                        else:
-                            current_chunk.append(line)
-                            current_len += len(line) + 1
-                    if current_chunk:
-                        chunks.append('\n'.join(current_chunk))
-                    return chunks
+                    def split_message(text, max_length):
+                        lines = text.split("\n")
+                        chunks = []
+                        current_chunk = []
+                        current_len = 0
+                        for line in lines:
+                            if current_len + len(line) + 1 > max_length:
+                                chunks.append("\n".join(current_chunk))
+                                current_chunk = [line]
+                                current_len = len(line) + 1
+                            else:
+                                current_chunk.append(line)
+                                current_len += len(line) + 1
+                        if current_chunk:
+                            chunks.append("\n".join(current_chunk))
+                        return chunks
 
-                msg_chunks = split_message(msg, MAX_MSG_LENGTH - 50)
-                total_parts = len(msg_chunks)
-                for idx, chunk in enumerate(msg_chunks, 1):
-                    part_info = f"\n--- End of Part {idx} of {total_parts} ---"
-                    await bot.send_message(user_id, chunk + part_info, parse_mode="HTML", disable_web_page_preview=True)
-                last_state[address] = full_response
+                    msg_chunks = split_message(msg, MAX_MSG_LENGTH - 50)
+                    total_parts = len(msg_chunks)
+                    for idx, chunk in enumerate(msg_chunks, 1):
+                        part_info = f"\n--- End of Part {idx} of {total_parts} ---"
+                        await bot.send_message(
+                            user_id,
+                            chunk + part_info,
+                            parse_mode="HTML",
+                            disable_web_page_preview=True,
+                        )
+                    last_state[address] = full_response
         db.close()
         await asyncio.sleep(30)
+
 
 # Calculate balance change using tokenDecimal
 def format_balance(val, token_decimal=None):
@@ -497,12 +565,13 @@ def format_balance(val, token_decimal=None):
             return None
         val = float(val)
         if token_decimal is not None:
-            s = f"{val / (10 ** token_decimal):.6f}".rstrip('0').rstrip('.')
+            s = f"{val / (10 ** token_decimal):.6f}".rstrip("0").rstrip(".")
             return s if s else "0"
-        s = f"{val:.6f}".rstrip('0').rstrip('.')
+        s = f"{val:.6f}".rstrip("0").rstrip(".")
         return s if s else "0"
     except Exception:
         return str(val)
+
 
 if __name__ == "__main__":
     # 1. Create the filter and formatters

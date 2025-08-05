@@ -20,3 +20,5 @@ Add evidance images save to reports
 
 Optimize tronscan api query if more then one user watching updates for the given address
 #BUG Look for other blockchain events changes - since sometimes it fires notification update
+
+Add blockchain explorer button for solana

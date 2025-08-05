@@ -199,6 +199,14 @@ class Config:
             "name": "AlgoExplorer",
             "url_template": "https://algoexplorer.io/address/{address}",
         },
+        "solana": {
+            "name": "Solscan",
+            "url_template": "https://solscan.io/account/{address}",
+        },
+        "tezos": {
+            "name": "TzKT",
+            "url_template": "https://tzkt.io/{address}",
+        },
         # ... other chains
     }
 

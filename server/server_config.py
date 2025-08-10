@@ -4,6 +4,16 @@
 This module contains configuration settings for the P2P server.
 """
 import logging
+import os
+from typing import List
+
+try:
+    # Load .env variables if present
+    from dotenv import load_dotenv  # type: ignore
+    load_dotenv()
+except Exception:
+    # If python-dotenv is not installed, environment variables must be provided by the OS
+    pass
 
 
 # Logging configuration
@@ -81,12 +91,17 @@ WEBSOCKET_PORT = 9000
 # HTTP server port
 HTTP_API_PORT = 8081
 
-# Bootstrap addresses for P2P network
-BOOTSTRAP_ADDRESSES = [
-    "192.168.86.109:9828",
-    "192.168.86.30:9828",
-    "34.35.78.201:9828",
-]
+def _parse_bootstrap_addresses(value: str | None) -> List[str]:
+    """Parse a comma or newline-separated env var into a list of host:port strings."""
+    if not value:
+        return []
+    # support commas and newlines as separators
+    parts = value.replace("\n", ",").split(",")
+    return [p.strip() for p in parts if p.strip()]
+
+
+# Bootstrap addresses for P2P network (from .env BOOTSTRAP_ADDRESSES)
+BOOTSTRAP_ADDRESSES = _parse_bootstrap_addresses(os.getenv("BOOTSTRAP_ADDRESSES"))
 
 # Database file for storing spammer data
 DATABASE_FILE = "spammers.db"
